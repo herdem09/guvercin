@@ -226,7 +226,6 @@
   background: #e63939;
 }
 
-/* ── Ribbon menu ─────────────────────────────────── */
 .db-main-menu {
   background: #f0f0f0;
   border-bottom: 1px solid #ccc;
@@ -245,13 +244,6 @@
   padding: 0 10px;
 }
 
-.db-main-menu li {
-  cursor: pointer;
-  border-radius: 4px;
-  font-size: 13px;
-  font-weight: 500;
-}
-
 .db-main-menu li a {
   display: flex;
   align-items: center;
@@ -259,8 +251,9 @@
   padding: 0 18px;
   text-decoration: none;
   color: #333;
+  font-size: 13px;
+  font-weight: 500;
   border-radius: 4px;
-  transition: background 0.15s;
 }
 
 .db-main-menu li a:hover {
@@ -270,10 +263,9 @@
 .db-main-menu li.active a {
   background: #e0e0e0;
   border-bottom: 3px solid #FFCB08;
-  font-weight: 600;
+  font-weight: 700;
 }
 
-/* ── Submenu ─────────────────────────────────────── */
 .db-submenu {
   background: #f0f0f0;
   border-bottom: 1px solid #ccc;
@@ -292,12 +284,6 @@
   padding: 0 10px;
 }
 
-.db-submenu li {
-  border-radius: 4px;
-  font-size: 12px;
-  cursor: pointer;
-}
-
 .db-submenu li a {
   display: flex;
   align-items: center;
@@ -305,8 +291,8 @@
   padding: 0 14px;
   text-decoration: none;
   color: #333;
+  font-size: 12px;
   border-radius: 4px;
-  transition: background 0.15s;
 }
 
 .db-submenu li a:hover {
@@ -327,104 +313,54 @@
   overflow: hidden;
 }
 
-.db-body {
-  display: flex;
-  flex: 1;
-  overflow: hidden;
-  position: relative;
-}
-
-/* ── Mail Area Layout ── */
-.db-mail-area {
-  display: flex;
-  flex: 1;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-}
-
 /* ── Sidebar icons ───────────────────────────────── */
 .db-sidebar {
-  width: 50px;
-  background: #fff3d2;
+  width: 48px;
+  background: #f4f4f4;
   display: flex;
   flex-direction: column;
-  padding: 10px 0;
-  border-right: 1px solid #ddd;
+  padding: 8px 0;
+  border-right: 1px solid #ccc;
   flex-shrink: 0;
-  gap: 5px;
-  z-index: 10;
+  gap: 4px;
 }
 
 .db-sidebar-btn {
   background: none;
   border: none;
   cursor: pointer;
-  width: 40px;
-  height: 40px;
-  border-radius: 6px;
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
   margin: 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
+  font-size: 18px;
   transition: background 0.15s;
-  text-decoration: none;
   color: #555;
 }
 
 .db-sidebar-btn:hover {
-  background: #ffe8ad;
+  background: #e0e0e0;
 }
 
 .db-sidebar-btn.active {
-  background: linear-gradient(145deg, #ffdf8b, #ffb703);
-  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.08);
+  background: #FFCB08;
+  color: #000;
+  font-weight: 600;
 }
 
 .db-section-area {
   flex: 1;
   display: flex;
-  gap: 20px;
-  padding: 18px;
-  background: linear-gradient(180deg, #f6f6f6, #ececec);
+  background: #fff;
   overflow: hidden;
 }
 
 .db-mail-main {
   flex: 1;
   display: flex;
-  gap: 16px;
-}
-
-.db-center-panel {
-  flex: 1;
-  background: #fff;
-  border-radius: 1rem;
-  padding: 1rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.1);
-}
-
-.db-right-panel {
-  width: min(360px, 45%);
-  background: #fff;
-  border-radius: 1rem;
-  padding: 1rem;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.1);
-  overflow-y: auto;
-}
-
-.db-section-panel {
-  flex: 1;
-  border-radius: 1.4rem;
-  background: #fff;
-  padding: 2rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.8rem;
 }
 
 /* ── Folder panel ────────────────────────────────── */
@@ -438,42 +374,15 @@
   overflow-y: auto;
 }
 
-.db-folder-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 10px 6px 14px;
-}
-
-.db-folder-title {
-  font-size: 12px;
-  font-weight: 700;
-  color: #333;
-  text-transform: uppercase;
+.db-folder-scroll-area {
   flex: 1;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.db-folder-menu-btn {
-  background: none;
-  border: none;
-  cursor: pointer;
-  font-size: 16px;
-  color: #666;
-  padding: 2px 6px;
-  border-radius: 4px;
-  transition: background 0.15s;
-}
-
-.db-folder-menu-btn:hover {
-  background: #e0e0e0;
+  padding: 6px 0;
 }
 
 .db-folder-list {
   list-style: none;
-  padding: 6px 8px;
+  padding: 0 8px;
+  margin: 0;
 }
 
 .db-folder-item {
@@ -483,7 +392,7 @@
 .db-folder-item a {
   display: flex;
   align-items: center;
-  padding: 7px 12px;
+  padding: 6px 12px;
   border-radius: 4px;
   text-decoration: none;
   color: #333;
@@ -499,32 +408,74 @@
 .db-folder-item.selected a {
   background: #FFF7CC;
   font-weight: 700;
+  color: #000;
 }
 
 .db-folder-icon {
   margin-right: 8px;
   font-size: 15px;
+  width: 20px;
+  display: flex;
+  justify-content: center;
+}
+
+.db-folder-text {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Labels Section ── */
+.db-labels-section {
+  margin-top: 15px;
+  padding-top: 10px;
+  border-top: 1px solid #ddd;
+}
+
+.db-labels-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 14px 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #666;
+  text-transform: uppercase;
+}
+
+.db-label-add-btn {
+  background: none;
+  border: none;
+  font-size: 16px;
+  color: #666;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.db-label-add-btn:hover {
+  background: #e0e0e0;
 }
 
 .db-folder-count {
   margin-left: auto;
   background: #ddd;
-  color: #555;
   padding: 1px 5px;
   border-radius: 10px;
   font-size: 10px;
-  font-weight: 600;
+  color: #555;
 }
 
 /* ── Mail toolbar ─────────────────────────────────── */
 .db-mail-toolbar {
-  height: 38px;
+  height: 34px;
   background: #f0f0f0;
   border-bottom: 1px solid #ccc;
   display: flex;
   align-items: center;
   padding: 0 8px;
-  gap: 4px;
+  gap: 2px;
   flex-shrink: 0;
 }
 
@@ -533,16 +484,9 @@
   border: none;
   cursor: pointer;
   border-radius: 4px;
-  padding: 3px 8px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  font-size: 10px;
+  padding: 4px 10px;
+  font-size: 12px;
   color: #333;
-  min-width: 44px;
-  height: 30px;
-  justify-content: center;
-  gap: 1px;
   transition: background 0.15s;
 }
 
@@ -550,18 +494,21 @@
   background: #e0e0e0;
 }
 
-.db-mail-toolbar-icon {
-  font-size: 14px;
-}
-
-/* ── Center: mail list ───────────────────────────── */
+/* ── Panels ── */
 .db-center-panel {
-  width: 300px;
+  width: 320px;
+  background: #fff;
+  border-right: 1px solid #ccc;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #ccc;
-  background: #fff;
   flex-shrink: 0;
+}
+
+.db-right-panel {
+  flex: 1;
+  background: #fff;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 

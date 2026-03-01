@@ -5,22 +5,32 @@ import './DashboardPage.css'
 
 // ── Folder mappings ────────────────────
 const FOLDER_MAP = {
-    'INBOX': { icon: '✉️', href: '#inbox' },
-    'Gelen Kutusu': { icon: '✉️', href: '#inbox' },
-    'Önemsiz E-posta': { icon: '🚫', href: '#junk' },
-    'Spam': { icon: '🚫', href: '#junk' },
-    'Taslaklar': { icon: '📝', href: '#drafts' },
-    'Drafts': { icon: '📝', href: '#drafts' },
-    'Gönderilmiş Öğeler': { icon: '📤', href: '#sent' },
-    'Sent': { icon: '📤', href: '#sent' },
-    'Silinmiş Öğeler': { icon: '🗑️', href: '#deleted' },
-    'Trash': { icon: '🗑️', href: '#deleted' },
-    'Arşiv': { icon: '🗄️', href: '#archive' },
-    'Archive': { icon: '🗄️', href: '#archive' },
+    'INBOX': { icon: '📥', label: 'Gelen Kutusu' },
+    'Gelen Kutusu': { icon: '📥', label: 'Gelen Kutusu' },
+    'Starred': { icon: '⭐', label: 'Yıldızlı' },
+    'Yıldızlı': { icon: '⭐', label: 'Yıldızlı' },
+    'Snoozed': { icon: '🕒', label: 'Ertelenenler' },
+    'Ertelenenler': { icon: '🕒', label: 'Ertelenenler' },
+    'Sent': { icon: '✈️', label: 'Gönderilmiş Postalar' },
+    'Sent Items': { icon: '✈️', label: 'Gönderilmiş Postalar' },
+    'Gönderilmiş Öğeler': { icon: '✈️', label: 'Gönderilmiş Postalar' },
+    'Drafts': { icon: '📝', label: 'Taslaklar' },
+    'Taslaklar': { icon: '📝', label: 'Taslaklar' },
+    'Archive': { icon: '📦', label: 'Arşiv' },
+    'Arşiv': { icon: '📦', label: 'Arşiv' },
+    'Trash': { icon: '🗑️', label: 'Çöp Kutusu' },
+    'Silinmiş Öğeler': { icon: '🗑️', label: 'Çöp Kutusu' },
+    'Spam': { icon: '🚫', label: 'Spam' },
+    'Junk': { icon: '🚫', label: 'Spam' },
+    'Önemsiz E-posta': { icon: '🚫', label: 'Spam' },
+    'All Mail': { icon: '📑', label: 'Tüm Postalar' },
+    '[Gmail]/Tüm Postalar': { icon: '📑', label: 'Tüm Postalar' },
+    '[Gmail]/All Mail': { icon: '📑', label: 'Tüm Postalar' },
 }
 
-function folderIcon(name) {
-    return FOLDER_MAP[name]?.icon ?? '✉️'
+function folderInfo(name) {
+    const clean = name.replace(/^Folders\//i, '').replace(/^Labels\//i, '').replace(/^Etiketler\//i, '')
+    return FOLDER_MAP[clean] || FOLDER_MAP[name] || { icon: '📁', label: clean }
 }
 
 function formatBytes(bytes) {
@@ -28,40 +38,37 @@ function formatBytes(bytes) {
     if (bytes < 1024) return `${bytes} B`
     const units = ['KB', 'MB', 'GB', 'TB']
     let index = 0
-    let value = bytes
-    while (value >= 1024 && index < units.length - 1) {
-        value /= 1024
-        index += 1
+    while (bytes >= 1024 && index < units.length - 1) {
+        bytes /= 1024
+        index++
     }
-    return `${value.toFixed(1)} ${units[index]}`
+    return `${bytes.toFixed(1)} ${units[index]}`
 }
 
 
 function useClock() {
     const [now, setNow] = useState(new Date())
     useEffect(() => {
-        const id = setInterval(() => setNow(new Date()), 1000)
-        return () => clearInterval(id)
+        const timer = setInterval(() => setNow(new Date()), 1000)
+        return () => clearInterval(timer)
     }, [])
-    const pad = n => String(n).padStart(2, '0')
-    const time = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`
-    const date = `${pad(now.getDate())}.${pad(now.getMonth() + 1)}.${now.getFullYear()}`
-    return { time, date }
+    const timeStr = now.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+    const dateStr = now.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    return { time: timeStr, date: dateStr }
 }
 
-function DashboardPage() {
-    const { time, date } = useClock()
+const DashboardPage = () => {
     const { t } = useTranslation()
     const navigate = useNavigate()
-
-    const accountId = Number(localStorage.getItem('current_account_id') || 0)
-    const accountForm = (() => {
-        try { return JSON.parse(localStorage.getItem('saved_account_form') || '{}') } catch { return {} }
-    })()
-    const email = localStorage.getItem('saved_email') || accountForm.email || ''
+    const { time, date } = useClock()
 
     const [activeSection, setActiveSection] = useState('mail')
+    const [accountId, setAccountId] = useState(null)
+    const [accountForm, setAccountForm] = useState({})
+    const [email, setEmail] = useState('')
+
     const [connected, setConnected] = useState(false)
+    const [connecting, setConnecting] = useState(false)
     const [folders, setFolders] = useState([])
     const [selectedFolder, setSelectedFolder] = useState('INBOX')
     const [mails, setMails] = useState([])
@@ -69,18 +76,52 @@ function DashboardPage() {
     const [mailContent, setMailContent] = useState(null)
     const [loadingMails, setLoadingMails] = useState(false)
     const [loadingContent, setLoadingContent] = useState(false)
-    const [connecting, setConnecting] = useState(false)
-    const iframeRef = useRef(null)
 
+    const [accountMenuOpen, setAccountMenuOpen] = useState(false)
     const accountButtonRef = useRef(null)
     const accountMenuRef = useRef(null)
-    const [accountMenuOpen, setAccountMenuOpen] = useState(false)
+    const iframeRef = useRef(null)
 
-    const accountLabel = accountForm.displayName || email || t('Unknown user')
-    const accountEmailLabel = email || t('No email saved')
+    useEffect(() => {
+        const storedId = localStorage.getItem('current_account_id')
+        if (storedId) {
+            setAccountId(storedId)
+            fetchAccount(storedId)
+        } else {
+            navigate('/login')
+        }
+    }, [navigate])
 
+    const fetchAccount = async (id) => {
+        try {
+            const res = await fetch('/api/accounts')
+            const data = await res.json()
+            const acc = data.find(a => a.id.toString() === id.toString())
+            if (acc) {
+                setAccountForm(acc)
+                setEmail(acc.email)
+            }
+        } catch { }
+    }
+
+    const t_func = (key) => t(key)
+    const accountLabel = accountForm.name || accountForm.email || 'User'
+    const accountEmailLabel = accountForm.email || ''
+
+    const handleAccountButtonClick = () => setAccountMenuOpen(!accountMenuOpen)
     const closeAccountMenu = () => setAccountMenuOpen(false)
-    const handleAccountButtonClick = () => setAccountMenuOpen((prev) => !prev)
+
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (accountMenuRef.current && !accountMenuRef.current.contains(event.target) &&
+                accountButtonRef.current && !accountButtonRef.current.contains(event.target)) {
+                closeAccountMenu()
+            }
+        }
+        document.addEventListener('mousedown', handleClickOutside)
+        return () => document.removeEventListener('mousedown', handleClickOutside)
+    }, [])
+
     const handleAccountSettings = () => {
         closeAccountMenu()
         navigate('/account-select')
@@ -112,25 +153,17 @@ function DashboardPage() {
             try {
                 const res = await fetch(`/api/mail/${accountId}/connect-stored`, { method: 'POST' })
                 if (res.ok) setConnected(true)
-            } catch (err) {
-                console.error('AutoConnect error:', err)
-            } finally {
-                setConnecting(false)
-            }
+            } catch { }
+            setConnecting(false)
         }
         autoConnect()
-    }, [accountId, connected])
+    }, [accountId, connected, connecting])
 
     const loadMails = useCallback(async (folder) => {
         if (!accountId || !connected) return
         setLoadingMails(true)
-        setMails([])
-        setSelectedMail(null)
-        setMailContent(null)
         try {
-            const res = await fetch(
-                `/api/mail/${accountId}/list?mailbox=${encodeURIComponent(folder)}&page=1&per_page=50`
-            )
+            const res = await fetch(`/api/mail/${accountId}/list?mailbox=${encodeURIComponent(folder)}&page=1&per_page=50`)
             const data = await res.json()
             setMails(data.mails || [])
         } catch { }
@@ -218,7 +251,7 @@ function DashboardPage() {
                     ].map((item) => (
                         <button
                             key={item.key}
-                            className={`db-sidebar-btn${activeSection === item.key ? ' active' : ''}`}
+                            className={`db-sidebar-btn ${activeSection === item.key ? 'active' : ''}`}
                             title={item.label}
                             onClick={() => setActiveSection(item.key)}
                         >
@@ -227,32 +260,59 @@ function DashboardPage() {
                     ))}
                 </div>
 
-                <div className="db-section-area">
+                <div className="db-content-area">
                     {activeSection === 'mail' && (
-                        <MailSection
-                            connected={connected}
-                            setConnected={setConnected}
-                            accountId={accountId}
-                            accountForm={accountForm}
-                            email={email}
-                            folders={folders}
-                            selectedFolder={selectedFolder}
-                            setSelectedFolder={setSelectedFolder}
-                            mails={mails}
-                            selectedMail={selectedMail}
-                            mailContent={mailContent}
-                            loadingMails={loadingMails}
-                            loadingContent={loadingContent}
-                            connecting={connecting}
-                            loadMails={loadMails}
-                            openMail={openMail}
-                            iframeRef={iframeRef}
-                            getShortTime={getShortTime}
-                        />
+                        <>
+                            <div className="db-main-menu">
+                                <ul>
+                                    <li><a href="#file">{t('Files')}</a></li>
+                                    <li className="active"><a href="#home">{t('Home')}</a></li>
+                                    <li><a href="#send-receive">{t('Send/Receive')}</a></li>
+                                    <li><a href="#folder">{t('Folders')}</a></li>
+                                    <li><a href="#view">{t('View')}</a></li>
+                                </ul>
+                            </div>
+                            <div className="db-submenu">
+                                <ul>
+                                    <li><a href="#new-mail">🆕 {t('New Mail')}</a></li>
+                                    <li><a href="#delete">🗑️ {t('Delete')}</a></li>
+                                    <li><a href="#archive">📦 {t('Archive')}</a></li>
+                                    <li><a href="#reply">↩️ {t('Reply')}</a></li>
+                                    <li><a href="#reply-all">🔃 {t('Reply All')}</a></li>
+                                    <li><a href="#forward">➡️ {t('Forward')}</a></li>
+                                    <li><a href="#junk">🚫 {t('Junk')}</a></li>
+                                </ul>
+                            </div>
+                        </>
                     )}
-                    {activeSection === 'calendar' && <CalendarSection />}
-                    {activeSection === 'contacts' && <ContactsSection />}
-                    {activeSection === 'todo' && <TodoSection />}
+
+                    <div className="db-section-area">
+                        {activeSection === 'mail' && (
+                            <MailSection
+                                connected={connected}
+                                setConnected={setConnected}
+                                accountId={accountId}
+                                accountForm={accountForm}
+                                email={email}
+                                folders={folders}
+                                selectedFolder={selectedFolder}
+                                setSelectedFolder={setSelectedFolder}
+                                mails={mails}
+                                selectedMail={selectedMail}
+                                mailContent={mailContent}
+                                loadingMails={loadingMails}
+                                loadingContent={loadingContent}
+                                connecting={connecting}
+                                loadMails={loadMails}
+                                openMail={openMail}
+                                iframeRef={iframeRef}
+                                getShortTime={getShortTime}
+                            />
+                        )}
+                        {activeSection === 'calendar' && <CalendarSection />}
+                        {activeSection === 'contacts' && <ContactsSection />}
+                        {activeSection === 'todo' && <TodoSection />}
+                    </div>
                 </div>
             </div>
         </div>
@@ -265,28 +325,90 @@ function MailSection({
     selectedMail, mailContent, loadingMails, loadingContent,
     connecting, loadMails, openMail, iframeRef, getShortTime
 }) {
+    const processFolders = (list) => {
+        const top = []
+        const labels = []
+
+        const priorityMap = {
+            'INBOX': 1, 'GELEN KUTUSU': 1,
+            'STARRED': 2, 'YILDIZLI': 2,
+            'SNOOZED': 3, 'ERTELENENLER': 3,
+            'SENT': 4, 'SENT ITEMS': 4, 'GÖNDERİLMİŞ ÖĞELER': 4, 'GÖNDERİLMİŞ POSTALAR': 4,
+            'ALL MAIL': 5, 'TÜM POSTALAR': 5,
+            'DRAFTS': 6, 'TASLAKLAR': 6,
+            'ARCHIVE': 7, 'ARŞİV': 7,
+            'TRASH': 8, 'SILINMIŞ ÖĞELER': 8, 'ÇÖP KUTUSU': 8,
+            'SPAM': 9, 'ÖNEMSIZ E-POSTA': 9, 'JUNK': 9
+        }
+
+        list.forEach(f => {
+            const upper = f.toUpperCase()
+            if (upper === 'LABELS' || upper === 'FOLDERS') return
+
+            if (f.startsWith('Labels/') || f.startsWith('Etiketler/')) {
+                labels.push(f)
+            } else {
+                top.push(f)
+            }
+        })
+
+        const sortFn = (a, b) => {
+            const pa = priorityMap[a.toUpperCase().replace(/^(FOLDERS|LABELS|ETIKETLER)\//i, '')] || 999
+            const pb = priorityMap[b.toUpperCase().replace(/^(FOLDERS|LABELS|ETIKETLER)\//i, '')] || 999
+            if (pa !== pb) return pa - pb
+            return a.localeCompare(b)
+        }
+
+        return {
+            top: top.sort(sortFn),
+            labels: labels.sort(sortFn)
+        }
+    }
+
+    const { top, labels } = processFolders(folders)
+
     return (
         <>
             <div className="db-folder-panel">
                 {connected ? (
-                    <>
-                        <div className="db-folder-header">
-                            <span className="db-folder-title">{email || 'Posta Kutusu'}</span>
-                            <button className="db-folder-menu-btn">···</button>
-                        </div>
-                        <ul className="db-folder-list">
-                            {(folders.length > 0 ? folders : ['INBOX']).map((f) => (
-                                <li key={f} className={`db-folder-item${selectedFolder === f ? ' selected' : ''}`}>
+                    <ul className="db-folder-list">
+                        {top.map((f) => {
+                            const info = folderInfo(f)
+                            const isSelected = selectedFolder === f
+                            return (
+                                <li key={f} className={`db-folder-item ${isSelected ? 'selected' : ''}`}>
                                     <a onClick={(e) => { e.preventDefault(); setSelectedFolder(f) }}>
-                                        <span className="db-folder-icon">{folderIcon(f)}</span>
-                                        {f}
+                                        <span className="db-folder-icon">{info.icon}</span>
+                                        <span className="db-folder-text">{info.label}</span>
                                     </a>
                                 </li>
-                            ))}
-                        </ul>
-                    </>
+                            )
+                        })}
+                        {labels.length > 0 && (
+                            <div className="db-labels-section">
+                                <div className="db-labels-header">
+                                    <span>Etiketler</span>
+                                    <button className="db-label-add-btn" title="Yeni Etiket">+</button>
+                                </div>
+                                {labels.map((f) => {
+                                    const info = folderInfo(f)
+                                    const isSelected = selectedFolder === f
+                                    return (
+                                        <li key={f} className={`db-folder-item ${isSelected ? 'selected' : ''}`}>
+                                            <a onClick={(e) => { e.preventDefault(); setSelectedFolder(f) }}>
+                                                <span className="db-folder-icon">🔖</span>
+                                                <span className="db-folder-text">{info.label}</span>
+                                            </a>
+                                        </li>
+                                    )
+                                })}
+                            </div>
+                        )}
+                    </ul>
                 ) : (
-                    <div style={{ padding: '14px', color: '#999', fontSize: '13px' }}>Bağlantı yok</div>
+                    <div style={{ padding: '20px', color: '#999', fontSize: '13px', textAlign: 'center' }}>
+                        {connecting ? 'Bağlanıyor...' : 'Bağlantı bekliyor...'}
+                    </div>
                 )}
             </div>
             <div className="db-mail-main">
@@ -312,7 +434,7 @@ function MailSection({
                     ) : (
                         <ul className="db-mail-list">
                             {mails.map((mail) => (
-                                <li key={mail.id} className={`db-mail-item${!mail.seen ? ' unread' : ''}${selectedMail?.id === mail.id ? ' selected' : ''}`} onClick={() => openMail(mail)}>
+                                <li key={mail.id} className={`db-mail-item ${!mail.seen ? 'unread' : ''} ${selectedMail?.id === mail.id ? 'selected' : ''}`} onClick={() => openMail(mail)}>
                                     <span className="db-mail-sender">{mail.name || mail.address || 'Bilinmeyen'}</span>
                                     <span className="db-mail-subject">{mail.subject || '(Konu Yok)'}</span>
                                     <span className="db-mail-time">{getShortTime()}</span>
