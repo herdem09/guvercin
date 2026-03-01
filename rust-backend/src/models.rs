@@ -88,6 +88,8 @@ pub struct FinalizeAccountData {
     pub imap_port: Option<String>,
     pub smtp_server: Option<String>,
     pub smtp_port: Option<String>,
+    pub password: Option<String>,
+    pub ssl_mode: Option<String>,
 }
 
 #[derive(Deserialize)]

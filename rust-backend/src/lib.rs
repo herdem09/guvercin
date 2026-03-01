@@ -57,6 +57,10 @@ pub async fn run() -> anyhow::Result<()> {
     let mail_router = Router::new()
         .route("/api/mail/connect", post(mail_routes::connect_imap))
         .route(
+            "/api/mail/:account_id/connect-stored",
+            post(mail_routes::connect_imap_stored),
+        )
+        .route(
             "/api/mail/:account_id/mailboxes",
             get(mail_routes::get_mailboxes),
         )

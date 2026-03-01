@@ -36,81 +36,6 @@ function formatBytes(bytes) {
     return `${value.toFixed(1)} ${units[index]}`
 }
 
-function ConnectForm({ accountId, email, imapHost, imapPort, sslMode, onConnected }) {
-    const [form, setForm] = useState({
-        password: '',
-        imap_host: imapHost || '',
-        imap_port: imapPort || 143,
-        ssl_mode: sslMode || 'STARTTLS',
-    })
-    const [loading, setLoading] = useState(false)
-    const [error, setError] = useState('')
-
-    const handleChange = (e) => {
-        const { name, value } = e.target
-        setForm((prev) => ({ ...prev, [name]: value }))
-    }
-
-    const handleConnect = async (e) => {
-        e.preventDefault()
-        setLoading(true)
-        setError('')
-        try {
-            const res = await fetch('/api/mail/connect', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    account_id: accountId,
-                    email,
-                    password: form.password,
-                    imap_host: form.imap_host,
-                    imap_port: Number(form.imap_port),
-                    ssl_mode: form.ssl_mode,
-                }),
-            })
-            const data = await res.json()
-            if (res.ok) onConnected()
-            else setError(data.error || 'Bağlantı başarısız')
-        } catch (err) {
-            setError('Sunucuya ulaşılamadı: ' + err.message)
-        } finally {
-            setLoading(false)
-        }
-    }
-
-    return (
-        <div className="db-connect-banner">
-            <h3>📬 IMAP Bağlantısı</h3>
-            <p>Posta kutunuzu görüntülemek için IMAP sunucusuna bağlanın.</p>
-            <form onSubmit={handleConnect}>
-                <div className="conn-row">
-                    <label>IMAP Sunucu</label>
-                    <input name="imap_host" value={form.imap_host} onChange={handleChange} placeholder="mail.example.com" required />
-                </div>
-                <div className="conn-row">
-                    <label>Port</label>
-                    <input name="imap_port" type="number" value={form.imap_port} onChange={handleChange} required />
-                </div>
-                <div className="conn-row">
-                    <label>SSL Modu</label>
-                    <select name="ssl_mode" value={form.ssl_mode} onChange={handleChange}>
-                        <option value="STARTTLS">STARTTLS</option>
-                        <option value="SSL">SSL/TLS</option>
-                        <option value="NONE">Yok</option>
-                    </select>
-                </div>
-                <div className="conn-row">
-                    <label>Şifre</label>
-                    <input name="password" type="password" value={form.password} onChange={handleChange} placeholder="••••••••" required />
-                </div>
-                {error && <div className="db-connect-error">❌ {error}</div>}
-                <button type="submit" className="db-connect-btn" disabled={loading}>
-                    {loading ? 'Bağlanıyor…' : 'Bağlan'}
-                </button>
-            </form>
-        </div>
-    )
-}
 
 function useClock() {
     const [now, setNow] = useState(new Date())
@@ -144,6 +69,7 @@ function DashboardPage() {
     const [mailContent, setMailContent] = useState(null)
     const [loadingMails, setLoadingMails] = useState(false)
     const [loadingContent, setLoadingContent] = useState(false)
+    const [connecting, setConnecting] = useState(false)
     const iframeRef = useRef(null)
 
     const accountButtonRef = useRef(null)
@@ -175,6 +101,25 @@ function DashboardPage() {
             setFolders(data.mailboxes || [])
         } catch { }
     }, [accountId])
+
+    const autoConnectAttempted = useRef(false)
+
+    useEffect(() => {
+        const autoConnect = async () => {
+            if (!accountId || connected || connecting || autoConnectAttempted.current) return
+            autoConnectAttempted.current = true
+            setConnecting(true)
+            try {
+                const res = await fetch(`/api/mail/${accountId}/connect-stored`, { method: 'POST' })
+                if (res.ok) setConnected(true)
+            } catch (err) {
+                console.error('AutoConnect error:', err)
+            } finally {
+                setConnecting(false)
+            }
+        }
+        autoConnect()
+    }, [accountId, connected])
 
     const loadMails = useCallback(async (folder) => {
         if (!accountId || !connected) return
@@ -298,6 +243,7 @@ function DashboardPage() {
                             mailContent={mailContent}
                             loadingMails={loadingMails}
                             loadingContent={loadingContent}
+                            connecting={connecting}
                             loadMails={loadMails}
                             openMail={openMail}
                             iframeRef={iframeRef}
@@ -317,7 +263,7 @@ function MailSection({
     connected, setConnected, accountId, accountForm, email,
     folders, selectedFolder, setSelectedFolder, mails,
     selectedMail, mailContent, loadingMails, loadingContent,
-    loadMails, openMail, iframeRef, getShortTime
+    connecting, loadMails, openMail, iframeRef, getShortTime
 }) {
     return (
         <>
@@ -354,7 +300,7 @@ function MailSection({
                     {!connected ? (
                         <div className="db-empty-state">
                             <div className="db-empty-icon">📭</div>
-                            <div className="db-empty-text">Önce bağlanın</div>
+                            <div className="db-empty-text">{connecting ? 'Bağlanıyor…' : 'Bağlantı bekleniyor'}</div>
                         </div>
                     ) : loadingMails ? (
                         <div className="db-loading"><div className="db-spinner" />Yükleniyor…</div>
@@ -377,11 +323,10 @@ function MailSection({
                 </div>
                 <div className="db-right-panel">
                     {!connected ? (
-                        <ConnectForm
-                            accountId={accountId} email={email}
-                            imapHost={accountForm.imapServer || ''} imapPort={accountForm.imapPort || 143}
-                            sslMode={accountForm.sslMode || 'STARTTLS'} onConnected={() => setConnected(true)}
-                        />
+                        <div className="db-loading" style={{ paddingTop: 100 }}>
+                            <div className="db-spinner" />
+                            IMAP Sunucusuna bağlanılıyor…
+                        </div>
                     ) : !selectedMail ? (
                         <div className="db-empty-state">
                             <div className="db-empty-icon">🕊️</div>

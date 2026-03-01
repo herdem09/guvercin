@@ -158,6 +158,8 @@ pub async fn finalize_account(
         .as_deref()
         .map(|s| s.trim())
         .and_then(|p| p.parse().ok());
+    let password = account.password.as_deref().map(|s| s.trim().to_string());
+    let ssl_mode = account.ssl_mode.as_deref().unwrap_or("STARTTLS").to_string();
 
     let mut tx = state.general_pool.begin().await?;
 
@@ -172,7 +174,7 @@ pub async fn finalize_account(
             r#"
             UPDATE accounts
             SET display_name = ?, provider_type = 'imap', imap_host = ?, imap_port = ?,
-                smtp_host = ?, smtp_port = ?, language = ?, font = ?
+                smtp_host = ?, smtp_port = ?, language = ?, font = ?, auth_token = ?, ssl_mode = ?
             WHERE email_address = ?
             "#,
         )
@@ -183,6 +185,8 @@ pub async fn finalize_account(
         .bind(smtp_port)
         .bind(&language)
         .bind(&font)
+        .bind(password.clone())
+        .bind(&ssl_mode)
         .bind(&email)
         .execute(&mut *tx)
         .await?;
@@ -192,8 +196,8 @@ pub async fn finalize_account(
             r#"
             INSERT INTO accounts
                 (email_address, display_name, provider_type,
-                 imap_host, imap_port, smtp_host, smtp_port, language, font)
-            VALUES (?, ?, 'imap', ?, ?, ?, ?, ?, ?)
+                 imap_host, imap_port, smtp_host, smtp_port, language, font, auth_token, ssl_mode)
+            VALUES (?, ?, 'imap', ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&email)
@@ -204,6 +208,8 @@ pub async fn finalize_account(
         .bind(smtp_port)
         .bind(&language)
         .bind(&font)
+        .bind(password)
+        .bind(&ssl_mode)
         .execute(&mut *tx)
         .await?;
         res.last_insert_rowid()

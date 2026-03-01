@@ -9,6 +9,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::json;
+use sqlx::Row;
 use std::sync::Arc;
 
 use crate::{
@@ -44,6 +45,50 @@ pub async fn connect_imap(
     })
     .await
     .unwrap_or_else(|e| Err(format!("Task panic: {e}")));
+
+    if result.is_ok() {
+        let _ = sqlx::query("UPDATE accounts SET auth_token = ?, ssl_mode = ? WHERE account_id = ?")
+            .bind(&body.password)
+            .bind(&body.ssl_mode)
+            .bind(body.account_id)
+            .execute(&state._db.general_pool)
+            .await;
+    }
+
+    match result {
+        Ok(()) => (StatusCode::OK, Json(json!({"status": "connected"}))).into_response(),
+        Err(e) => (StatusCode::BAD_GATEWAY, Json(json!({"error": e}))).into_response(),
+    }
+}
+
+pub async fn connect_imap_stored(
+    State(state): State<Arc<MailAppState>>,
+    Path(account_id): Path<i64>,
+) -> impl IntoResponse {
+    let account = match sqlx::query(
+        "SELECT email_address, imap_host, imap_port, auth_token, ssl_mode FROM accounts WHERE account_id = ?",
+    )
+    .bind(account_id)
+    .fetch_one(&state._db.general_pool)
+    .await {
+        Ok(a) => a,
+        Err(_) => return (StatusCode::NOT_FOUND, Json(json!({"error": "Account not found"}))).into_response(),
+    };
+
+    let email: String = account.try_get::<Option<String>, _>("email_address").unwrap_or_default().unwrap_or_default();
+    let host: String = account.try_get::<Option<String>, _>("imap_host").unwrap_or_default().unwrap_or_default();
+    let port: i64 = account.try_get::<Option<i64>, _>("imap_port").unwrap_or_default().unwrap_or(143);
+    let password: String = account.try_get::<Option<String>, _>("auth_token").unwrap_or_default().unwrap_or_default();
+    let ssl: String = account.try_get::<Option<String>, _>("ssl_mode").unwrap_or_default().unwrap_or_else(|| "STARTTLS".to_string());
+
+    if password.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(json!({"error": "No password stored"}))).into_response();
+    }
+
+    let result = tokio::task::spawn_blocking({
+        let imap_state = state.imap.clone();
+        move || imap_session::connect_and_login(&imap_state, account_id, &email, &password, &host, port as u16, &ssl)
+    }).await.unwrap_or_else(|e| Err(format!("Task panic: {e}")));
 
     match result {
         Ok(()) => (StatusCode::OK, Json(json!({"status": "connected"}))).into_response(),

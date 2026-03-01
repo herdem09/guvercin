@@ -73,14 +73,14 @@ async fn init_general_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             last_sync_time DATETIME,
             language      TEXT DEFAULT 'EN',
             theme         TEXT DEFAULT 'LIGHT',
-            font          TEXT
+            font          TEXT,
+            ssl_mode      TEXT DEFAULT 'STARTTLS'
         )
         "#,
     )
     .execute(pool)
     .await?;
 
-    // ai table
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS ai (
@@ -94,6 +94,11 @@ async fn init_general_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
+
+    // Migration for existing databases
+    let _ = sqlx::query("ALTER TABLE accounts ADD COLUMN ssl_mode TEXT DEFAULT 'STARTTLS'")
+        .execute(pool)
+        .await;
 
     Ok(())
 }
