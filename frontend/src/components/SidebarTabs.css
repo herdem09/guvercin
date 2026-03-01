@@ -1,0 +1,68 @@
+.sidebar-tabs {
+  width: 50px;
+  background: #fff3d2;
+  border-right: 1px solid #ddd;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 4px;
+  flex-shrink: 0;
+  height: 100%;
+  box-shadow: inset -1px 0 0 #ffe5a0;
+}
+
+.sidebar-tabs ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sidebar-tabs li {
+  width: 100%;
+}
+
+@media (min-width: 768px) {
+  .sidebar-tabs {
+    padding: 12px 4px;
+  }
+}
+
+.sidebar-tab-btn {
+  width: 100%;
+  border: none;
+  background: transparent;
+  border-radius: 10px;
+  padding: 10px 6px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #444;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.sidebar-tab-btn:hover {
+  background: #ffe8ad;
+}
+
+.sidebar-tabs li.active .sidebar-tab-btn {
+  background: #ffcb08;
+  color: #1b1b1b;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.sidebar-tab-icon {
+  font-size: 24px;
+}
+
+.sidebar-tab-label {
+  font-size: 9px;
+  letter-spacing: 0;
+}

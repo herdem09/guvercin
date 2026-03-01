@@ -1,0 +1,870 @@
+/* ================================================= */
+/* Dashboard - Güvercin Mail Client                 */
+/* ================================================= */
+
+.dashboard-page {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #f4f4f4;
+  font-family: "Calibri", "Segoe UI", Arial, sans-serif;
+  overflow: hidden;
+}
+
+/* ── Navbar ─────────────────────────────────────── */
+.db-navbar {
+  position: relative;
+  width: 100%;
+  height: 50px;
+  background-color: #FFCB08;
+  display: flex;
+  align-items: center;
+  padding: 0 15px;
+  gap: 15px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  flex-shrink: 0;
+  z-index: 100;
+}
+
+.db-logo-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-radius: 5px;
+  transition: background 0.2s;
+}
+
+.db-logo-btn:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.db-logo-icon {
+  width: 30px;
+  height: 30px;
+  background: #333;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+}
+
+.db-logo-text {
+  font-size: 18px;
+  font-weight: 700;
+  color: #333;
+}
+
+.db-search {
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border-radius: 6px;
+  height: 34px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  flex: 1;
+  max-width: 500px;
+}
+
+.db-search input {
+  border: none;
+  outline: none;
+  padding: 0 14px;
+  font-size: 14px;
+  flex: 1;
+  background: transparent;
+}
+
+.db-search-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 6px 12px;
+  font-size: 16px;
+  transition: background 0.2s;
+}
+
+.db-search-btn:hover {
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.db-clock {
+  margin-left: auto;
+  display: flex;
+  gap: 10px;
+}
+
+.db-clock-item {
+  background: #fff;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  color: #333;
+}
+
+.db-icon-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  transition: background 0.2s;
+}
+
+.db-icon-btn:hover {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.db-account-wrapper {
+  position: relative;
+}
+
+.db-account-btn {
+  background: #ffffff;
+  border: none;
+  border-radius: 50%;
+  width: 42px;
+  height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.1);
+}
+
+.db-account-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.12);
+}
+
+.db-account-btn__icon {
+  font-size: 20px;
+}
+
+.account-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 240px;
+  background: #ffffff;
+  border-radius: 1.1rem;
+  padding: 1.25rem;
+  box-shadow: 0 20px 45px rgba(17, 17, 17, 0.25);
+  border: 1px solid rgba(0, 0, 0, 0.05);
+  color: #14142b;
+  z-index: 200;
+}
+
+.account-popover__avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #ffcb08, #ff8f00);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 28px;
+  margin: 0 auto 0.65rem;
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.2);
+}
+
+.account-popover__name {
+  font-weight: 700;
+  font-size: 1rem;
+  text-align: center;
+}
+
+.account-popover__email {
+  font-size: 0.85rem;
+  color: rgba(20, 20, 20, 0.7);
+  text-align: center;
+  margin-bottom: 0.85rem;
+}
+
+.account-popover__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.account-popover__btn {
+  border: none;
+  border-radius: 999px;
+  padding: 0.55rem 1.1rem;
+  font-weight: 600;
+  color: #14142b;
+  background: #f0f0f5;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.account-popover__btn:hover {
+  background: #e4e4ec;
+  transform: translateY(-1px);
+}
+
+.account-popover__btn--danger {
+  background: #ff4b4b;
+  color: #fff;
+  box-shadow: none;
+}
+
+.account-popover__btn--danger:hover {
+  background: #e63939;
+}
+
+/* ── Ribbon menu ─────────────────────────────────── */
+.db-main-menu {
+  background: #f0f0f0;
+  border-bottom: 1px solid #ccc;
+  display: flex;
+  align-items: center;
+  height: 34px;
+  flex-shrink: 0;
+}
+
+.db-main-menu ul {
+  list-style: none;
+  display: flex;
+  gap: 2px;
+  height: 100%;
+  align-items: center;
+  padding: 0 10px;
+}
+
+.db-main-menu li {
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.db-main-menu li a {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 18px;
+  text-decoration: none;
+  color: #333;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.db-main-menu li a:hover {
+  background: #e0e0e0;
+}
+
+.db-main-menu li.active a {
+  background: #e0e0e0;
+  border-bottom: 3px solid #FFCB08;
+  font-weight: 600;
+}
+
+/* ── Submenu ─────────────────────────────────────── */
+.db-submenu {
+  background: #f0f0f0;
+  border-bottom: 1px solid #ccc;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+
+.db-submenu ul {
+  list-style: none;
+  display: flex;
+  gap: 2px;
+  align-items: center;
+  padding: 0 10px;
+}
+
+.db-submenu li {
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.db-submenu li a {
+  display: flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 14px;
+  text-decoration: none;
+  color: #333;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.db-submenu li a:hover {
+  background: #e0e0e0;
+}
+
+/* ── Main body (sidebar + panels) ────────────────── */
+.db-main-container {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+.db-content-area {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.db-body {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ── Mail Area Layout ── */
+.db-mail-area {
+  display: flex;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ── Sidebar icons ───────────────────────────────── */
+.db-sidebar {
+  width: 50px;
+  background: #fff3d2;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 0;
+  border-right: 1px solid #ddd;
+  flex-shrink: 0;
+  gap: 5px;
+  z-index: 10;
+}
+
+.db-sidebar-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  transition: background 0.15s;
+  text-decoration: none;
+  color: #555;
+}
+
+.db-sidebar-btn:hover {
+  background: #ffe8ad;
+}
+
+.db-sidebar-btn.active {
+  background: linear-gradient(145deg, #ffdf8b, #ffb703);
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.08);
+}
+
+.db-section-area {
+  flex: 1;
+  display: flex;
+  gap: 20px;
+  padding: 18px;
+  background: linear-gradient(180deg, #f6f6f6, #ececec);
+  overflow: hidden;
+}
+
+.db-mail-main {
+  flex: 1;
+  display: flex;
+  gap: 16px;
+}
+
+.db-center-panel {
+  flex: 1;
+  background: #fff;
+  border-radius: 1rem;
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.1);
+}
+
+.db-right-panel {
+  width: min(360px, 45%);
+  background: #fff;
+  border-radius: 1rem;
+  padding: 1rem;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.1);
+  overflow-y: auto;
+}
+
+.db-section-panel {
+  flex: 1;
+  border-radius: 1.4rem;
+  background: #fff;
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+/* ── Folder panel ────────────────────────────────── */
+.db-folder-panel {
+  width: 220px;
+  background: #f4f4f4;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #ccc;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+.db-folder-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 10px 6px 14px;
+}
+
+.db-folder-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #333;
+  text-transform: uppercase;
+  flex: 1;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.db-folder-menu-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  color: #666;
+  padding: 2px 6px;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.db-folder-menu-btn:hover {
+  background: #e0e0e0;
+}
+
+.db-folder-list {
+  list-style: none;
+  padding: 6px 8px;
+}
+
+.db-folder-item {
+  margin-bottom: 2px;
+}
+
+.db-folder-item a {
+  display: flex;
+  align-items: center;
+  padding: 7px 12px;
+  border-radius: 4px;
+  text-decoration: none;
+  color: #333;
+  font-size: 13px;
+  transition: background 0.15s;
+  cursor: pointer;
+}
+
+.db-folder-item a:hover {
+  background: #e0e0e0;
+}
+
+.db-folder-item.selected a {
+  background: #FFF7CC;
+  font-weight: 700;
+}
+
+.db-folder-icon {
+  margin-right: 8px;
+  font-size: 15px;
+}
+
+.db-folder-count {
+  margin-left: auto;
+  background: #ddd;
+  color: #555;
+  padding: 1px 5px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+/* ── Mail toolbar ─────────────────────────────────── */
+.db-mail-toolbar {
+  height: 38px;
+  background: #f0f0f0;
+  border-bottom: 1px solid #ccc;
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.db-mail-toolbar-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 3px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  font-size: 10px;
+  color: #333;
+  min-width: 44px;
+  height: 30px;
+  justify-content: center;
+  gap: 1px;
+  transition: background 0.15s;
+}
+
+.db-mail-toolbar-btn:hover {
+  background: #e0e0e0;
+}
+
+.db-mail-toolbar-icon {
+  font-size: 14px;
+}
+
+/* ── Center: mail list ───────────────────────────── */
+.db-center-panel {
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #ccc;
+  background: #fff;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.db-mail-list {
+  flex: 1;
+  overflow-y: auto;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.db-mail-item {
+  padding: 10px 14px;
+  border-bottom: 1px solid #eee;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  border-left: 3px solid transparent;
+  border-right: 3px solid transparent;
+  transition: background 0.1s;
+}
+
+.db-mail-item:hover:not(.selected) {
+  background: #f8f8f8;
+}
+
+.db-mail-item.unread {
+  font-weight: 600;
+  border-left-color: #FFCB08;
+  border-right-color: #FFCB08;
+}
+
+.db-mail-item.selected {
+  background: #FFF7CC;
+  border-left-color: #FFCB08;
+  border-right-color: #FFCB08;
+}
+
+.db-mail-sender {
+  font-size: 13px;
+  color: #222;
+  margin-bottom: 2px;
+}
+
+.db-mail-subject {
+  font-size: 12px;
+  color: #555;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+
+.db-mail-time {
+  font-size: 10px;
+  color: #999;
+  align-self: flex-end;
+}
+
+/* ── Right panel: mail content ───────────────────── */
+.db-right-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  overflow: hidden;
+}
+
+.db-mail-content {
+  flex: 1;
+  padding: 28px 32px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.db-mail-content-subject {
+  font-size: 22px;
+  font-weight: 600;
+  color: #222;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}
+
+.db-mail-meta {
+  font-size: 13px;
+  color: #666;
+  margin-bottom: 4px;
+  flex-shrink: 0;
+}
+
+.db-mail-divider {
+  border: 0;
+  border-top: 1px solid #eee;
+  margin: 14px 0;
+  flex-shrink: 0;
+}
+
+.db-mail-body {
+  font-size: 14px;
+  color: #333;
+  line-height: 1.7;
+  white-space: pre-wrap;
+  word-break: break-word;
+  flex: 1;
+}
+
+.db-mail-body-html {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 400px;
+}
+
+.db-mail-body-html iframe {
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  border: none;
+}
+
+.db-attachments {
+  margin-top: 26px;
+  border-top: 1px solid #eee;
+  padding-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.db-attachments__header {
+  font-size: 14px;
+  font-weight: 600;
+  color: #222;
+}
+
+.db-attachments__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.db-attachments__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #fafafa;
+  border: 1px solid #f0f0f0;
+  border-radius: 12px;
+  padding: 10px 14px;
+}
+
+.db-attachments__info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.db-attachments__name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1d1d1d;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.db-attachments__meta {
+  font-size: 11px;
+  color: #666;
+}
+
+.db-attachments__link {
+  flex-shrink: 0;
+  background: #ffcb08;
+  color: #1d1d1d;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.2s;
+}
+
+.db-attachments__link:hover {
+  background: #f7b600;
+}
+
+/* Empty state */
+.db-empty-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  color: #999;
+}
+
+.db-empty-icon {
+  font-size: 60px;
+}
+
+.db-empty-text {
+  font-size: 16px;
+}
+
+/* Loading */
+.db-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: #888;
+  font-size: 13px;
+  gap: 8px;
+}
+
+.db-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #ddd;
+  border-top-color: #FFCB08;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Connect banner */
+.db-connect-banner {
+  background: #fffbe6;
+  border: 1px solid #ffe58f;
+  border-radius: 8px;
+  padding: 20px 28px;
+  margin: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 14px;
+  color: #333;
+}
+
+.db-connect-banner h3 {
+  font-size: 16px;
+  margin: 0;
+}
+
+.db-connect-banner .conn-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.db-connect-banner label {
+  width: 110px;
+  font-size: 13px;
+  color: #555;
+}
+
+.db-connect-banner input,
+.db-connect-banner select {
+  flex: 1;
+  padding: 6px 10px;
+  border-radius: 5px;
+  border: 1px solid #ccc;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.db-connect-banner input:focus,
+.db-connect-banner select:focus {
+  border-color: #FFCB08;
+}
+
+.db-connect-btn {
+  align-self: flex-start;
+  padding: 8px 20px;
+  background: #FFCB08;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s, transform 0.1s;
+}
+
+.db-connect-btn:hover {
+  background: #f0bc00;
+  transform: translateY(-1px);
+}
+
+.db-connect-error {
+  color: #d9363e;
+  font-size: 13px;
+}

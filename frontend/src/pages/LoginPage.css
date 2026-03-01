@@ -1,0 +1,312 @@
+/* ===== LoginPage Styles ===== */
+.login-page {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    padding: 40px 20px;
+    width: 100%;
+    animation: fadeIn 0.5s ease-out;
+}
+
+.form-container {
+    background-color: rgba(255, 255, 255, 0.95);
+    padding: 30px;
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    width: 100%;
+    max-width: 650px;
+    position: relative;
+    z-index: 2;
+    margin-bottom: 20px;
+    backdrop-filter: blur(10px);
+    animation: slideUp 0.4s ease-out;
+}
+
+.form-container h2 {
+    text-align: center;
+    color: #343a40;
+    margin-bottom: 25px;
+    font-size: 1.5rem;
+    font-weight: 700;
+}
+
+/* Loading Overlay */
+.loading-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(255, 255, 255, 0.95);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+    border-radius: 12px;
+    z-index: 10;
+}
+
+.spinner {
+    border: 4px solid rgba(0, 0, 0, 0.1);
+    border-top: 4px solid #FFCB08;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 1s linear infinite;
+    margin-bottom: 10px;
+}
+
+.loading-overlay p {
+    color: #495057;
+    font-weight: 500;
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* Column Layout */
+.column-group {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 15px;
+}
+
+.column {
+    flex: 1;
+    min-width: 0;
+}
+
+/* Input Groups */
+.input-group {
+    margin-bottom: 0;
+}
+
+.input-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 600;
+    color: #495057;
+    font-size: 0.9rem;
+}
+
+.input-group input[type="email"],
+.input-group input[type="text"],
+.input-group input[type="number"],
+.input-group input[type="password"] {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1.5px solid #FFCD10;
+    border-radius: 8px;
+    box-sizing: border-box;
+    transition: border-color 0.3s, box-shadow 0.3s;
+    font-size: 0.95rem;
+    font-family: inherit;
+    background-color: #FFFDF5;
+}
+
+.input-group input:focus {
+    border-color: #FFCB08;
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(255, 203, 8, 0.3);
+}
+
+/* Radio Group */
+.radio-group {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+    margin-top: 5px;
+    margin-bottom: 15px;
+}
+
+.radio-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-weight: 500 !important;
+    color: #495057;
+}
+
+.radio-group input[type="radio"] {
+    width: auto;
+    transform: scale(1.1);
+    accent-color: #FFCB08;
+}
+
+/* Submit Button */
+.form-container button[type="submit"] {
+    width: 100%;
+    padding: 12px;
+    background-color: #FFCB08;
+    color: #1a1a1a;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    margin-top: 10px;
+    margin-bottom: 15px;
+}
+
+.form-container button[type="submit"]:hover {
+    background-color: #f0be00;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(255, 203, 8, 0.4);
+}
+
+.form-container button[type="submit"]:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+}
+
+/* Shortcut Buttons */
+.shortcut-button {
+    width: 100%;
+    padding: 12px;
+    background-color: #FFF5CA;
+    color: #343a40;
+    border: 1.5px solid #FFCD10;
+    border-radius: 8px;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    margin-bottom: 10px;
+    font-family: inherit;
+}
+
+.shortcut-button:hover {
+    background-color: #FFD44F;
+    border-color: #FFCB08;
+    transform: translateY(-1px);
+}
+
+.button-icon {
+    width: auto;
+    height: 20px;
+    margin-right: 10px;
+}
+
+/* Response Messages */
+.response-message {
+    text-align: center;
+    margin-top: 15px;
+    padding: 12px;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    animation: fadeIn 0.3s ease-out;
+}
+
+.error-message {
+    color: #721c24;
+    background-color: #f8d7da;
+    border: 1px solid #f5c6cb;
+}
+
+.success-message {
+    color: #495057;
+    background-color: #FFD44F;
+    border: 1px solid #FFCB08;
+}
+
+.already-exists-message {
+    background-color: #ff877f;
+    color: black;
+    padding: 12px;
+    border-radius: 8px;
+    text-align: center;
+    margin-top: 15px;
+    margin-bottom: 5px;
+    font-size: 1rem;
+    font-weight: 500;
+}
+
+/* Registered Accounts */
+.registered-accounts-container {
+    background-color: rgba(255, 255, 255, 0.95);
+    padding: 20px;
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    width: 100%;
+    max-width: 650px;
+    z-index: 2;
+    position: relative;
+    backdrop-filter: blur(10px);
+    animation: slideUp 0.5s ease-out 0.1s both;
+}
+
+.container-header {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    position: relative;
+    border-bottom: 1px solid #ced4da;
+    padding-bottom: 10px;
+    margin-bottom: 15px;
+}
+
+.container-header h3 {
+    font-size: 1.1rem;
+    color: #343a40;
+}
+
+.settings-btn {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(calc(-50% - 5px));
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    padding: 0;
+    transition: transform 0.3s ease;
+    opacity: 0.7;
+    line-height: 1;
+}
+
+.settings-btn:hover {
+    transform: translateY(calc(-50% - 5px)) rotate(45deg);
+    opacity: 1;
+}
+
+.accounts-list {
+    max-height: 200px;
+    overflow-y: auto;
+    padding-right: 5px;
+}
+
+.account-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    border-radius: 8px;
+    margin-bottom: 6px;
+    background-color: #FFF5CA;
+    border: 1.5px solid #FFCD10;
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.account-item:hover {
+    background-color: #FFD44F;
+    transform: translateX(3px);
+}
+
+.account-item strong {
+    font-weight: 600;
+    font-size: 1rem;
+    color: #343a40;
+}
+
+.account-item span {
+    font-size: 0.9rem;
+    color: #6c757d;
+}

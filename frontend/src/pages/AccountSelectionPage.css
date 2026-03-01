@@ -1,0 +1,142 @@
+.account-selection-page {
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1rem;
+  background: radial-gradient(circle at top, rgba(255, 255, 255, 0.12), transparent 45%),
+    linear-gradient(180deg, #0b1124 0%, #020510 55%, #020510 100%);
+}
+
+.selection-panel {
+  width: min(720px, 95vw);
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 2rem;
+  border-radius: 1.8rem;
+  background: linear-gradient(145deg, rgba(8, 14, 36, 0.92), rgba(9, 16, 40, 0.95));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 20px 60px rgba(1, 7, 25, 0.8);
+  backdrop-filter: blur(12px);
+}
+
+.heading h1 {
+  font-size: clamp(1.9rem, 3vw, 2.4rem);
+  color: #fff;
+  margin-bottom: 0.4rem;
+}
+
+.heading .eyebrow {
+  font-size: 0.85rem;
+  letter-spacing: 0.35rem;
+  text-transform: uppercase;
+  color: #9ae4ff;
+  margin-bottom: 0.6rem;
+}
+
+.heading .subtitle {
+  color: rgba(255, 255, 255, 0.75);
+  line-height: 1.6;
+  max-width: 28rem;
+}
+
+.status {
+  color: rgba(255, 255, 255, 0.9);
+  text-align: center;
+  margin-top: 0.5rem;
+}
+
+.status-actions {
+  display: flex;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.status button {
+  border-radius: 999px;
+  border: none;
+  padding: 0.55rem 1.4rem;
+  font-weight: 600;
+  cursor: pointer;
+  background: #fff;
+  color: #090b1b;
+  transition: transform 0.2s ease;
+}
+
+.status button:hover {
+  transform: translateY(-2px);
+}
+
+.accounts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+}
+
+.account-card {
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.01));
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 1.2rem;
+  padding: 1rem 1.25rem;
+  text-align: left;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.account-card__title {
+  font-weight: 600;
+  font-size: 1.1rem;
+}
+
+.account-card__email {
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.account-card__meta {
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.1rem;
+}
+
+.account-card:hover {
+  transform: translateY(-6px);
+  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.4);
+}
+
+.selection-panel__footer {
+  display: flex;
+  justify-content: center;
+}
+
+.ghost-btn {
+  border-radius: 999px;
+  padding: 0.65rem 1.6rem;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  background: transparent;
+  color: #f4f9ff;
+  text-transform: uppercase;
+  font-weight: 600;
+  letter-spacing: 0.08rem;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.ghost-btn:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.status-empty button {
+  margin-top: 0.5rem;
+  background: #fff;
+  color: #090b1b;
+}

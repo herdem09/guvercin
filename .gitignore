@@ -1,0 +1,40 @@
+# IDEs
+.idea/
+.vscode/
+
+# Node / Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Rust / Backend
+target/
+**/*.rs.bk
+Cargo.lock
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Databases / Local Files
+*.db
+databases/
+*.xlsx
+.env
+.env.*
+
+# Build artifacts
+/node_modules/
+/frontend/node_modules/
+/frontend/dist/
+/target/
+/rust-backend/target/
+/src-tauri/target/

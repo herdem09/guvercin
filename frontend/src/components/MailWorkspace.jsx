@@ -1,0 +1,322 @@
+import { useState, useEffect, useCallback, useRef } from 'react'
+
+const FOLDER_MAP = {
+  INBOX: { icon: '✉️', href: '#inbox' },
+  'Gelen Kutusu': { icon: '✉️', href: '#inbox' },
+  'Önemsiz E-posta': { icon: '🚫', href: '#junk' },
+  Spam: { icon: '🚫', href: '#junk' },
+  Taslaklar: { icon: '📝', href: '#drafts' },
+  Drafts: { icon: '📝', href: '#drafts' },
+  'Gönderilmiş Öğeler': { icon: '📤', href: '#sent' },
+  Sent: { icon: '📤', href: '#sent' },
+  'Silinmiş Öğeler': { icon: '🗑️', href: '#deleted' },
+  Trash: { icon: '🗑️', href: '#deleted' },
+  Arşiv: { icon: '🗄️', href: '#archive' },
+  Archive: { icon: '🗄️', href: '#archive' },
+}
+
+function folderIcon(name) {
+  return FOLDER_MAP[name]?.icon ?? '✉️'
+}
+
+function ConnectForm({ accountId, email, imapHost, imapPort, sslMode, onConnected }) {
+  const [form, setForm] = useState({
+    password: '',
+    imap_host: imapHost || '',
+    imap_port: imapPort || 143,
+    ssl_mode: sslMode || 'STARTTLS',
+  })
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+
+  const handleChange = (event) => {
+    const { name, value } = event.target
+    setForm((prev) => ({ ...prev, [name]: value }))
+  }
+
+  const handleConnect = async (event) => {
+    event.preventDefault()
+    setLoading(true)
+    setError('')
+    try {
+      const response = await fetch('/api/mail/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          account_id: accountId,
+          email,
+          password: form.password,
+          imap_host: form.imap_host,
+          imap_port: Number(form.imap_port),
+          ssl_mode: form.ssl_mode,
+        }),
+      })
+      const data = await response.json()
+      if (response.ok) {
+        onConnected()
+      } else {
+        setError(data.error || 'Bağlantı başarısız')
+      }
+    } catch (networkError) {
+      setError('Sunucuya ulaşılamadı: ' + networkError.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="db-connect-banner">
+      <h3>📬 IMAP Bağlantısı</h3>
+      <p>Posta kutunuzu görüntülemek için IMAP sunucusuna bağlanın.</p>
+      <form onSubmit={handleConnect}>
+        <div className="conn-row">
+          <label>IMAP Sunucu</label>
+          <input name="imap_host" value={form.imap_host} onChange={handleChange} placeholder="mail.example.com" required />
+        </div>
+        <div className="conn-row">
+          <label>Port</label>
+          <input name="imap_port" type="number" value={form.imap_port} onChange={handleChange} required />
+        </div>
+        <div className="conn-row">
+          <label>SSL Modu</label>
+          <select name="ssl_mode" value={form.ssl_mode} onChange={handleChange}>
+            <option value="STARTTLS">STARTTLS</option>
+            <option value="SSL">SSL/TLS</option>
+            <option value="NONE">Yok</option>
+          </select>
+        </div>
+        <div className="conn-row">
+          <label>Şifre</label>
+          <input name="password" type="password" value={form.password} onChange={handleChange} placeholder="••••••••" required />
+        </div>
+        {error && <div className="db-connect-error">❌ {error}</div>}
+        <button type="submit" className="db-connect-btn" disabled={loading}>
+          {loading ? 'Bağlanıyor…' : 'Bağlan'}
+        </button>
+      </form>
+    </div>
+  )
+}
+
+function getShortTime() {
+  const now = new Date()
+  return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+}
+
+export default function MailWorkspace({ accountId, email, accountForm }) {
+  const [connected, setConnected] = useState(false)
+  const [folders, setFolders] = useState([])
+  const [selectedFolder, setSelectedFolder] = useState('INBOX')
+  const [mails, setMails] = useState([])
+  const [selectedMail, setSelectedMail] = useState(null)
+  const [mailContent, setMailContent] = useState(null)
+  const [loadingMails, setLoadingMails] = useState(false)
+  const [loadingContent, setLoadingContent] = useState(false)
+  const iframeRef = useRef(null)
+
+  const loadFolders = useCallback(async () => {
+    if (!accountId) return
+    try {
+      const response = await fetch(`/api/mail/${accountId}/mailboxes`)
+      const data = await response.json()
+      setFolders(data.mailboxes || [])
+    } catch (err) {
+      console.error(err)
+    }
+  }, [accountId])
+
+  const loadMails = useCallback(
+    async (folder) => {
+      if (!accountId || !connected) return
+      setLoadingMails(true)
+      setMails([])
+      setSelectedMail(null)
+      setMailContent(null)
+      try {
+        const response = await fetch(
+          `/api/mail/${accountId}/list?mailbox=${encodeURIComponent(folder)}&page=1&per_page=50`,
+        )
+        const data = await response.json()
+        setMails(data.mails || [])
+      } catch (err) {
+        console.error(err)
+      } finally {
+        setLoadingMails(false)
+      }
+    },
+    [accountId, connected],
+  )
+
+  useEffect(() => {
+    if (connected) {
+      loadFolders()
+    }
+  }, [connected, loadFolders])
+
+  useEffect(() => {
+    if (connected) {
+      loadMails(selectedFolder)
+    }
+  }, [connected, selectedFolder, loadMails])
+
+  const openMail = async (mail) => {
+    setSelectedMail(mail)
+    setMailContent(null)
+    setLoadingContent(true)
+    try {
+      const response = await fetch(`/api/mail/${accountId}/content/${mail.id}`)
+      if (response.ok) {
+        const data = await response.json()
+        setMailContent(data)
+      }
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setLoadingContent(false)
+    }
+  }
+
+  useEffect(() => {
+    if (iframeRef.current && mailContent?.html_body) {
+      const doc = iframeRef.current.contentDocument
+      doc.open()
+      doc.write(mailContent.html_body)
+      doc.close()
+    }
+  }, [mailContent])
+
+  return (
+    <div className="db-mail-area">
+      <div className="db-folder-panel">
+        {connected ? (
+          <>
+            <div className="db-folder-header">
+              <span className="db-folder-title">{email || 'Posta Kutusu'}</span>
+              <button className="db-folder-menu-btn">···</button>
+            </div>
+            <ul className="db-folder-list">
+              {(folders.length > 0 ? folders : ['INBOX']).map((folder) => (
+                <li
+                  key={folder}
+                  className={`db-folder-item${selectedFolder === folder ? ' selected' : ''}`}
+                >
+                  <a
+                    onClick={(event) => {
+                      event.preventDefault()
+                      setSelectedFolder(folder)
+                    }}
+                  >
+                    <span className="db-folder-icon">{folderIcon(folder)}</span>
+                    {folder}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </>
+        ) : (
+          <div style={{ padding: '14px', color: '#999', fontSize: '13px' }}>Bağlantı yok</div>
+        )}
+      </div>
+
+      <div className="db-center-panel">
+        <div className="db-mail-toolbar">
+          <button className="db-mail-toolbar-btn">
+            <span className="db-mail-toolbar-icon">☑️</span>
+            Select
+          </button>
+          <button className="db-mail-toolbar-btn">
+            <span className="db-mail-toolbar-icon">⏭️</span>
+            Jump
+          </button>
+          <button className="db-mail-toolbar-btn">
+            <span className="db-mail-toolbar-icon">🔍</span>
+            Filter
+          </button>
+          <button className="db-mail-toolbar-btn" onClick={() => loadMails(selectedFolder)}>
+            <span className="db-mail-toolbar-icon">🔄</span>
+            Yenile
+          </button>
+        </div>
+
+        {!connected ? (
+          <div className="db-empty-state">
+            <div className="db-empty-icon">📭</div>
+            <div className="db-empty-text">Önce bağlanın</div>
+          </div>
+        ) : loadingMails ? (
+          <div className="db-loading">
+            <div className="db-spinner" />
+            Yükleniyor…
+          </div>
+        ) : mails.length === 0 ? (
+          <div className="db-empty-state">
+            <div className="db-empty-icon">📭</div>
+            <div className="db-empty-text">Bu klasör boş</div>
+          </div>
+        ) : (
+          <ul className="db-mail-list">
+            {mails.map((mail) => (
+              <li
+                key={mail.id}
+                className={`db-mail-item${!mail.seen ? ' unread' : ''}${selectedMail?.id === mail.id ? ' selected' : ''}`}
+                onClick={() => openMail(mail)}
+              >
+                <span className="db-mail-sender">{mail.name || mail.address || 'Bilinmeyen'}</span>
+                <span className="db-mail-subject">{mail.subject || '(Konu Yok)'}</span>
+                <span className="db-mail-time">{getShortTime()}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      <div className="db-right-panel">
+        {!connected ? (
+          <ConnectForm
+            accountId={accountId}
+            email={email}
+            imapHost={accountForm?.imapServer || ''}
+            imapPort={accountForm?.imapPort || 143}
+            sslMode={accountForm?.sslMode || 'STARTTLS'}
+            onConnected={() => setConnected(true)}
+          />
+        ) : !selectedMail ? (
+          <div className="db-empty-state">
+            <div className="db-empty-icon">🕊️</div>
+            <div className="db-empty-text">Bir e-posta seçin</div>
+          </div>
+        ) : loadingContent ? (
+          <div className="db-loading" style={{ paddingTop: 60 }}>
+            <div className="db-spinner" />
+            İçerik yükleniyor…
+          </div>
+        ) : (
+          <div className="db-mail-content">
+            <div className="db-mail-content-subject">
+              {mailContent?.subject || selectedMail.subject || '(Konu Yok)'}
+            </div>
+            <div className="db-mail-meta">
+              <strong>Kimden:</strong>{' '}
+              {mailContent?.from_name
+                ? `${mailContent.from_name} <${mailContent.from_address}>`
+                : selectedMail.address}
+            </div>
+            {mailContent?.date && (
+              <div className="db-mail-meta">
+                <strong>Tarih:</strong> {mailContent.date}
+              </div>
+            )}
+            <hr className="db-mail-divider" />
+            {mailContent?.html_body ? (
+              <div className="db-mail-body-html">
+                <iframe ref={iframeRef} title="mail-content" sandbox="allow-same-origin" />
+              </div>
+            ) : (
+              <div className="db-mail-body">{mailContent?.plain_body || '(İçerik yok)'}</div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

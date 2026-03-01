@@ -1,0 +1,189 @@
+# Turkish translations for Guvercin.
+msgid ""
+msgstr ""
+"Project-Id-Version: Guvercin 1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-02-25 22:21+0300\n"
+"PO-Revision-Date: 2026-02-25 22:38+0300\n"
+"Last-Translator: \n"
+"Language: tr\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+#: customize.py:191
+msgid "Authorization skipped by user."
+msgstr "Yetkilendirme kullanıcı tarafından atlandı."
+
+#: customize.py:206 imap_client.py:32
+msgid "Authorization successful."
+msgstr "Yetkilendirme başarılı."
+
+#: customize.py:229
+msgid "No data provided"
+msgstr "Veri sağlanmadı"
+
+#: customize.py:294
+msgid "Account finalized successfully."
+msgstr "Hesap başarıyla tamamlandı."
+
+#: imap_client.py:35
+msgid "Login failed: {}"
+msgstr "Giriş başarısız: {}"
+
+#: imap_client.py:37
+msgid "Connection refused — make sure the server is running on {}:{}."
+msgstr "Bağlantı reddedildi — sunucunun {}:{} üzerinde çalıştığından emin olun."
+
+#: imap_client.py:39
+msgid "Connection timed out while trying to reach {}:{}."
+msgstr "{}:{} adresine ulaşmaya çalışırken bağlantı zaman aşımına uğradı."
+
+#: imap_client.py:41
+msgid "Unexpected error: {}"
+msgstr "Beklenmedik hata: {}"
+
+msgid "API Key"
+msgstr "API Anahtarı"
+
+msgid "All processes completed successfully, account and AI settings saved!"
+msgstr "Tüm işlemler başarıyla tamamlandı, hesap ve yapay zeka ayarları kaydedildi!"
+
+msgid "An error occurred during saving."
+msgstr "Kaydetme sırasında bir hata oluştu."
+
+msgid "An error occurred while creating the account."
+msgstr "Hesap oluşturulurken bir hata oluştu."
+
+msgid "An unknown error occurred. Please check the console logs."
+msgstr "Bilinmeyen bir hata oluştu. Lütfen konsol günlüklerini kontrol edin."
+
+msgid "Authorization failed."
+msgstr "Yetkilendirme başarısız."
+
+msgid "Authorization failed. The server returned an error page."
+msgstr "Yetkilendirme başarısız. Sunucu bir hata sayfası döndürdü."
+
+msgid "Back to Login"
+msgstr "Girişe Dön"
+
+msgid "Base URL"
+msgstr "Temel URL"
+
+msgid "Choose and Configure Your AI Server"
+msgstr "Yapay Zeka Sunucunuzu Seçin ve Yapılandırın"
+
+msgid "Confirm Selection"
+msgstr "Seçimi Onayla"
+
+msgid "Connection Encryption Mode:"
+msgstr "Bağlantı Şifreleme Modu:"
+
+msgid "Context Window"
+msgstr "Bağlam Penceresi"
+
+msgid "Continue with Google"
+msgstr "Google ile Devam Et"
+
+msgid "Continue with Microsoft"
+msgstr "Microsoft ile Devam Et"
+
+msgid "Couldn't authorize your credentials"
+msgstr "Kimlik bilgileriniz doğrulanamadı"
+
+msgid "Create Account Anyway"
+msgstr "Yine de Hesap Oluştur"
+
+msgid "Display Name:"
+msgstr "Görünen Ad:"
+
+msgid "Email Account Settings"
+msgstr "E-posta Hesap Ayarları"
+
+msgid "Email Address:"
+msgstr "E-posta Adresi:"
+
+msgid "Error:"
+msgstr "Hata:"
+
+msgid "Font Settings"
+msgstr "Yazı Tipi Ayarları"
+
+msgid "Font Type"
+msgstr "Yazı Tipi"
+
+msgid "IMAP Port:"
+msgstr "IMAP Portu:"
+
+msgid "IMAP Server:"
+msgstr "IMAP Sunucusu:"
+
+msgid "If prompted, allow font access to view all PC fonts."
+msgstr "İstendiğinde, tüm PC yazı tiplerini görmek için yazı tipi erişimine izin verin."
+
+msgid "Language"
+msgstr "Dil"
+
+msgid "Local AI"
+msgstr "Yerel Yapay Zeka"
+
+msgid "Model Name"
+msgstr "Model Adı"
+
+msgid "No results found."
+msgstr "Sonuç bulunamadı."
+
+msgid "Password:"
+msgstr "Şifre:"
+
+msgid "Registered Accounts"
+msgstr "Kayıtlı Hesaplar"
+
+msgid "Running large models may slow down your computer"
+msgstr "Büyük modelleri çalıştırmak bilgisayarınızı yavaşlatabilir"
+
+msgid "SMTP Port:"
+msgstr "SMTP Portu:"
+
+msgid "SMTP Server:"
+msgstr "SMTP Sunucusu:"
+
+msgid "Save Settings and Test"
+msgstr "Ayarları Kaydet ve Test Et"
+
+msgid "Save and Continue"
+msgstr "Kaydet ve Devam Et"
+
+msgid "Search language or country..."
+msgstr "Dil veya ülke ara..."
+
+msgid "Server Name, Port, or SSL Mode might be incorrect."
+msgstr "Sunucu Adı, Portu veya SSL Modu yanlış olabilir."
+
+msgid "Server URL"
+msgstr "Sunucu URL'si"
+
+msgid "Server could not be reached. The backend service (Flask) may not be running."
+msgstr "Sunucuya ulaşılamadı. Arka plan servisi (Flask) çalışmıyor olabilir."
+
+msgid "Settings module will be added soon."
+msgstr "Ayarlar modülü yakında eklenecek."
+
+msgid "Skip for now"
+msgstr "Şimdilik atla"
+
+msgid "Testing Connection and Authentication..."
+msgstr "Bağlantı ve Kimlik Doğrulama Test Ediliyor..."
+
+msgid "The quick brown fox jumps over the lazy dog."
+msgstr "Pijamalı hasta, yağız şoföre çabucak güvendi."
+
+msgid "Unknown error"
+msgstr "Bilinmeyen hata"
+
+msgid "Would you still like to create the account, or go back to correct the details?"
+msgstr "Bilgileri düzeltmek için geri mi dönmek istersiniz, yoksa yine de hesap oluşturulsun mu?"
+
+msgid "Your Email Address or Password is incorrect."
+msgstr "E-posta Adresiniz veya Şifreniz yanlış."

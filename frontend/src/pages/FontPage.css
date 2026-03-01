@@ -1,0 +1,119 @@
+/* ===== FontPage Styles ===== */
+.font-page {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+    width: 100%;
+    animation: fadeIn 0.5s ease-out;
+}
+
+.font-container {
+    background-color: rgba(255, 255, 255, 0.95);
+    padding: 25px;
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    width: 95%;
+    max-width: 500px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    backdrop-filter: blur(10px);
+}
+
+.font-container .sticky-title {
+    text-align: center;
+    color: #343a40;
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 700;
+}
+
+.settings-wrapper {
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+}
+
+.setting-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.setting-group label {
+    font-weight: 600;
+    color: #343a40;
+    font-size: 0.95rem;
+}
+
+.setting-input {
+    width: 100%;
+    padding: 10px 14px;
+    border: 2px solid #FFCD10;
+    border-radius: 8px;
+    font-size: 1rem;
+    background-color: #FFFBEA;
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    box-sizing: border-box;
+    color: #343a40;
+    font-family: inherit;
+    cursor: pointer;
+}
+
+.setting-input:focus {
+    border-color: #e6b800;
+    box-shadow: 0 0 0 3px rgba(255, 205, 16, 0.25);
+}
+
+.helper-text {
+    font-size: 0.8rem;
+    color: #6c757d;
+    margin-top: -3px;
+}
+
+.preview-box {
+    margin-top: 10px;
+    padding: 20px;
+    border: 2px dashed #FFCD10;
+    border-radius: 10px;
+    background-color: #FFF;
+    text-align: center;
+    color: #343a40;
+    min-height: 80px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    word-break: break-word;
+    font-size: 1.1rem;
+    line-height: 1.5;
+    transition: font-family 0.3s ease;
+}
+
+.continue-button {
+    width: 100%;
+    padding: 12px;
+    background-color: #FFCB08;
+    border: none;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-family: inherit;
+    color: #1a1a1a;
+}
+
+.continue-button:hover:not(:disabled) {
+    background-color: #e6b800;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(255, 203, 8, 0.4);
+}
+
+.continue-button:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+    transform: none;
+}

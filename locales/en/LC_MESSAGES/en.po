@@ -1,0 +1,189 @@
+# English translations for Guvercin.
+msgid ""
+msgstr ""
+"Project-Id-Version: Guvercin 1.0\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-02-25 22:21+0300\n"
+"PO-Revision-Date: 2026-02-25 22:38+0300\n"
+"Last-Translator: \n"
+"Language: en\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: customize.py:191
+msgid "Authorization skipped by user."
+msgstr "Authorization skipped by user."
+
+#: customize.py:206 imap_client.py:32
+msgid "Authorization successful."
+msgstr "Authorization successful."
+
+#: customize.py:229
+msgid "No data provided"
+msgstr "No data provided"
+
+#: customize.py:294
+msgid "Account finalized successfully."
+msgstr "Account finalized successfully."
+
+#: imap_client.py:35
+msgid "Login failed: {}"
+msgstr "Login failed: {}"
+
+#: imap_client.py:37
+msgid "Connection refused — make sure the server is running on {}:{}."
+msgstr "Connection refused — make sure the server is running on {}:{}."
+
+#: imap_client.py:39
+msgid "Connection timed out while trying to reach {}:{}."
+msgstr "Connection timed out while trying to reach {}:{}."
+
+#: imap_client.py:41
+msgid "Unexpected error: {}"
+msgstr "Unexpected error: {}"
+
+msgid "API Key"
+msgstr "API Key"
+
+msgid "All processes completed successfully, account and AI settings saved!"
+msgstr "All processes completed successfully, account and AI settings saved!"
+
+msgid "An error occurred during saving."
+msgstr "An error occurred during saving."
+
+msgid "An error occurred while creating the account."
+msgstr "An error occurred while creating the account."
+
+msgid "An unknown error occurred. Please check the console logs."
+msgstr "An unknown error occurred. Please check the console logs."
+
+msgid "Authorization failed."
+msgstr "Authorization failed."
+
+msgid "Authorization failed. The server returned an error page."
+msgstr "Authorization failed. The server returned an error page."
+
+msgid "Back to Login"
+msgstr "Back to Login"
+
+msgid "Base URL"
+msgstr "Base URL"
+
+msgid "Choose and Configure Your AI Server"
+msgstr "Choose and Configure Your AI Server"
+
+msgid "Confirm Selection"
+msgstr "Confirm Selection"
+
+msgid "Connection Encryption Mode:"
+msgstr "Connection Encryption Mode:"
+
+msgid "Context Window"
+msgstr "Context Window"
+
+msgid "Continue with Google"
+msgstr "Continue with Google"
+
+msgid "Continue with Microsoft"
+msgstr "Continue with Microsoft"
+
+msgid "Couldn't authorize your credentials"
+msgstr "Couldn't authorize your credentials"
+
+msgid "Create Account Anyway"
+msgstr "Create Account Anyway"
+
+msgid "Display Name:"
+msgstr "Display Name:"
+
+msgid "Email Account Settings"
+msgstr "Email Account Settings"
+
+msgid "Email Address:"
+msgstr "Email Address:"
+
+msgid "Error:"
+msgstr "Error:"
+
+msgid "Font Settings"
+msgstr "Font Settings"
+
+msgid "Font Type"
+msgstr "Font Type"
+
+msgid "IMAP Port:"
+msgstr "IMAP Port:"
+
+msgid "IMAP Server:"
+msgstr "IMAP Server:"
+
+msgid "If prompted, allow font access to view all PC fonts."
+msgstr "If prompted, allow font access to view all PC fonts."
+
+msgid "Language"
+msgstr "Language"
+
+msgid "Local AI"
+msgstr "Local AI"
+
+msgid "Model Name"
+msgstr "Model Name"
+
+msgid "No results found."
+msgstr "No results found."
+
+msgid "Password:"
+msgstr "Password:"
+
+msgid "Registered Accounts"
+msgstr "Registered Accounts"
+
+msgid "Running large models may slow down your computer"
+msgstr "Running large models may slow down your computer"
+
+msgid "SMTP Port:"
+msgstr "SMTP Port:"
+
+msgid "SMTP Server:"
+msgstr "SMTP Server:"
+
+msgid "Save Settings and Test"
+msgstr "Save Settings and Test"
+
+msgid "Save and Continue"
+msgstr "Save and Continue"
+
+msgid "Search language or country..."
+msgstr "Search language or country..."
+
+msgid "Server Name, Port, or SSL Mode might be incorrect."
+msgstr "Server Name, Port, or SSL Mode might be incorrect."
+
+msgid "Server URL"
+msgstr "Server URL"
+
+msgid "Server could not be reached. The backend service (Flask) may not be running."
+msgstr "Server could not be reached. The backend service (Flask) may not be running."
+
+msgid "Settings module will be added soon."
+msgstr "Settings module will be added soon."
+
+msgid "Skip for now"
+msgstr "Skip for now"
+
+msgid "Testing Connection and Authentication..."
+msgstr "Testing Connection and Authentication..."
+
+msgid "The quick brown fox jumps over the lazy dog."
+msgstr "The quick brown fox jumps over the lazy dog."
+
+msgid "Unknown error"
+msgstr "Unknown error"
+
+msgid "Would you still like to create the account, or go back to correct the details?"
+msgstr "Would you still like to create the account, or go back to correct the details?"
+
+msgid "Your Email Address or Password is incorrect."
+msgstr "Your Email Address or Password is incorrect."
