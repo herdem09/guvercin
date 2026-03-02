@@ -11,6 +11,11 @@
   overflow: hidden;
 }
 
+body.resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
 /* ── Navbar ─────────────────────────────────────── */
 .db-navbar {
   position: relative;
@@ -244,26 +249,31 @@
   padding: 0 10px;
 }
 
-.db-main-menu li a {
+.db-main-menu li button {
+  background: none;
+  border: none;
   display: flex;
   align-items: center;
-  height: 30px;
+  height: 34px;
   padding: 0 18px;
   text-decoration: none;
   color: #333;
   font-size: 13px;
   font-weight: 500;
   border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s;
 }
 
-.db-main-menu li a:hover {
+.db-main-menu li button:hover {
   background: #e0e0e0;
 }
 
-.db-main-menu li.active a {
+.db-main-menu li.active button {
   background: #e0e0e0;
   border-bottom: 3px solid #FFCB08;
   font-weight: 700;
+  border-radius: 4px 4px 0 0;
 }
 
 .db-submenu {
@@ -284,7 +294,9 @@
   padding: 0 10px;
 }
 
-.db-submenu li a {
+.db-submenu li button {
+  background: none;
+  border: none;
   display: flex;
   align-items: center;
   height: 26px;
@@ -293,9 +305,11 @@
   color: #333;
   font-size: 12px;
   border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s;
 }
 
-.db-submenu li a:hover {
+.db-submenu li button:hover {
   background: #e0e0e0;
 }
 
@@ -361,11 +375,32 @@
 .db-mail-main {
   flex: 1;
   display: flex;
+  overflow: hidden;
+}
+
+.mail-section-container {
+  display: flex;
+  flex: 1;
+  width: 100%;
+  overflow: hidden;
+}
+
+.db-resizer {
+  width: 4px;
+  background: transparent;
+  cursor: col-resize;
+  transition: background 0.2s;
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.db-resizer:hover,
+.db-resizer:active {
+  background: #FFCB08;
 }
 
 /* ── Folder panel ────────────────────────────────── */
 .db-folder-panel {
-  width: 220px;
   background: #f4f4f4;
   display: flex;
   flex-direction: column;
@@ -385,30 +420,77 @@
   margin: 0;
 }
 
-.db-folder-item {
-  margin-bottom: 2px;
+.db-folder-node {
+  display: flex;
+  flex-direction: column;
 }
 
-.db-folder-item a {
+.db-folder-node.db-folder-section {
+  margin-top: 15px;
+  padding-top: 10px;
+  border-top: 1px solid #ddd;
+}
+
+.db-folder-node.db-folder-section[key*="Labels"] .db-folder-item-content,
+.db-folder-node.db-folder-section[key*="Etiketler"] .db-folder-item-content {
+  font-style: italic;
+  color: #555;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+}
+
+.db-folder-item {
+  margin-bottom: 1px;
+}
+
+.db-folder-item-content {
   display: flex;
   align-items: center;
-  padding: 6px 12px;
+  padding: 4px 8px;
   border-radius: 4px;
   text-decoration: none;
   color: #333;
   font-size: 13px;
   transition: background 0.15s;
   cursor: pointer;
+  user-select: none;
 }
 
-.db-folder-item a:hover {
-  background: #e0e0e0;
+.db-folder-item-content:hover {
+  background: #e6e6e6;
 }
 
-.db-folder-item.selected a {
+.db-folder-item.selected .db-folder-item-content {
   background: #FFF7CC;
   font-weight: 700;
   color: #000;
+}
+
+.db-folder-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-right: 4px;
+  font-size: 8px;
+  color: #666;
+  transition: transform 0.2s ease;
+  cursor: pointer;
+}
+
+.db-folder-chevron:hover {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 2px;
+}
+
+.db-folder-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.db-folder-chevron-placeholder {
+  width: 20px;
 }
 
 .db-folder-icon {
@@ -469,14 +551,20 @@
 
 /* ── Mail toolbar ─────────────────────────────────── */
 .db-mail-toolbar {
-  height: 34px;
+  height: 38px;
   background: #f0f0f0;
   border-bottom: 1px solid #ccc;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   padding: 0 8px;
-  gap: 2px;
   flex-shrink: 0;
+}
+
+.db-mail-toolbar-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .db-mail-toolbar-btn {
@@ -484,19 +572,141 @@
   border: none;
   cursor: pointer;
   border-radius: 4px;
-  padding: 4px 10px;
-  font-size: 12px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
   color: #333;
   transition: background 0.15s;
+  padding: 0;
 }
 
 .db-mail-toolbar-btn:hover {
   background: #e0e0e0;
 }
 
+.db-mail-toolbar-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.db-toolbar-separator {
+  width: 1px;
+  height: 20px;
+  background: #ccc;
+  margin: 0;
+}
+
+.db-toolbar-spacer {
+  flex: 1;
+}
+
+.db-pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 0;
+}
+
+.db-pagination-btn {
+  background: none;
+
+  border: none;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 10px;
+  color: #777;
+  transition: background 0.15s, color 0.15s;
+}
+
+.db-pagination-btn:hover {
+  background: #e0e0e0;
+  color: #333;
+}
+
+.db-pagination-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.db-page-num {
+  font-size: 12px;
+  font-weight: 500;
+  color: #666;
+  min-width: 16px;
+  text-align: center;
+}
+
+.db-perpage-wrapper {
+  margin-left: 0;
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+
+.db-perpage-combobox {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.db-perpage-input {
+  width: 40px;
+  height: 20px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 0 4px;
+  font-size: 10px;
+  color: #666;
+  text-align: center;
+  outline: none;
+  background: #e8e8e8;
+  cursor: text;
+  transition: background 0.2s, border-color 0.2s, color 0.2s;
+}
+
+.db-perpage-input:hover {
+  background: #e0e0e0;
+}
+
+.db-perpage-input:focus {
+  background: #fff;
+  border-color: #FFCB08;
+  color: #333;
+}
+
+.db-perpage-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  width: 60px;
+  background: #fff;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+  margin-top: 4px;
+  z-index: 1000;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.db-perpage-option {
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+  text-align: center;
+}
+
+.db-perpage-option:hover {
+  background: #FFF7CC;
+}
+
 /* ── Panels ── */
 .db-center-panel {
-  width: 320px;
   background: #fff;
   border-right: 1px solid #ccc;
   display: flex;

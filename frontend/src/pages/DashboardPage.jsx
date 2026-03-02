@@ -76,8 +76,12 @@ const DashboardPage = () => {
     const [mailContent, setMailContent] = useState(null)
     const [loadingMails, setLoadingMails] = useState(false)
     const [loadingContent, setLoadingContent] = useState(false)
+    const [currentPage, setCurrentPage] = useState(1)
+    const [perPage, setPerPage] = useState(50)
 
+    const [activeRibbonTab, setActiveRibbonTab] = useState('home')
     const [accountMenuOpen, setAccountMenuOpen] = useState(false)
+
     const accountButtonRef = useRef(null)
     const accountMenuRef = useRef(null)
     const iframeRef = useRef(null)
@@ -159,24 +163,27 @@ const DashboardPage = () => {
         autoConnect()
     }, [accountId, connected, connecting])
 
-    const loadMails = useCallback(async (folder) => {
+    const loadMails = useCallback(async (folder, page = currentPage, limit = perPage) => {
         if (!accountId || !connected) return
         setLoadingMails(true)
         try {
-            const res = await fetch(`/api/mail/${accountId}/list?mailbox=${encodeURIComponent(folder)}&page=1&per_page=50`)
+            const res = await fetch(`/api/mail/${accountId}/list?mailbox=${encodeURIComponent(folder)}&page=${page}&per_page=${limit}`)
             const data = await res.json()
             setMails(data.mails || [])
         } catch { }
         setLoadingMails(false)
-    }, [accountId, connected])
+    }, [accountId, connected, currentPage, perPage])
 
     useEffect(() => {
         if (connected && activeSection === 'mail') loadFolders()
     }, [connected, loadFolders, activeSection])
 
     useEffect(() => {
-        if (connected && activeSection === 'mail') loadMails(selectedFolder)
-    }, [connected, selectedFolder, loadMails, activeSection])
+        if (connected && activeSection === 'mail') {
+            setCurrentPage(1)
+            loadMails(selectedFolder, 1, perPage)
+        }
+    }, [connected, selectedFolder, activeSection]) // Only reload when folder/section changes - loadMails will handle page/limit changes
 
     const openMail = async (mail) => {
         setSelectedMail(mail)
@@ -265,23 +272,60 @@ const DashboardPage = () => {
                         <>
                             <div className="db-main-menu">
                                 <ul>
-                                    <li><a href="#file">{t('Files')}</a></li>
-                                    <li className="active"><a href="#home">{t('Home')}</a></li>
-                                    <li><a href="#send-receive">{t('Send/Receive')}</a></li>
-                                    <li><a href="#folder">{t('Folders')}</a></li>
-                                    <li><a href="#view">{t('View')}</a></li>
+                                    <li className={activeRibbonTab === 'file' ? 'active' : ''}>
+                                        <button onClick={() => setActiveRibbonTab('file')}>{t('Files')}</button>
+                                    </li>
+                                    <li className={activeRibbonTab === 'home' ? 'active' : ''}>
+                                        <button onClick={() => setActiveRibbonTab('home')}>{t('Home')}</button>
+                                    </li>
+                                    <li className={activeRibbonTab === 'send-receive' ? 'active' : ''}>
+                                        <button onClick={() => setActiveRibbonTab('send-receive')}>{t('Send/Receive')}</button>
+                                    </li>
+                                    <li className={activeRibbonTab === 'folder' ? 'active' : ''}>
+                                        <button onClick={() => setActiveRibbonTab('folder')}>{t('Folders')}</button>
+                                    </li>
+                                    <li className={activeRibbonTab === 'view' ? 'active' : ''}>
+                                        <button onClick={() => setActiveRibbonTab('view')}>{t('View')}</button>
+                                    </li>
                                 </ul>
                             </div>
                             <div className="db-submenu">
-                                <ul>
-                                    <li><a href="#new-mail">🆕 {t('New Mail')}</a></li>
-                                    <li><a href="#delete">🗑️ {t('Delete')}</a></li>
-                                    <li><a href="#archive">📦 {t('Archive')}</a></li>
-                                    <li><a href="#reply">↩️ {t('Reply')}</a></li>
-                                    <li><a href="#reply-all">🔃 {t('Reply All')}</a></li>
-                                    <li><a href="#forward">➡️ {t('Forward')}</a></li>
-                                    <li><a href="#junk">🚫 {t('Junk')}</a></li>
-                                </ul>
+                                {activeRibbonTab === 'home' && (
+                                    <ul>
+                                        <li><button onClick={() => { }}>🆕 {t('New Mail')}</button></li>
+                                        <li><button onClick={() => { }}>🗑️ {t('Delete')}</button></li>
+                                        <li><button onClick={() => { }}>📦 {t('Archive')}</button></li>
+                                        <li><button onClick={() => { }}>↩️ {t('Reply')}</button></li>
+                                        <li><button onClick={() => { }}>🔃 {t('Reply All')}</button></li>
+                                        <li><button onClick={() => { }}>➡️ {t('Forward')}</button></li>
+                                        <li><button onClick={() => { }}>🚫 {t('Junk')}</button></li>
+                                    </ul>
+                                )}
+                                {activeRibbonTab === 'file' && (
+                                    <ul>
+                                        <li><button onClick={() => { }}>� {t('Save')}</button></li>
+                                        <li><button onClick={() => { }}>🖨️ {t('Print')}</button></li>
+                                        <li><button onClick={() => { }}>📤 {t('Export')}</button></li>
+                                    </ul>
+                                )}
+                                {activeRibbonTab === 'send-receive' && (
+                                    <ul>
+                                        <li><button onClick={() => loadMails(selectedFolder)}>🔄 {t('Update Folder')}</button></li>
+                                        <li><button onClick={() => { }}>📡 {t('Send All')}</button></li>
+                                    </ul>
+                                )}
+                                {activeRibbonTab === 'folder' && (
+                                    <ul>
+                                        <li><button onClick={() => { }}>📁 {t('New Folder')}</button></li>
+                                        <li><button onClick={() => { }}>🏷️ {t('Rename')}</button></li>
+                                    </ul>
+                                )}
+                                {activeRibbonTab === 'view' && (
+                                    <ul>
+                                        <li><button onClick={() => { }}>�️ {t('Reading Pane')}</button></li>
+                                        <li><button onClick={() => { }}>📏 {t('Layout')}</button></li>
+                                    </ul>
+                                )}
                             </div>
                         </>
                     )}
@@ -307,6 +351,10 @@ const DashboardPage = () => {
                                 openMail={openMail}
                                 iframeRef={iframeRef}
                                 getShortTime={getShortTime}
+                                currentPage={currentPage}
+                                setCurrentPage={setCurrentPage}
+                                perPage={perPage}
+                                setPerPage={setPerPage}
                             />
                         )}
                         {activeSection === 'calendar' && <CalendarSection />}
@@ -323,11 +371,69 @@ function MailSection({
     connected, setConnected, accountId, accountForm, email,
     folders, selectedFolder, setSelectedFolder, mails,
     selectedMail, mailContent, loadingMails, loadingContent,
-    connecting, loadMails, openMail, iframeRef, getShortTime
+    connecting, loadMails, openMail, iframeRef, getShortTime,
+    currentPage, setCurrentPage, perPage, setPerPage
 }) {
-    const processFolders = (list) => {
-        const top = []
-        const labels = []
+    const [expandedFolders, setExpandedFolders] = useState(['INBOX', 'Folders', 'Labels', 'Etiketler'])
+    const [folderWidth, setFolderWidth] = useState(240)
+    const [listWidth, setListWidth] = useState(340)
+    const [isPerPageOpen, setIsPerPageOpen] = useState(false)
+    const [attachmentsExpanded, setAttachmentsExpanded] = useState(true)
+    const perPageRef = useRef(null)
+    const isResizingFolder = useRef(false)
+    const isResizingList = useRef(false)
+
+    useEffect(() => {
+        const handleClickOutside = (e) => {
+            if (perPageRef.current && !perPageRef.current.contains(e.target)) {
+                setIsPerPageOpen(false)
+            }
+        }
+        document.addEventListener('mousedown', handleClickOutside)
+        return () => document.removeEventListener('mousedown', handleClickOutside)
+    }, [])
+
+    useEffect(() => {
+        const handleMouseMove = (e) => {
+            if (isResizingFolder.current) {
+                const newWidth = Math.max(160, Math.min(500, e.clientX - 48)) // 48 is sidebar width
+                setFolderWidth(newWidth)
+            } else if (isResizingList.current) {
+                const newWidth = Math.max(200, Math.min(600, e.clientX - 48 - folderWidth))
+                setListWidth(newWidth)
+            }
+        }
+        const handleMouseUp = () => {
+            isResizingFolder.current = false
+            isResizingList.current = false
+            document.body.classList.remove('resizing')
+        }
+        document.addEventListener('mousemove', handleMouseMove)
+        document.addEventListener('mouseup', handleMouseUp)
+        return () => {
+            document.removeEventListener('mousemove', handleMouseMove)
+            document.removeEventListener('mouseup', handleMouseUp)
+        }
+    }, [folderWidth])
+
+    const buildTree = (list) => {
+        const tree = []
+        list.forEach(path => {
+            const parts = path.split('/')
+            let currentLevel = tree
+            parts.forEach((part, index) => {
+                let existing = currentLevel.find(item => item.name === part)
+                if (!existing) {
+                    existing = {
+                        name: part,
+                        fullPath: parts.slice(0, index + 1).join('/'),
+                        children: []
+                    }
+                    currentLevel.push(existing)
+                }
+                currentLevel = existing.children
+            })
+        })
 
         const priorityMap = {
             'INBOX': 1, 'GELEN KUTUSU': 1,
@@ -338,86 +444,173 @@ function MailSection({
             'DRAFTS': 6, 'TASLAKLAR': 6,
             'ARCHIVE': 7, 'ARŞİV': 7,
             'TRASH': 8, 'SILINMIŞ ÖĞELER': 8, 'ÇÖP KUTUSU': 8,
-            'SPAM': 9, 'ÖNEMSIZ E-POSTA': 9, 'JUNK': 9
+            'SPAM': 9, 'ÖNEMSIZ E-POSTA': 9, 'JUNK': 9,
+            'FOLDERS': 10,
+            'LABELS': 20,
+            'ETIKETLER': 21
         }
-
-        list.forEach(f => {
-            const upper = f.toUpperCase()
-            if (upper === 'LABELS' || upper === 'FOLDERS') return
-
-            if (f.startsWith('Labels/') || f.startsWith('Etiketler/')) {
-                labels.push(f)
-            } else {
-                top.push(f)
-            }
-        })
 
         const sortFn = (a, b) => {
-            const pa = priorityMap[a.toUpperCase().replace(/^(FOLDERS|LABELS|ETIKETLER)\//i, '')] || 999
-            const pb = priorityMap[b.toUpperCase().replace(/^(FOLDERS|LABELS|ETIKETLER)\//i, '')] || 999
+            const pa = priorityMap[a.name.toUpperCase()] || 999
+            const pb = priorityMap[b.name.toUpperCase()] || 999
             if (pa !== pb) return pa - pb
-            return a.localeCompare(b)
+            return a.name.localeCompare(b.name)
         }
 
-        return {
-            top: top.sort(sortFn),
-            labels: labels.sort(sortFn)
+        const sortTree = (nodes) => {
+            nodes.sort(sortFn)
+            nodes.forEach(node => {
+                if (node.children.length > 0) sortTree(node.children)
+            })
         }
+
+        sortTree(tree)
+        return tree
     }
 
-    const { top, labels } = processFolders(folders)
+    const toggleExpand = (e, path) => {
+        e.stopPropagation()
+        setExpandedFolders(prev =>
+            prev.includes(path) ? prev.filter(p => p !== path) : [...prev, path]
+        )
+    }
+
+    const folderTree = buildTree(folders)
+
+    const renderFolderItem = (node, depth = 0) => {
+        const info = folderInfo(node.fullPath)
+        const isSelected = selectedFolder === node.fullPath
+        const isExpanded = expandedFolders.includes(node.fullPath)
+        const hasChildren = node.children.length > 0
+
+        const isSection = depth === 0 && ['Folders', 'Labels', 'Etiketler'].includes(node.name)
+
+        return (
+            <div key={node.fullPath} className={`db-folder-node ${isSection ? 'db-folder-section' : ''}`}>
+                <li className={`db-folder-item ${isSelected ? 'selected' : ''}`} style={{ paddingLeft: `${depth * 12}px` }}>
+                    <div className="db-folder-item-content" onClick={() => setSelectedFolder(node.fullPath)}>
+                        {hasChildren ? (
+                            <span className={`db-folder-chevron ${isExpanded ? 'expanded' : ''}`} onClick={(e) => toggleExpand(e, node.fullPath)}>
+                                ❯
+                            </span>
+                        ) : (
+                            <span className="db-folder-chevron-placeholder" />
+                        )}
+                        <span className="db-folder-icon">{info.icon}</span>
+                        <span className="db-folder-text">{info.label}</span>
+                    </div>
+                </li>
+                {hasChildren && isExpanded && (
+                    <div className="db-folder-children">
+                        {node.children.map(child => renderFolderItem(child, depth + 1))}
+                    </div>
+                )}
+            </div>
+        )
+    }
 
     return (
-        <>
-            <div className="db-folder-panel">
+        <div className="mail-section-container">
+            <div className="db-folder-panel" style={{ width: folderWidth }}>
                 {connected ? (
-                    <ul className="db-folder-list">
-                        {top.map((f) => {
-                            const info = folderInfo(f)
-                            const isSelected = selectedFolder === f
-                            return (
-                                <li key={f} className={`db-folder-item ${isSelected ? 'selected' : ''}`}>
-                                    <a onClick={(e) => { e.preventDefault(); setSelectedFolder(f) }}>
-                                        <span className="db-folder-icon">{info.icon}</span>
-                                        <span className="db-folder-text">{info.label}</span>
-                                    </a>
-                                </li>
-                            )
-                        })}
-                        {labels.length > 0 && (
-                            <div className="db-labels-section">
-                                <div className="db-labels-header">
-                                    <span>Etiketler</span>
-                                    <button className="db-label-add-btn" title="Yeni Etiket">+</button>
-                                </div>
-                                {labels.map((f) => {
-                                    const info = folderInfo(f)
-                                    const isSelected = selectedFolder === f
-                                    return (
-                                        <li key={f} className={`db-folder-item ${isSelected ? 'selected' : ''}`}>
-                                            <a onClick={(e) => { e.preventDefault(); setSelectedFolder(f) }}>
-                                                <span className="db-folder-icon">🔖</span>
-                                                <span className="db-folder-text">{info.label}</span>
-                                            </a>
-                                        </li>
-                                    )
-                                })}
-                            </div>
-                        )}
-                    </ul>
+                    <div className="db-folder-scroll-area">
+                        <ul className="db-folder-list">
+                            {folderTree.map(node => renderFolderItem(node))}
+                        </ul>
+                    </div>
                 ) : (
                     <div style={{ padding: '20px', color: '#999', fontSize: '13px', textAlign: 'center' }}>
                         {connecting ? 'Bağlanıyor...' : 'Bağlantı bekliyor...'}
                     </div>
                 )}
             </div>
+            <div
+                className="db-resizer"
+                onMouseDown={() => { isResizingFolder.current = true; document.body.classList.add('resizing') }}
+            />
             <div className="db-mail-main">
-                <div className="db-center-panel">
+                <div className="db-center-panel" style={{ width: listWidth }}>
                     <div className="db-mail-toolbar">
-                        <button className="db-mail-toolbar-btn">☑️ Select</button>
-                        <button className="db-mail-toolbar-btn">⏭️ Jump</button>
-                        <button className="db-mail-toolbar-btn">🔍 Filter</button>
-                        <button className="db-mail-toolbar-btn" onClick={() => loadMails(selectedFolder)}>🔄 Yenile</button>
+                        <button className="db-mail-toolbar-btn" onClick={() => loadMails(selectedFolder, currentPage, perPage)} title="Yenile">🔄</button>
+                        <button className="db-mail-toolbar-btn" title="Seç">☑️</button>
+
+                        <div className="db-toolbar-separator" />
+
+                        <button className="db-mail-toolbar-btn" title="Filtrele">🔍</button>
+                        <button className="db-mail-toolbar-btn" title="Sırala">↕️</button>
+
+                        <div className="db-toolbar-separator" />
+
+                        <div className="db-pagination-controls">
+                            <button
+                                className="db-pagination-btn"
+                                disabled={currentPage <= 1 || loadingMails}
+                                onClick={() => {
+                                    const p = currentPage - 1
+                                    setCurrentPage(p)
+                                    loadMails(selectedFolder, p, perPage)
+                                }}
+                            >
+                                ◀
+                            </button>
+                            <span className="db-page-num">{currentPage}</span>
+                            <button
+                                className="db-pagination-btn"
+                                disabled={mails.length < perPage || loadingMails}
+                                onClick={() => {
+                                    const p = currentPage + 1
+                                    setCurrentPage(p)
+                                    loadMails(selectedFolder, p, perPage)
+                                }}
+                            >
+                                ▶
+                            </button>
+                        </div>
+
+                        <div className="db-perpage-wrapper" ref={perPageRef}>
+                            <div className="db-perpage-combobox">
+                                <input
+                                    type="text"
+                                    className="db-perpage-input"
+                                    value={perPage}
+                                    onClick={() => setIsPerPageOpen(true)}
+                                    onChange={(e) => {
+                                        const val = e.target.value.replace(/\D/g, '')
+                                        setPerPage(val)
+                                    }}
+                                    onFocus={() => setIsPerPageOpen(true)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                            const val = Math.max(1, parseInt(perPage) || 50)
+                                            setPerPage(val)
+                                            setCurrentPage(1)
+                                            loadMails(selectedFolder, 1, val)
+                                            setIsPerPageOpen(false)
+                                            e.target.blur()
+                                        }
+                                    }}
+                                    placeholder="Adet"
+                                />
+                                {isPerPageOpen && (
+                                    <div className="db-perpage-dropdown">
+                                        {[10, 20, 50, 100, 150, 200, 250].map(val => (
+                                            <div
+                                                key={val}
+                                                className="db-perpage-option"
+                                                onClick={() => {
+                                                    setPerPage(val)
+                                                    setCurrentPage(1)
+                                                    loadMails(selectedFolder, 1, val)
+                                                    setIsPerPageOpen(false)
+                                                }}
+                                            >
+                                                {val}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
                     </div>
                     {!connected ? (
                         <div className="db-empty-state">
@@ -443,6 +636,10 @@ function MailSection({
                         </ul>
                     )}
                 </div>
+                <div
+                    className="db-resizer"
+                    onMouseDown={() => { isResizingList.current = true; document.body.classList.add('resizing') }}
+                />
                 <div className="db-right-panel">
                     {!connected ? (
                         <div className="db-loading" style={{ paddingTop: 100 }}>
@@ -468,25 +665,34 @@ function MailSection({
                             )}
                             {mailContent?.attachments?.length > 0 && (
                                 <div className="db-attachments">
-                                    <div className="db-attachments__header">Ekler</div>
-                                    <ul className="db-attachments__list">
-                                        {mailContent.attachments.map((at) => (
-                                            <li key={at.id} className="db-attachments__item">
-                                                <div className="db-attachments__info">
-                                                    <span className="db-attachments__name">{at.filename}</span>
-                                                    <span className="db-attachments__meta">{at.content_type} · {formatBytes(at.size)}</span>
-                                                </div>
-                                                <a className="db-attachments__link" href={`/api/mail/${accountId}/content/${encodeURIComponent(mailContent.id)}/attachments/${at.id}`} download={at.filename}>İndir</a>
-                                            </li>
-                                        ))}
-                                    </ul>
+                                    <div
+                                        className="db-attachments__header"
+                                        onClick={() => setAttachmentsExpanded(!attachmentsExpanded)}
+                                        style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', userSelect: 'none' }}
+                                    >
+                                        <span className={`db-folder-chevron ${attachmentsExpanded ? 'expanded' : ''}`} style={{ marginRight: '6px' }}>❯</span>
+                                        Ekler ({mailContent.attachments.length})
+                                    </div>
+                                    {attachmentsExpanded && (
+                                        <ul className="db-attachments__list">
+                                            {mailContent.attachments.map((at) => (
+                                                <li key={at.id} className="db-attachments__item">
+                                                    <div className="db-attachments__info">
+                                                        <span className="db-attachments__name">{at.filename}</span>
+                                                        <span className="db-attachments__meta">{at.content_type} · {formatBytes(at.size)}</span>
+                                                    </div>
+                                                    <a className="db-attachments__link" href={`/api/mail/${accountId}/content/${encodeURIComponent(mailContent.id)}/attachments/${at.id}`} download={at.filename}>İndir</a>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    )}
                                 </div>
                             )}
                         </div>
                     )}
                 </div>
             </div>
-        </>
+        </div>
     )
 }
 
