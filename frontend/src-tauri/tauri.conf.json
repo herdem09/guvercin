@@ -17,6 +17,14 @@
         "height": 600,
         "resizable": true,
         "fullscreen": false
+      },
+      {
+        "title": "Guvercin - Mail",
+        "label": "mail",
+        "width": 800,
+        "height": 600,
+        "resizable": true,
+        "visible": false
       }
     ],
     "security": {

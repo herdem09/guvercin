@@ -1,3 +1,22 @@
+#[tauri::command]
+fn open_mail_window(handle: tauri::AppHandle) -> Result<String, String> {
+  let mail_window = tauri::window::WindowBuilder::new(&handle, "mail", tauri::WindowUrl::App("mail.html".into()))
+    .inner_size(800.0, 600.0)
+    .resizable(true)
+    .build()
+    .map_err(|e| e.to_string())?;
+  
+  Ok(mail_window.label().to_string())
+}
+
+#[tauri::command]
+fn close_mail_window(handle: tauri::AppHandle) -> Result<(), String> {
+  if let Some(window) = handle.get_webview_window("mail") {
+    window.close().map_err(|e| e.to_string())?;
+  }
+  Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   std::thread::spawn(|| {
@@ -20,6 +39,7 @@ pub fn run() {
       }
       Ok(())
     })
+    .invoke_handler(tauri::generate_handler![open_mail_window, close_mail_window])
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }

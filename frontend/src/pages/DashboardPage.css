@@ -803,6 +803,11 @@ body.resizing * {
   flex-shrink: 0;
 }
 
+.db-mail-content-header .db-mail-content-subject {
+  font-size: 16px;
+  margin-bottom: 0;
+}
+
 .db-mail-meta {
   font-size: 13px;
   color: #666;
@@ -955,4 +960,43 @@ body.resizing * {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* ── Mail Window System ────────────────────────── */
+.mail-section-container[data-fullscreen-mail="true"] .db-folder-panel,
+.mail-section-container[data-fullscreen-mail="true"] > .db-resizer {
+  display: none;
+}
+
+.mail-section-container[data-fullscreen-mail="true"] .db-mail-main {
+  width: 100%;
+}
+
+.db-mail-content-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  gap: 10px;
+}
+.db-mail-content-actions {
+  display: flex;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.db-mail-action-btn {
+  background: none;
+  border: none;
+  font-size: 18px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+  transition: background 0.2s;
+  color: #666;
+}
+
+.db-mail-action-btn:hover {
+  background: #f0f0f0;
+  color: #000;
 }
