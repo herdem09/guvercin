@@ -81,6 +81,8 @@ const DashboardPage = () => {
 
     const [activeRibbonTab, setActiveRibbonTab] = useState('home')
     const [accountMenuOpen, setAccountMenuOpen] = useState(false)
+    const [isMailFullscreen, setIsMailFullscreen] = useState(false)
+    const [mailWindowOpen, setMailWindowOpen] = useState(false)
 
     const accountButtonRef = useRef(null)
     const accountMenuRef = useRef(null)
@@ -198,6 +200,42 @@ const DashboardPage = () => {
         } catch { }
         setLoadingContent(false)
     }
+
+    const detachMailToWindow = async () => {
+        if (!selectedMail) return
+        try {
+            const { invoke } = await import('@tauri-apps/api/core')
+            // Pass mail data via window opening
+            const mailData = {
+                mail: selectedMail,
+                mailContent: mailContent,
+                accountId: accountId
+            }
+            
+            // Store in sessionStorage for the new window to pick up
+            sessionStorage.setItem('detached_mail_data', JSON.stringify(mailData))
+            
+            await invoke('open_mail_window')
+            setMailWindowOpen(true)
+        } catch (e) {
+            console.error('Failed to open mail window:', e)
+        }
+    }
+
+    const toggleMailFullscreen = () => {
+        setIsMailFullscreen(!isMailFullscreen)
+    }
+
+    // ESC key handler
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape' && isMailFullscreen) {
+                setIsMailFullscreen(false)
+            }
+        }
+        window.addEventListener('keydown', handleKeyDown)
+        return () => window.removeEventListener('keydown', handleKeyDown)
+    }, [isMailFullscreen])
 
     const getShortTime = () => {
         const now = new Date()
@@ -510,7 +548,7 @@ function MailSection({
     }
 
     return (
-        <div className="mail-section-container">
+        <div className="mail-section-container" data-fullscreen-mail={isMailFullscreen}>
             <div className="db-folder-panel" style={{ width: folderWidth }}>
                 {connected ? (
                     <div className="db-folder-scroll-area">
@@ -611,6 +649,16 @@ function MailSection({
                                 )}
                             </div>
                         </div>
+
+                        {!selectedMail && (
+                            <button 
+                                className={`db-mail-toolbar-btn ${isMailFullscreen ? 'active' : ''}`} 
+                                onClick={toggleMailFullscreen}
+                                title={isMailFullscreen ? "Normal Görünüm" : "Tam Ekran"}
+                            >
+                                {isMailFullscreen ? '←' : '→'}
+                            </button>
+                        )}
                     </div>
                     {!connected ? (
                         <div className="db-empty-state">
@@ -655,7 +703,25 @@ function MailSection({
                         <div className="db-loading" style={{ paddingTop: 60 }}><div className="db-spinner" />İçerik yükleniyor…</div>
                     ) : (
                         <div className="db-mail-content">
-                            <div className="db-mail-content-subject">{mailContent?.subject || selectedMail.subject || '(Konu Yok)'}</div>
+                            <div className="db-mail-content-header">
+                                <div className="db-mail-content-subject">{mailContent?.subject || selectedMail.subject || '(Konu Yok)'}</div>
+                                <div className="db-mail-content-actions">
+                                    <button 
+                                        className="db-mail-action-btn" 
+                                        onClick={detachMailToWindow}
+                                        title="Yeni Pencereye At"
+                                    >
+                                        🪟
+                                    </button>
+                                    <button 
+                                        className="db-mail-action-btn" 
+                                        onClick={() => setSelectedMail(null)}
+                                        title="Kapat"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+                            </div>
                             <div className="db-mail-meta"><strong>Kimden:</strong> {mailContent?.from_name ? `${mailContent.from_name} <${mailContent.from_address}>` : selectedMail.address}</div>
                             <hr className="db-mail-divider" />
                             {mailContent?.html_body ? (
