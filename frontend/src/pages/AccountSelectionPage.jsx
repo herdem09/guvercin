@@ -1,3 +1,4 @@
+import { apiUrl } from '../utils/api'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -17,7 +18,7 @@ function AccountSelectionPage() {
     const loadAccounts = async () => {
       setLoading(true)
       try {
-        const response = await fetch('/api/auth/accounts')
+        const response = await fetch(apiUrl('/api/auth/accounts'))
         if (!response.ok) {
           throw new Error('Unable to fetch accounts')
         }

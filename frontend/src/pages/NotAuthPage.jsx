@@ -1,3 +1,4 @@
+import { apiUrl } from '../utils/api'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import './NotAuthPage.css'
@@ -25,7 +26,7 @@ function NotAuthPage() {
         urlParams.append('SKIP_AUTH', 'true')
 
         try {
-            const response = await fetch('/api/auth/setup', {
+            const response = await fetch(apiUrl('/api/auth/setup'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: urlParams.toString(),

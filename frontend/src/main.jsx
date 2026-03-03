@@ -5,19 +5,61 @@ import App from './App.jsx'
 import './index.css'
 import './i18n'
 
-// Intercept fetch to redirect /api to the local Rust backend directly
-const originalFetch = window.fetch;
-window.fetch = async function (resource, config) {
-  if (typeof resource === 'string' && resource.startsWith('/api')) {
-    resource = 'http://127.0.0.1:5000' + resource;
-  }
-  return originalFetch(resource, config);
-};
+function showFatalOverlay(title, details) {
+  try {
+    const overlay = document.createElement('div')
+    overlay.style.position = 'fixed'
+    overlay.style.inset = '0'
+    overlay.style.zIndex = '2147483647'
+    overlay.style.background = 'rgba(10, 10, 10, 0.92)'
+    overlay.style.color = '#fff'
+    overlay.style.padding = '16px'
+    overlay.style.fontFamily =
+      "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace"
+    overlay.style.overflow = 'auto'
 
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <BrowserRouter>
-      <App />
-    </BrowserRouter>
-  </React.StrictMode>,
-)
+    const heading = document.createElement('div')
+    heading.textContent = `Guvercin UI error: ${title || 'Unknown error'}`
+    heading.style.fontSize = '14px'
+    heading.style.fontWeight = '700'
+    heading.style.marginBottom = '12px'
+
+    const pre = document.createElement('pre')
+    pre.textContent = details || ''
+    pre.style.whiteSpace = 'pre-wrap'
+    pre.style.wordBreak = 'break-word'
+    pre.style.opacity = '0.95'
+    pre.style.fontSize = '12px'
+
+    overlay.appendChild(heading)
+    overlay.appendChild(pre)
+    document.body.appendChild(overlay)
+  } catch {
+    // ignore
+  }
+}
+
+window.addEventListener('error', (event) => {
+  const message = event?.message || 'Uncaught error'
+  const stack = event?.error?.stack || ''
+  showFatalOverlay(message, stack)
+})
+
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event?.reason
+  const message = typeof reason === 'string' ? reason : reason?.message || 'Unhandled promise rejection'
+  const stack = reason?.stack || ''
+  showFatalOverlay(message, stack)
+})
+
+try {
+  ReactDOM.createRoot(document.getElementById('root')).render(
+    <React.StrictMode>
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    </React.StrictMode>,
+  )
+} catch (err) {
+  showFatalOverlay(err?.message || String(err), err?.stack || '')
+}

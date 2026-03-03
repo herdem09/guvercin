@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { apiUrl } from './utils/api'
 import LoginPage from './pages/LoginPage.jsx'
 import LanguagePage from './pages/LanguagePage.jsx'
 import FontPage from './pages/FontPage.jsx'
@@ -7,12 +8,31 @@ import AiChooserPage from './pages/AiChooserPage.jsx'
 import NotAuthPage from './pages/NotAuthPage.jsx'
 import DashboardPage from './pages/DashboardPage.jsx'
 import AccountSelectionPage from './pages/AccountSelectionPage.jsx'
+import DetachedMailWindow from './pages/DetachedMailWindow.jsx'
 import i18n from './i18n'
 import { useTranslation } from 'react-i18next'
 import { hydrateAccountSession } from './utils/accountStorage.js'
 
 function App() {
   const location = useLocation()
+  const [windowLabel, setWindowLabel] = useState('')
+
+  useEffect(() => {
+    let active = true
+    const detectWindowLabel = async () => {
+      try {
+        const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow')
+        const label = getCurrentWebviewWindow().label
+        if (active) setWindowLabel(label)
+      } catch {
+        // not running on Tauri
+      }
+    }
+    detectWindowLabel()
+    return () => {
+      active = false
+    }
+  }, [])
 
   useEffect(() => {
     const path = location.pathname
@@ -35,7 +55,7 @@ function App() {
       if (tempFont) {
         fontToUse = `"${tempFont}", sans-serif`
       }
-    } else if (path.startsWith('/dashboard')) {
+    } else if (path.startsWith('/dashboard') || windowLabel === 'mail') {
       if (savedFont) {
         fontToUse = `"${savedFont}", sans-serif`
       }
@@ -52,9 +72,14 @@ function App() {
     document.body.style.fontFamily = fontToUse
   }, [location])
 
+  if (windowLabel === 'mail' || windowLabel.startsWith('mail-')) {
+    return <DetachedMailWindow />
+  }
+
   return (
     <Routes>
       <Route path="/" element={<StartupRouter />} />
+      <Route path="/index.html" element={<Navigate to="/" replace />} />
       <Route path="/account-select" element={<AccountSelectionPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/language" element={<LanguagePage />} />
@@ -62,6 +87,7 @@ function App() {
       <Route path="/ai_chooser" element={<AiChooserPage />} />
       <Route path="/not_auth" element={<NotAuthPage />} />
       <Route path="/dashboard" element={<DashboardPage />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
 }
@@ -79,7 +105,7 @@ function StartupRouter() {
 
     const fetchAccounts = async () => {
       try {
-        const response = await fetch('/api/auth/accounts')
+        const response = await fetch(apiUrl('/api/auth/accounts'))
         if (!response.ok) {
           throw new Error('Failed to load accounts')
         }

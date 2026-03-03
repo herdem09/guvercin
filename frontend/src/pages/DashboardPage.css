@@ -962,14 +962,9 @@ body.resizing * {
   }
 }
 
-/* ── Mail Window System ────────────────────────── */
-.mail-section-container[data-fullscreen-mail="true"] .db-folder-panel,
-.mail-section-container[data-fullscreen-mail="true"] > .db-resizer {
-  display: none;
-}
-
-.mail-section-container[data-fullscreen-mail="true"] .db-mail-main {
-  width: 100%;
+/* ── Mail list fullscreen (collapse reading pane) ────────────────────────── */
+.mail-section-container[data-fullscreen-mail="true"] .db-center-panel {
+  flex: 1;
 }
 
 .db-mail-content-header {
