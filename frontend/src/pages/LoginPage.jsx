@@ -1,3 +1,4 @@
+import { apiUrl } from '../utils/api'
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -25,7 +26,7 @@ function LoginPage() {
 
     const loadRegisteredAccounts = useCallback(async () => {
         try {
-            const response = await fetch('/api/auth/accounts')
+            const response = await fetch(apiUrl('/api/auth/accounts'))
             const data = await response.json()
 
             if (data.accounts && data.accounts.length > 0) {
@@ -78,7 +79,7 @@ function LoginPage() {
         urlParams.append('SSL_MODE', formData.sslMode)
 
         try {
-            const response = await fetch('/api/auth/setup', {
+            const response = await fetch(apiUrl('/api/auth/setup'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: urlParams.toString(),

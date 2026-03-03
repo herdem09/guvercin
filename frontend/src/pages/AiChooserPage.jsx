@@ -1,3 +1,4 @@
+import { apiUrl } from '../utils/api'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -32,7 +33,7 @@ function AiChooserPage() {
                 ai: payload
             }
 
-            const response = await fetch('/api/account/finalize', {
+            const response = await fetch(apiUrl('/api/account/finalize'), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(finalPayload),
