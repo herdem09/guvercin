@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import { apiUrl } from '../utils/api'
 import './DashboardPage.css'
 
 // ── Folder mappings ────────────────────
@@ -100,7 +101,7 @@ const DashboardPage = () => {
 
     const fetchAccount = async (id) => {
         try {
-            const res = await fetch('/api/accounts')
+            const res = await fetch(apiUrl('/api/auth/accounts'))
             const data = await res.json()
             const acc = data.find(a => a.id.toString() === id.toString())
             if (acc) {
@@ -143,7 +144,7 @@ const DashboardPage = () => {
     const loadFolders = useCallback(async () => {
         if (!accountId) return
         try {
-            const res = await fetch(`/api/mail/${accountId}/mailboxes`)
+            const res = await fetch(apiUrl(`/api/mail/${accountId}/mailboxes`))
             const data = await res.json()
             setFolders(data.mailboxes || [])
         } catch { }
@@ -157,7 +158,7 @@ const DashboardPage = () => {
             autoConnectAttempted.current = true
             setConnecting(true)
             try {
-                const res = await fetch(`/api/mail/${accountId}/connect-stored`, { method: 'POST' })
+                const res = await fetch(apiUrl(`/api/mail/${accountId}/connect-stored`), { method: 'POST' })
                 if (res.ok) setConnected(true)
             } catch { }
             setConnecting(false)
@@ -169,7 +170,7 @@ const DashboardPage = () => {
         if (!accountId || !connected) return
         setLoadingMails(true)
         try {
-            const res = await fetch(`/api/mail/${accountId}/list?mailbox=${encodeURIComponent(folder)}&page=${page}&per_page=${limit}`)
+            const res = await fetch(apiUrl(`/api/mail/${accountId}/list?mailbox=${encodeURIComponent(folder)}&page=${page}&per_page=${limit}`))
             const data = await res.json()
             setMails(data.mails || [])
         } catch { }
@@ -188,11 +189,15 @@ const DashboardPage = () => {
     }, [connected, selectedFolder, activeSection]) // Only reload when folder/section changes - loadMails will handle page/limit changes
 
     const openMail = async (mail) => {
+        setIsMailFullscreen(false)
         setSelectedMail(mail)
         setMailContent(null)
         setLoadingContent(true)
         try {
-            const res = await fetch(`/api/mail/${accountId}/content/${mail.id}`)
+            const mailbox = selectedFolder || 'INBOX'
+            const res = await fetch(
+                apiUrl(`/api/mail/${accountId}/content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`)
+            )
             if (res.ok) {
                 const data = await res.json()
                 setMailContent(data)
@@ -205,25 +210,38 @@ const DashboardPage = () => {
         if (!selectedMail) return
         try {
             const { invoke } = await import('@tauri-apps/api/core')
-            // Pass mail data via window opening
+            const mailWindowLabel = `mail-${Date.now()}-${Math.random().toString(16).slice(2)}`
             const mailData = {
                 mail: selectedMail,
                 mailContent: mailContent,
-                accountId: accountId
+                accountId: accountId,
+                mailbox: selectedFolder || 'INBOX',
             }
-            
-            // Store in sessionStorage for the new window to pick up
-            sessionStorage.setItem('detached_mail_data', JSON.stringify(mailData))
-            
-            await invoke('open_mail_window')
+
+            // Pass mail data directly via invoke so it's embedded in the new window's URL.
+            // We cannot use localStorage because each Tauri WebviewWindow has its own
+            // isolated storage that is not shared with other windows.
+            await invoke('open_mail_window', {
+                label: mailWindowLabel,
+                mailDataJson: JSON.stringify(mailData),
+            })
             setMailWindowOpen(true)
+            // Do not keep showing the mail in the main window when detached
+            setSelectedMail(null)
+            setMailContent(null)
         } catch (e) {
             console.error('Failed to open mail window:', e)
         }
     }
 
     const toggleMailFullscreen = () => {
-        setIsMailFullscreen(!isMailFullscreen)
+        setIsMailFullscreen((prev) => {
+            const next = !prev
+            if (next) {
+                setSelectedMail(null)
+            }
+            return next
+        })
     }
 
     // ESC key handler
@@ -381,18 +399,22 @@ const DashboardPage = () => {
                                 setSelectedFolder={setSelectedFolder}
                                 mails={mails}
                                 selectedMail={selectedMail}
+                                setSelectedMail={setSelectedMail}
                                 mailContent={mailContent}
                                 loadingMails={loadingMails}
                                 loadingContent={loadingContent}
                                 connecting={connecting}
                                 loadMails={loadMails}
                                 openMail={openMail}
+                                detachMailToWindow={detachMailToWindow}
                                 iframeRef={iframeRef}
                                 getShortTime={getShortTime}
                                 currentPage={currentPage}
                                 setCurrentPage={setCurrentPage}
                                 perPage={perPage}
                                 setPerPage={setPerPage}
+                                isMailFullscreen={isMailFullscreen}
+                                toggleMailFullscreen={toggleMailFullscreen}
                             />
                         )}
                         {activeSection === 'calendar' && <CalendarSection />}
@@ -408,9 +430,10 @@ const DashboardPage = () => {
 function MailSection({
     connected, setConnected, accountId, accountForm, email,
     folders, selectedFolder, setSelectedFolder, mails,
-    selectedMail, mailContent, loadingMails, loadingContent,
-    connecting, loadMails, openMail, iframeRef, getShortTime,
-    currentPage, setCurrentPage, perPage, setPerPage
+    selectedMail, setSelectedMail, mailContent, loadingMails, loadingContent,
+    connecting, loadMails, openMail, detachMailToWindow, iframeRef, getShortTime,
+    currentPage, setCurrentPage, perPage, setPerPage,
+    isMailFullscreen, toggleMailFullscreen
 }) {
     const [expandedFolders, setExpandedFolders] = useState(['INBOX', 'Folders', 'Labels', 'Etiketler'])
     const [folderWidth, setFolderWidth] = useState(240)
@@ -567,7 +590,10 @@ function MailSection({
                 onMouseDown={() => { isResizingFolder.current = true; document.body.classList.add('resizing') }}
             />
             <div className="db-mail-main">
-                <div className="db-center-panel" style={{ width: listWidth }}>
+                <div
+                    className="db-center-panel"
+                    style={isMailFullscreen ? { flex: 1, width: 'auto' } : { width: listWidth }}
+                >
                     <div className="db-mail-toolbar">
                         <button className="db-mail-toolbar-btn" onClick={() => loadMails(selectedFolder, currentPage, perPage)} title="Yenile">🔄</button>
                         <button className="db-mail-toolbar-btn" title="Seç">☑️</button>
@@ -650,15 +676,13 @@ function MailSection({
                             </div>
                         </div>
 
-                        {!selectedMail && (
-                            <button 
-                                className={`db-mail-toolbar-btn ${isMailFullscreen ? 'active' : ''}`} 
-                                onClick={toggleMailFullscreen}
-                                title={isMailFullscreen ? "Normal Görünüm" : "Tam Ekran"}
-                            >
-                                {isMailFullscreen ? '←' : '→'}
-                            </button>
-                        )}
+                        <button
+                            className={`db-mail-toolbar-btn ${isMailFullscreen ? 'active' : ''}`}
+                            onClick={toggleMailFullscreen}
+                            title={isMailFullscreen ? 'Okuma bölmesini aç' : 'Okuma bölmesini kapat'}
+                        >
+                            {isMailFullscreen ? '↔' : '⇔'}
+                        </button>
                     </div>
                     {!connected ? (
                         <div className="db-empty-state">
@@ -684,79 +708,89 @@ function MailSection({
                         </ul>
                     )}
                 </div>
-                <div
-                    className="db-resizer"
-                    onMouseDown={() => { isResizingList.current = true; document.body.classList.add('resizing') }}
-                />
-                <div className="db-right-panel">
-                    {!connected ? (
-                        <div className="db-loading" style={{ paddingTop: 100 }}>
-                            <div className="db-spinner" />
-                            IMAP Sunucusuna bağlanılıyor…
-                        </div>
-                    ) : !selectedMail ? (
-                        <div className="db-empty-state">
-                            <div className="db-empty-icon">🕊️</div>
-                            <div className="db-empty-text">Bir e-posta seçin</div>
-                        </div>
-                    ) : loadingContent ? (
-                        <div className="db-loading" style={{ paddingTop: 60 }}><div className="db-spinner" />İçerik yükleniyor…</div>
-                    ) : (
-                        <div className="db-mail-content">
-                            <div className="db-mail-content-header">
-                                <div className="db-mail-content-subject">{mailContent?.subject || selectedMail.subject || '(Konu Yok)'}</div>
-                                <div className="db-mail-content-actions">
-                                    <button 
-                                        className="db-mail-action-btn" 
-                                        onClick={detachMailToWindow}
-                                        title="Yeni Pencereye At"
-                                    >
-                                        🪟
-                                    </button>
-                                    <button 
-                                        className="db-mail-action-btn" 
-                                        onClick={() => setSelectedMail(null)}
-                                        title="Kapat"
-                                    >
-                                        ✕
-                                    </button>
+                {!isMailFullscreen && (
+                    <>
+                        <div
+                            className="db-resizer"
+                            onMouseDown={() => { isResizingList.current = true; document.body.classList.add('resizing') }}
+                        />
+                        <div className="db-right-panel">
+                            {!connected ? (
+                                <div className="db-loading" style={{ paddingTop: 100 }}>
+                                    <div className="db-spinner" />
+                                    IMAP Sunucusuna bağlanılıyor…
                                 </div>
-                            </div>
-                            <div className="db-mail-meta"><strong>Kimden:</strong> {mailContent?.from_name ? `${mailContent.from_name} <${mailContent.from_address}>` : selectedMail.address}</div>
-                            <hr className="db-mail-divider" />
-                            {mailContent?.html_body ? (
-                                <div className="db-mail-body-html"><iframe ref={iframeRef} title="mail-content" sandbox="allow-same-origin" /></div>
+                            ) : !selectedMail ? (
+                                <div className="db-empty-state">
+                                    <div className="db-empty-icon">🕊️</div>
+                                    <div className="db-empty-text">Bir e-posta seçin</div>
+                                </div>
+                            ) : loadingContent ? (
+                                <div className="db-loading" style={{ paddingTop: 60 }}><div className="db-spinner" />İçerik yükleniyor…</div>
                             ) : (
-                                <div className="db-mail-body">{mailContent?.plain_body || '(İçerik yok)'}</div>
-                            )}
-                            {mailContent?.attachments?.length > 0 && (
-                                <div className="db-attachments">
-                                    <div
-                                        className="db-attachments__header"
-                                        onClick={() => setAttachmentsExpanded(!attachmentsExpanded)}
-                                        style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', userSelect: 'none' }}
-                                    >
-                                        <span className={`db-folder-chevron ${attachmentsExpanded ? 'expanded' : ''}`} style={{ marginRight: '6px' }}>❯</span>
-                                        Ekler ({mailContent.attachments.length})
+                                <div className="db-mail-content">
+                                    <div className="db-mail-content-header">
+                                        <div className="db-mail-content-subject">{mailContent?.subject || selectedMail.subject || '(Konu Yok)'}</div>
+                                        <div className="db-mail-content-actions">
+                                            <button
+                                                className="db-mail-action-btn"
+                                                onClick={detachMailToWindow}
+                                                title="Yeni Pencereye At"
+                                            >
+                                                🪟
+                                            </button>
+                                            <button
+                                                className="db-mail-action-btn"
+                                                onClick={() => setSelectedMail(null)}
+                                                title="Kapat"
+                                            >
+                                                ✕
+                                            </button>
+                                        </div>
                                     </div>
-                                    {attachmentsExpanded && (
-                                        <ul className="db-attachments__list">
-                                            {mailContent.attachments.map((at) => (
-                                                <li key={at.id} className="db-attachments__item">
-                                                    <div className="db-attachments__info">
-                                                        <span className="db-attachments__name">{at.filename}</span>
-                                                        <span className="db-attachments__meta">{at.content_type} · {formatBytes(at.size)}</span>
-                                                    </div>
-                                                    <a className="db-attachments__link" href={`/api/mail/${accountId}/content/${encodeURIComponent(mailContent.id)}/attachments/${at.id}`} download={at.filename}>İndir</a>
-                                                </li>
-                                            ))}
-                                        </ul>
+                                    <div className="db-mail-meta"><strong>Kimden:</strong> {mailContent?.from_name ? `${mailContent.from_name} <${mailContent.from_address}>` : selectedMail.address}</div>
+                                    <hr className="db-mail-divider" />
+                                    {mailContent?.html_body ? (
+                                        <div className="db-mail-body-html"><iframe ref={iframeRef} title="mail-content" sandbox="allow-same-origin" /></div>
+                                    ) : (
+                                        <div className="db-mail-body">{mailContent?.plain_body || '(İçerik yok)'}</div>
+                                    )}
+                                    {mailContent?.attachments?.length > 0 && (
+                                        <div className="db-attachments">
+                                            <div
+                                                className="db-attachments__header"
+                                                onClick={() => setAttachmentsExpanded(!attachmentsExpanded)}
+                                                style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', userSelect: 'none' }}
+                                            >
+                                                <span className={`db-folder-chevron ${attachmentsExpanded ? 'expanded' : ''}`} style={{ marginRight: '6px' }}>❯</span>
+                                                Ekler ({mailContent.attachments.length})
+                                            </div>
+                                            {attachmentsExpanded && (
+                                                <ul className="db-attachments__list">
+                                                    {mailContent.attachments.map((at) => (
+                                                        <li key={at.id} className="db-attachments__item">
+                                                            <div className="db-attachments__info">
+                                                                <span className="db-attachments__name">{at.filename}</span>
+                                                                <span className="db-attachments__meta">{at.content_type} · {formatBytes(at.size)}</span>
+                                                            </div>
+                                                            <a
+                                                                className="db-attachments__link"
+                                                                href={apiUrl(`/api/mail/${accountId}/content/${encodeURIComponent(mailContent.id)}/attachments/${at.id}?mailbox=${encodeURIComponent(selectedFolder || 'INBOX')}`)}
+                                                                download={at.filename}
+                                                            >
+                                                                İndir
+                                                            </a>
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            )}
+                                        </div>
                                     )}
                                 </div>
                             )}
                         </div>
-                    )}
-                </div>
+                    </>
+                )}
             </div>
         </div>
     )

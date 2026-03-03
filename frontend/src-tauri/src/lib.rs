@@ -1,21 +1,78 @@
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Mutex;
+
+use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
+
+/// Shared state that maps window labels → mail data JSON.
+/// The new window calls `get_mail_window_data` to consume its entry.
+#[derive(Default)]
+struct MailWindowStore(Mutex<HashMap<String, String>>);
+
 #[tauri::command]
-fn open_mail_window(handle: tauri::AppHandle) -> Result<String, String> {
-  let mail_window = tauri::window::WindowBuilder::new(&handle, "mail", tauri::WindowUrl::App("mail.html".into()))
-    .inner_size(800.0, 600.0)
-    .resizable(true)
-    .build()
-    .map_err(|e| e.to_string())?;
-  
-  Ok(mail_window.label().to_string())
+async fn open_mail_window(
+  handle: tauri::AppHandle,
+  label: String,
+  mail_data_json: String,
+) -> Result<(), String> {
+  let label = if label.trim().is_empty() {
+    "mail".to_string()
+  } else {
+    label
+  };
+
+  if let Some(window) = handle.get_webview_window(&label) {
+    window.show().map_err(|e| e.to_string())?;
+    let _ = window.set_focus();
+    return Ok(());
+  }
+
+  // Store the payload in shared app state so the new window can retrieve it
+  // via `get_mail_window_data`. We cannot use localStorage (isolated per webview)
+  // or URL query parameters (PathBuf strips them on App protocol).
+  {
+    let store = handle.state::<MailWindowStore>();
+    let mut map = store.0.lock().unwrap();
+    map.insert(label.clone(), mail_data_json);
+  }
+
+  WebviewWindowBuilder::new(
+    &handle,
+    &label,
+    WebviewUrl::App(PathBuf::from("index.html")),
+  )
+  .title("Guvercin - Mail")
+  .visible(true)
+  .build()
+  .map_err(|e| e.to_string())?;
+
+  Ok(())
+}
+
+/// Called by the new window on startup to fetch (and consume) its mail data.
+#[tauri::command]
+fn get_mail_window_data(
+  label: String,
+  store: State<'_, MailWindowStore>,
+) -> Option<String> {
+  let mut map = store.0.lock().unwrap();
+  map.remove(&label)
 }
 
 #[tauri::command]
-fn close_mail_window(handle: tauri::AppHandle) -> Result<(), String> {
-  if let Some(window) = handle.get_webview_window("mail") {
-    window.close().map_err(|e| e.to_string())?;
+fn close_mail_window(handle: tauri::AppHandle, label: String) -> Result<(), String> {
+  let label = if label.trim().is_empty() {
+    "mail".to_string()
+  } else {
+    label
+  };
+
+  if let Some(window) = handle.get_webview_window(&label) {
+    let _ = window.close();
   }
   Ok(())
 }
+
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -39,7 +96,8 @@ pub fn run() {
       }
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![open_mail_window, close_mail_window])
+    .invoke_handler(tauri::generate_handler![open_mail_window, get_mail_window_data, close_mail_window])
+    .manage(MailWindowStore::default())
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }
