@@ -215,8 +215,14 @@ pub async fn finalize_account(
         res.last_insert_rowid()
     };
 
+    tx.commit().await?;
+
+    // Ensure user DB exists, getting its pool so we can write AI settings into it
+    let user_pool = crate::db::get_user_db_pool(&state, account_id).await?;
+
     // AI config
     if let Some(ai) = ai_config {
+        let mut user_tx = user_pool.begin().await?;
         sqlx::query(
             r#"
             INSERT INTO ai (model_name, type, api_key_server_url, base_url_context_window)
@@ -227,14 +233,10 @@ pub async fn finalize_account(
         .bind(ai.r#type)
         .bind(ai.api_key_server_url)
         .bind(ai.base_url_context_window)
-        .execute(&mut *tx)
+        .execute(&mut *user_tx)
         .await?;
+        user_tx.commit().await?;
     }
-
-    tx.commit().await?;
-
-    // Ensure user DB exists
-    let _ = crate::db::get_user_db_pool(&state, account_id).await;
 
     let resp = FinalizeSuccessResponse {
         status: "success",

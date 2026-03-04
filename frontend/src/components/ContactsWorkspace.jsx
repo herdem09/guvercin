@@ -3,8 +3,8 @@ export default function ContactsWorkspace() {
         <div className="workspace-placeholder">
             <div className="db-empty-state">
                 <div className="db-empty-icon">👥</div>
-                <div className="db-empty-text">Kişiler Sayfası</div>
-                <p>Burası şu an yapım aşamasında.</p>
+                <div className="db-empty-text">Contacts Page</div>
+                <p>This section is under construction.</p>
             </div>
         </div>
     )

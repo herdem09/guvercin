@@ -87,7 +87,7 @@ function LanguagePage() {
             if (indexA !== -1 && indexB !== -1) return indexA - indexB
             if (indexA !== -1) return -1
             if (indexB !== -1) return 1
-            return a.native.localeCompare(b.native, 'tr')
+            return a.native.localeCompare(b.native, 'en')
         })
     }, [])
 

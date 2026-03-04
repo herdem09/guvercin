@@ -1,1 +1,1 @@
-# Tauri ve Rust API bağlamı burada yazılacaktır.
+// Tauri and Rust API context will be written here.

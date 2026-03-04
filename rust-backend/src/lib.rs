@@ -24,7 +24,10 @@ use crate::db::AppState;
 use crate::imap_session::ImapState;
 use crate::mail_routes::MailAppState;
 
-pub async fn run() -> anyhow::Result<()> {
+use std::path::PathBuf;
+
+pub async fn run(db_dir: Option<PathBuf>) -> anyhow::Result<()> {
+    println!("Guvercin Backend v1.1 Starting...");
     dotenvy::dotenv().ok();
 
     let subscriber = FmtSubscriber::builder()
@@ -32,7 +35,7 @@ pub async fn run() -> anyhow::Result<()> {
         .finish();
     tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
-    let db_state = Arc::new(AppState::initialize().await?);
+    let db_state = Arc::new(AppState::initialize(db_dir).await?);
     let imap_state = Arc::new(ImapState::new());
 
     let mail_state = Arc::new(MailAppState {

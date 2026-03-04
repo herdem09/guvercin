@@ -6,27 +6,27 @@ import './DashboardPage.css'
 
 // ── Folder mappings ────────────────────
 const FOLDER_MAP = {
-    'INBOX': { icon: '📥', label: 'Gelen Kutusu' },
-    'Gelen Kutusu': { icon: '📥', label: 'Gelen Kutusu' },
-    'Starred': { icon: '⭐', label: 'Yıldızlı' },
-    'Yıldızlı': { icon: '⭐', label: 'Yıldızlı' },
-    'Snoozed': { icon: '🕒', label: 'Ertelenenler' },
-    'Ertelenenler': { icon: '🕒', label: 'Ertelenenler' },
-    'Sent': { icon: '✈️', label: 'Gönderilmiş Postalar' },
-    'Sent Items': { icon: '✈️', label: 'Gönderilmiş Postalar' },
-    'Gönderilmiş Öğeler': { icon: '✈️', label: 'Gönderilmiş Postalar' },
-    'Drafts': { icon: '📝', label: 'Taslaklar' },
-    'Taslaklar': { icon: '📝', label: 'Taslaklar' },
-    'Archive': { icon: '📦', label: 'Arşiv' },
-    'Arşiv': { icon: '📦', label: 'Arşiv' },
-    'Trash': { icon: '🗑️', label: 'Çöp Kutusu' },
-    'Silinmiş Öğeler': { icon: '🗑️', label: 'Çöp Kutusu' },
+    'INBOX': { icon: '📥', label: 'Inbox' },
+    'Gelen Kutusu': { icon: '📥', label: 'Inbox' },
+    'Starred': { icon: '⭐', label: 'Starred' },
+    'Yıldızlı': { icon: '⭐', label: 'Starred' },
+    'Snoozed': { icon: '🕒', label: 'Snoozed' },
+    'Ertelenenler': { icon: '🕒', label: 'Snoozed' },
+    'Sent': { icon: '✈️', label: 'Sent Items' },
+    'Sent Items': { icon: '✈️', label: 'Sent Items' },
+    'Gönderilmiş Öğeler': { icon: '✈️', label: 'Sent Items' },
+    'Drafts': { icon: '📝', label: 'Drafts' },
+    'Taslaklar': { icon: '📝', label: 'Drafts' },
+    'Archive': { icon: '📦', label: 'Archive' },
+    'Arşiv': { icon: '📦', label: 'Archive' },
+    'Trash': { icon: '🗑️', label: 'Trash' },
+    'Silinmiş Öğeler': { icon: '🗑️', label: 'Trash' },
     'Spam': { icon: '🚫', label: 'Spam' },
     'Junk': { icon: '🚫', label: 'Spam' },
     'Önemsiz E-posta': { icon: '🚫', label: 'Spam' },
-    'All Mail': { icon: '📑', label: 'Tüm Postalar' },
-    '[Gmail]/Tüm Postalar': { icon: '📑', label: 'Tüm Postalar' },
-    '[Gmail]/All Mail': { icon: '📑', label: 'Tüm Postalar' },
+    'All Mail': { icon: '📑', label: 'All Mail' },
+    '[Gmail]/Tüm Postalar': { icon: '📑', label: 'All Mail' },
+    '[Gmail]/All Mail': { icon: '📑', label: 'All Mail' },
 }
 
 function folderInfo(name) {
@@ -218,19 +218,51 @@ const DashboardPage = () => {
                 mailbox: selectedFolder || 'INBOX',
             }
 
-            // Pass mail data directly via invoke so it's embedded in the new window's URL.
-            // We cannot use localStorage because each Tauri WebviewWindow has its own
-            // isolated storage that is not shared with other windows.
             await invoke('open_mail_window', {
                 label: mailWindowLabel,
                 mailDataJson: JSON.stringify(mailData),
             })
             setMailWindowOpen(true)
-            // Do not keep showing the mail in the main window when detached
             setSelectedMail(null)
             setMailContent(null)
         } catch (e) {
             console.error('Failed to open mail window:', e)
+        }
+    }
+
+    const detachMailToWindowFromList = async (e, mail) => {
+        e.stopPropagation()
+        try {
+            // First we need to fetch the content because it's not loaded yet
+            const mailbox = selectedFolder || 'INBOX'
+            let content = null
+            const res = await fetch(
+                apiUrl(`/api/mail/${accountId}/content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`)
+            )
+            if (res.ok) {
+                content = await res.json()
+            }
+
+            const { invoke } = await import('@tauri-apps/api/core')
+            const mailWindowLabel = `mail-${Date.now()}-${Math.random().toString(16).slice(2)}`
+            const mailData = {
+                mail: mail,
+                mailContent: content,
+                accountId: accountId,
+                mailbox: mailbox,
+            }
+
+            await invoke('open_mail_window', {
+                label: mailWindowLabel,
+                mailDataJson: JSON.stringify(mailData),
+            })
+            // Clear selections in the main view if they match this mail
+            if (selectedMail?.id === mail.id) {
+                setSelectedMail(null)
+                setMailContent(null)
+            }
+        } catch (error) {
+            console.error('Failed to open mail window from list:', error)
         }
     }
 
@@ -274,18 +306,18 @@ const DashboardPage = () => {
             <div className="db-navbar">
                 <button className="db-logo-btn">
                     <div className="db-logo-icon">🕊️</div>
-                    <span className="db-logo-text">Güvercin</span>
+                    <span className="db-logo-text">Guvercin</span>
                 </button>
                 <div className="db-search">
-                    <input type="text" placeholder="Ara..." />
+                    <input type="text" placeholder="Search..." />
                     <button className="db-search-btn">🔍</button>
                 </div>
                 <div className="db-clock">
                     <span className="db-clock-item">{time}</span>
                     <span className="db-clock-item">{date}</span>
                 </div>
-                <button className="db-icon-btn" title="Bildirimler">🔔</button>
-                <button className="db-icon-btn" title="Ayarlar">⚙️</button>
+                <button className="db-icon-btn" title="Notifications">🔔</button>
+                <button className="db-icon-btn" title="Settings">⚙️</button>
                 <div className="db-account-wrapper">
                     <button className="db-account-btn" ref={accountButtonRef} onClick={handleAccountButtonClick}>
                         <span className="db-account-btn__icon">👤</span>
@@ -401,6 +433,7 @@ const DashboardPage = () => {
                                 selectedMail={selectedMail}
                                 setSelectedMail={setSelectedMail}
                                 mailContent={mailContent}
+                                setMailContent={setMailContent}
                                 loadingMails={loadingMails}
                                 loadingContent={loadingContent}
                                 connecting={connecting}
@@ -430,7 +463,7 @@ const DashboardPage = () => {
 function MailSection({
     connected, setConnected, accountId, accountForm, email,
     folders, selectedFolder, setSelectedFolder, mails,
-    selectedMail, setSelectedMail, mailContent, loadingMails, loadingContent,
+    selectedMail, setSelectedMail, mailContent, setMailContent, loadingMails, loadingContent,
     connecting, loadMails, openMail, detachMailToWindow, iframeRef, getShortTime,
     currentPage, setCurrentPage, perPage, setPerPage,
     isMailFullscreen, toggleMailFullscreen
@@ -443,6 +476,59 @@ function MailSection({
     const perPageRef = useRef(null)
     const isResizingFolder = useRef(false)
     const isResizingList = useRef(false)
+
+    // ── Tab system ──────────────────────────────────
+    const [tabs, setTabs] = useState([])
+    const [activeTabId, setActiveTabId] = useState(null) // null = inbox view
+    const [tabContents, setTabContents] = useState({}) // tabId -> mailContent
+    const [loadingTab, setLoadingTab] = useState(false)
+    const tabIframeRefs = useRef({})
+
+    const openMailInTab = async (mail, existingContent) => {
+        const tabId = `tab-${Date.now()}-${Math.random().toString(16).slice(2)}`
+        let content = existingContent
+        if (!content) {
+            setLoadingTab(true)
+            try {
+                const mailbox = selectedFolder || 'INBOX'
+                const res = await fetch(
+                    apiUrl(`/api/mail/${accountId}/content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`)
+                )
+                if (res.ok) content = await res.json()
+            } catch { }
+            setLoadingTab(false)
+        }
+        setTabs(prev => [...prev, { id: tabId, mail, mailbox: selectedFolder || 'INBOX' }])
+        setTabContents(prev => ({ ...prev, [tabId]: content }))
+        setActiveTabId(tabId)
+
+        // Clear selection in main list when opened in tab
+        setSelectedMail(null)
+        setMailContent(null)
+    }
+
+    const closeTab = (e, tabId) => {
+        e.stopPropagation()
+        setTabs(prev => {
+            const remaining = prev.filter(t => t.id !== tabId)
+            return remaining
+        })
+        setTabContents(prev => { const n = { ...prev }; delete n[tabId]; return n })
+        if (activeTabId === tabId) setActiveTabId(null)
+    }
+
+    // Write html into tab iframes after render
+    useEffect(() => {
+        if (!activeTabId) return
+        const ref = tabIframeRefs.current[activeTabId]
+        const content = tabContents[activeTabId]
+        if (ref && content?.html_body) {
+            const doc = ref.contentDocument
+            doc.open()
+            doc.write(content.html_body)
+            doc.close()
+        }
+    }, [activeTabId, tabContents])
 
     useEffect(() => {
         const handleClickOutside = (e) => {
@@ -570,228 +656,337 @@ function MailSection({
         )
     }
 
+    const activeTab = tabs.find(t => t.id === activeTabId)
+    const activeTabContent = activeTabId ? tabContents[activeTabId] : null
+
     return (
-        <div className="mail-section-container" data-fullscreen-mail={isMailFullscreen}>
-            <div className="db-folder-panel" style={{ width: folderWidth }}>
-                {connected ? (
-                    <div className="db-folder-scroll-area">
-                        <ul className="db-folder-list">
-                            {folderTree.map(node => renderFolderItem(node))}
-                        </ul>
-                    </div>
-                ) : (
-                    <div style={{ padding: '20px', color: '#999', fontSize: '13px', textAlign: 'center' }}>
-                        {connecting ? 'Bağlanıyor...' : 'Bağlantı bekliyor...'}
-                    </div>
-                )}
-            </div>
-            <div
-                className="db-resizer"
-                onMouseDown={() => { isResizingFolder.current = true; document.body.classList.add('resizing') }}
-            />
-            <div className="db-mail-main">
-                <div
-                    className="db-center-panel"
-                    style={isMailFullscreen ? { flex: 1, width: 'auto' } : { width: listWidth }}
+        <div className="mail-section-wrapper">
+            {/* ── Tab Bar ─────────────────────────────── */}
+            <div className="mail-tab-bar">
+                <button
+                    className={`mail-tab-item main-tab ${!activeTabId ? 'active' : ''}`}
+                    onClick={() => setActiveTabId(null)}
                 >
-                    <div className="db-mail-toolbar">
-                        <button className="db-mail-toolbar-btn" onClick={() => loadMails(selectedFolder, currentPage, perPage)} title="Yenile">🔄</button>
-                        <button className="db-mail-toolbar-btn" title="Seç">☑️</button>
+                    📥 {selectedFolder || 'Inbox'}
+                </button>
+                {tabs.map(tab => (
+                    <button
+                        key={tab.id}
+                        className={`mail-tab-item ${activeTabId === tab.id ? 'active' : ''}`}
+                        onClick={() => setActiveTabId(tab.id)}
+                    >
+                        <span className="mail-tab-label">{tab.mail.subject || '(No Subject)'}</span>
+                        <span className="mail-tab-close" onClick={(e) => closeTab(e, tab.id)}>✕</span>
+                    </button>
+                ))}
+            </div>
 
-                        <div className="db-toolbar-separator" />
-
-                        <button className="db-mail-toolbar-btn" title="Filtrele">🔍</button>
-                        <button className="db-mail-toolbar-btn" title="Sırala">↕️</button>
-
-                        <div className="db-toolbar-separator" />
-
-                        <div className="db-pagination-controls">
-                            <button
-                                className="db-pagination-btn"
-                                disabled={currentPage <= 1 || loadingMails}
-                                onClick={() => {
-                                    const p = currentPage - 1
-                                    setCurrentPage(p)
-                                    loadMails(selectedFolder, p, perPage)
-                                }}
-                            >
-                                ◀
-                            </button>
-                            <span className="db-page-num">{currentPage}</span>
-                            <button
-                                className="db-pagination-btn"
-                                disabled={mails.length < perPage || loadingMails}
-                                onClick={() => {
-                                    const p = currentPage + 1
-                                    setCurrentPage(p)
-                                    loadMails(selectedFolder, p, perPage)
-                                }}
-                            >
-                                ▶
-                            </button>
+            {/* ── Tab content or normal inbox view ───── */}
+            {activeTabId ? (
+                <div className="mail-tab-content">
+                    {loadingTab ? (
+                        <div className="db-loading" style={{ paddingTop: 60 }}><div className="db-spinner" />Loading...</div>
+                    ) : activeTab ? (
+                        <div className="db-mail-content">
+                            <div className="db-mail-content-header">
+                                <div className="db-mail-content-subject">{activeTabContent?.subject || activeTab.mail.subject || '(No Subject)'}</div>
+                                <div className="db-mail-content-actions">
+                                    <button
+                                        className="db-mail-action-btn"
+                                        onClick={() => closeTab({ stopPropagation: () => { } }, activeTabId)}
+                                        title="Close tab"
+                                    >✕</button>
+                                </div>
+                            </div>
+                            <div className="db-mail-meta"><strong>From:</strong> {activeTabContent?.from_name ? `${activeTabContent.from_name} <${activeTabContent.from_address}>` : activeTab.mail.address}</div>
+                            <hr className="db-mail-divider" />
+                            {activeTabContent?.html_body ? (
+                                <div className="db-mail-body-html">
+                                    <iframe
+                                        ref={el => { tabIframeRefs.current[activeTabId] = el }}
+                                        title={`tab-${activeTabId}`}
+                                        sandbox="allow-same-origin"
+                                    />
+                                </div>
+                            ) : (
+                                <div className="db-mail-body">{activeTabContent?.plain_body || '(No content)'}</div>
+                            )}
+                            {activeTabContent?.attachments?.length > 0 && (
+                                <div className="db-attachments">
+                                    <div className="db-attachments__header">Attachments ({activeTabContent.attachments.length})</div>
+                                    <ul className="db-attachments__list">
+                                        {activeTabContent.attachments.map((at) => (
+                                            <li key={at.id} className="db-attachments__item">
+                                                <div className="db-attachments__info">
+                                                    <span className="db-attachments__name">{at.filename}</span>
+                                                    <span className="db-attachments__meta">{at.content_type}</span>
+                                                </div>
+                                                <a
+                                                    className="db-attachments__link"
+                                                    href={apiUrl(`/api/mail/${accountId}/content/${encodeURIComponent(activeTabContent.id)}/attachments/${at.id}?mailbox=${encodeURIComponent(activeTab.mailbox)}`)}
+                                                    download={at.filename}
+                                                >Download</a>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            )}
                         </div>
+                    ) : null}
+                </div>
+            ) : (
+                <div className="mail-section-container" data-fullscreen-mail={isMailFullscreen}>
+                    <div className="db-folder-panel" style={{ width: folderWidth }}>
+                        {connected ? (
+                            <div className="db-folder-scroll-area">
+                                <ul className="db-folder-list">
+                                    {folderTree.map(node => renderFolderItem(node))}
+                                </ul>
+                            </div>
+                        ) : (
+                            <div style={{ padding: '20px', color: '#999', fontSize: '13px', textAlign: 'center' }}>
+                                {connecting ? 'Connecting...' : 'Waiting for connection...'}
+                            </div>
+                        )}
+                    </div>
+                    <div
+                        className="db-resizer"
+                        onMouseDown={() => { isResizingFolder.current = true; document.body.classList.add('resizing') }}
+                    />
+                    <div className="db-mail-main">
+                        <div
+                            className="db-center-panel"
+                            style={isMailFullscreen ? { flex: 1, width: 'auto' } : { width: listWidth }}
+                        >
+                            <div className="db-mail-toolbar">
+                                <button className="db-mail-toolbar-btn" onClick={() => loadMails(selectedFolder, currentPage, perPage)} title="Refresh">🔄</button>
+                                <button className="db-mail-toolbar-btn" title="Select">☑️</button>
 
-                        <div className="db-perpage-wrapper" ref={perPageRef}>
-                            <div className="db-perpage-combobox">
-                                <input
-                                    type="text"
-                                    className="db-perpage-input"
-                                    value={perPage}
-                                    onClick={() => setIsPerPageOpen(true)}
-                                    onChange={(e) => {
-                                        const val = e.target.value.replace(/\D/g, '')
-                                        setPerPage(val)
-                                    }}
-                                    onFocus={() => setIsPerPageOpen(true)}
-                                    onKeyDown={(e) => {
-                                        if (e.key === 'Enter') {
-                                            const val = Math.max(1, parseInt(perPage) || 50)
-                                            setPerPage(val)
-                                            setCurrentPage(1)
-                                            loadMails(selectedFolder, 1, val)
-                                            setIsPerPageOpen(false)
-                                            e.target.blur()
-                                        }
-                                    }}
-                                    placeholder="Adet"
-                                />
-                                {isPerPageOpen && (
-                                    <div className="db-perpage-dropdown">
-                                        {[10, 20, 50, 100, 150, 200, 250].map(val => (
-                                            <div
-                                                key={val}
-                                                className="db-perpage-option"
-                                                onClick={() => {
+                                <div className="db-toolbar-separator" />
+
+                                <button className="db-mail-toolbar-btn" title="Filter">🔍</button>
+                                <button className="db-mail-toolbar-btn" title="Sort">↕️</button>
+
+                                <div className="db-toolbar-separator" />
+
+                                <div className="db-pagination-controls">
+                                    <button
+                                        className="db-pagination-btn"
+                                        disabled={currentPage <= 1 || loadingMails}
+                                        onClick={() => {
+                                            const p = currentPage - 1
+                                            setCurrentPage(p)
+                                            loadMails(selectedFolder, p, perPage)
+                                        }}
+                                    >
+                                        ◀
+                                    </button>
+                                    <span className="db-page-num">{currentPage}</span>
+                                    <button
+                                        className="db-pagination-btn"
+                                        disabled={mails.length < perPage || loadingMails}
+                                        onClick={() => {
+                                            const p = currentPage + 1
+                                            setCurrentPage(p)
+                                            loadMails(selectedFolder, p, perPage)
+                                        }}
+                                    >
+                                        ▶
+                                    </button>
+                                </div>
+
+                                <div className="db-perpage-wrapper" ref={perPageRef}>
+                                    <div className="db-perpage-combobox">
+                                        <input
+                                            type="text"
+                                            className="db-perpage-input"
+                                            value={perPage}
+                                            onClick={() => setIsPerPageOpen(true)}
+                                            onChange={(e) => {
+                                                const val = e.target.value.replace(/\D/g, '')
+                                                setPerPage(val)
+                                            }}
+                                            onFocus={() => setIsPerPageOpen(true)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                    const val = Math.max(1, parseInt(perPage) || 50)
                                                     setPerPage(val)
                                                     setCurrentPage(1)
                                                     loadMails(selectedFolder, 1, val)
                                                     setIsPerPageOpen(false)
-                                                }}
-                                            >
-                                                {val}
+                                                    e.target.blur()
+                                                }
+                                            }}
+                                            placeholder="Count"
+                                        />
+                                        {isPerPageOpen && (
+                                            <div className="db-perpage-dropdown">
+                                                {[10, 20, 50, 100, 150, 200, 250].map(val => (
+                                                    <div
+                                                        key={val}
+                                                        className="db-perpage-option"
+                                                        onClick={() => {
+                                                            setPerPage(val)
+                                                            setCurrentPage(1)
+                                                            loadMails(selectedFolder, 1, val)
+                                                            setIsPerPageOpen(false)
+                                                        }}
+                                                    >
+                                                        {val}
+                                                    </div>
+                                                ))}
                                             </div>
-                                        ))}
+                                        )
+                                        }
                                     </div>
-                                )}
-                            </div>
-                        </div>
+                                </div>
 
-                        <button
-                            className={`db-mail-toolbar-btn ${isMailFullscreen ? 'active' : ''}`}
-                            onClick={toggleMailFullscreen}
-                            title={isMailFullscreen ? 'Okuma bölmesini aç' : 'Okuma bölmesini kapat'}
-                        >
-                            {isMailFullscreen ? '↔' : '⇔'}
-                        </button>
-                    </div>
-                    {!connected ? (
-                        <div className="db-empty-state">
-                            <div className="db-empty-icon">📭</div>
-                            <div className="db-empty-text">{connecting ? 'Bağlanıyor…' : 'Bağlantı bekleniyor'}</div>
-                        </div>
-                    ) : loadingMails ? (
-                        <div className="db-loading"><div className="db-spinner" />Yükleniyor…</div>
-                    ) : mails.length === 0 ? (
-                        <div className="db-empty-state">
-                            <div className="db-empty-icon">📭</div>
-                            <div className="db-empty-text">Bu klasör boş</div>
-                        </div>
-                    ) : (
-                        <ul className="db-mail-list">
-                            {mails.map((mail) => (
-                                <li key={mail.id} className={`db-mail-item ${!mail.seen ? 'unread' : ''} ${selectedMail?.id === mail.id ? 'selected' : ''}`} onClick={() => openMail(mail)}>
-                                    <span className="db-mail-sender">{mail.name || mail.address || 'Bilinmeyen'}</span>
-                                    <span className="db-mail-subject">{mail.subject || '(Konu Yok)'}</span>
-                                    <span className="db-mail-time">{getShortTime()}</span>
-                                </li>
-                            ))}
-                        </ul>
-                    )}
-                </div>
-                {!isMailFullscreen && (
-                    <>
-                        <div
-                            className="db-resizer"
-                            onMouseDown={() => { isResizingList.current = true; document.body.classList.add('resizing') }}
-                        />
-                        <div className="db-right-panel">
+                                <button
+                                    className={`db-mail-toolbar-btn ${isMailFullscreen ? 'active' : ''}`}
+                                    onClick={toggleMailFullscreen}
+                                    title={isMailFullscreen ? 'Open reading pane' : 'Close reading pane'}
+                                >
+                                    {isMailFullscreen ? '↔' : '⇔'}
+                                </button>
+                            </div>
                             {!connected ? (
-                                <div className="db-loading" style={{ paddingTop: 100 }}>
-                                    <div className="db-spinner" />
-                                    IMAP Sunucusuna bağlanılıyor…
-                                </div>
-                            ) : !selectedMail ? (
                                 <div className="db-empty-state">
-                                    <div className="db-empty-icon">🕊️</div>
-                                    <div className="db-empty-text">Bir e-posta seçin</div>
+                                    <div className="db-empty-icon">📭</div>
+                                    <div className="db-empty-text">{connecting ? 'Connecting...' : 'Waiting for connection...'}</div>
                                 </div>
-                            ) : loadingContent ? (
-                                <div className="db-loading" style={{ paddingTop: 60 }}><div className="db-spinner" />İçerik yükleniyor…</div>
+                            ) : loadingMails ? (
+                                <div className="db-loading"><div className="db-spinner" />Loading...</div>
+                            ) : mails.length === 0 ? (
+                                <div className="db-empty-state">
+                                    <div className="db-empty-icon">📭</div>
+                                    <div className="db-empty-text">This folder is empty</div>
+                                </div>
                             ) : (
-                                <div className="db-mail-content">
-                                    <div className="db-mail-content-header">
-                                        <div className="db-mail-content-subject">{mailContent?.subject || selectedMail.subject || '(Konu Yok)'}</div>
-                                        <div className="db-mail-content-actions">
-                                            <button
-                                                className="db-mail-action-btn"
-                                                onClick={detachMailToWindow}
-                                                title="Yeni Pencereye At"
-                                            >
-                                                🪟
-                                            </button>
-                                            <button
-                                                className="db-mail-action-btn"
-                                                onClick={() => setSelectedMail(null)}
-                                                title="Kapat"
-                                            >
-                                                ✕
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div className="db-mail-meta"><strong>Kimden:</strong> {mailContent?.from_name ? `${mailContent.from_name} <${mailContent.from_address}>` : selectedMail.address}</div>
-                                    <hr className="db-mail-divider" />
-                                    {mailContent?.html_body ? (
-                                        <div className="db-mail-body-html"><iframe ref={iframeRef} title="mail-content" sandbox="allow-same-origin" /></div>
-                                    ) : (
-                                        <div className="db-mail-body">{mailContent?.plain_body || '(İçerik yok)'}</div>
-                                    )}
-                                    {mailContent?.attachments?.length > 0 && (
-                                        <div className="db-attachments">
-                                            <div
-                                                className="db-attachments__header"
-                                                onClick={() => setAttachmentsExpanded(!attachmentsExpanded)}
-                                                style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', userSelect: 'none' }}
-                                            >
-                                                <span className={`db-folder-chevron ${attachmentsExpanded ? 'expanded' : ''}`} style={{ marginRight: '6px' }}>❯</span>
-                                                Ekler ({mailContent.attachments.length})
+                                <ul className="db-mail-list">
+                                    {mails.map((mail) => (
+                                        <li key={mail.id} className={`db-mail-item ${!mail.seen ? 'unread' : ''} ${selectedMail?.id === mail.id ? 'selected' : ''}`} onClick={() => openMail(mail)}>
+                                            <div className="db-mail-item-content">
+                                                <span className="db-mail-sender">{mail.name || mail.address || 'Unknown'}</span>
+                                                <span className="db-mail-subject">{mail.subject || '(No Subject)'}</span>
+                                                <span className="db-mail-time">{getShortTime()}</span>
                                             </div>
-                                            {attachmentsExpanded && (
-                                                <ul className="db-attachments__list">
-                                                    {mailContent.attachments.map((at) => (
-                                                        <li key={at.id} className="db-attachments__item">
-                                                            <div className="db-attachments__info">
-                                                                <span className="db-attachments__name">{at.filename}</span>
-                                                                <span className="db-attachments__meta">{at.content_type} · {formatBytes(at.size)}</span>
-                                                            </div>
-                                                            <a
-                                                                className="db-attachments__link"
-                                                                href={apiUrl(`/api/mail/${accountId}/content/${encodeURIComponent(mailContent.id)}/attachments/${at.id}?mailbox=${encodeURIComponent(selectedFolder || 'INBOX')}`)}
-                                                                download={at.filename}
-                                                            >
-                                                                İndir
-                                                            </a>
-                                                        </li>
-                                                    ))}
-                                                </ul>
+                                            <div className="db-mail-quick-actions">
+                                                <button
+                                                    className="db-mail-qa-btn"
+                                                    title="Open in new tab"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation()
+                                                        openMailInTab(mail)
+                                                    }}
+                                                >
+                                                    🗂️
+                                                </button>
+                                                <button
+                                                    className="db-mail-qa-btn"
+                                                    title="Open in new window"
+                                                    onClick={(e) => detachMailToWindowFromList(e, mail)}
+                                                >
+                                                    🪟
+                                                </button>
+                                            </div>
+                                        </li>
+                                    ))}
+                                </ul>
+                            )}
+                        </div>
+                        {!isMailFullscreen && (
+                            <>
+                                <div
+                                    className="db-resizer"
+                                    onMouseDown={() => { isResizingList.current = true; document.body.classList.add('resizing') }}
+                                />
+                                <div className="db-right-panel">
+                                    {!connected ? (
+                                        <div className="db-loading" style={{ paddingTop: 100 }}>
+                                            <div className="db-spinner" />
+                                            Connecting to IMAP Server...
+                                        </div>
+                                    ) : !selectedMail ? (
+                                        <div className="db-empty-state">
+                                            <div className="db-empty-icon">🕊️</div>
+                                            <div className="db-empty-text">Select an email</div>
+                                        </div>
+                                    ) : loadingContent ? (
+                                        <div className="db-loading" style={{ paddingTop: 60 }}><div className="db-spinner" />Loading content...</div>
+                                    ) : (
+                                        <div className="db-mail-content">
+                                            <div className="db-mail-content-header">
+                                                <div className="db-mail-content-subject">{mailContent?.subject || selectedMail.subject || '(No Subject)'}</div>
+                                                <div className="db-mail-content-actions">
+                                                    <button
+                                                        className="db-mail-action-btn"
+                                                        onClick={() => openMailInTab(selectedMail, mailContent)}
+                                                        title="Open in new tab"
+                                                    >
+                                                        🗂️
+                                                    </button>
+                                                    <button
+                                                        className="db-mail-action-btn"
+                                                        onClick={detachMailToWindow}
+                                                        title="Open in new window"
+                                                    >
+                                                        🪟
+                                                    </button>
+                                                    <button
+                                                        className="db-mail-action-btn"
+                                                        onClick={() => setSelectedMail(null)}
+                                                        title="Close"
+                                                    >
+                                                        ✕
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div className="db-mail-meta"><strong>From:</strong> {mailContent?.from_name ? `${mailContent.from_name} <${mailContent.from_address}>` : selectedMail.address}</div>
+                                            <hr className="db-mail-divider" />
+                                            {mailContent?.html_body ? (
+                                                <div className="db-mail-body-html"><iframe ref={iframeRef} title="mail-content" sandbox="allow-same-origin" /></div>
+                                            ) : (
+                                                <div className="db-mail-body">{mailContent?.plain_body || '(No content)'}</div>
+                                            )}
+                                            {mailContent?.attachments?.length > 0 && (
+                                                <div className="db-attachments">
+                                                    <div
+                                                        className="db-attachments__header"
+                                                        onClick={() => setAttachmentsExpanded(!attachmentsExpanded)}
+                                                        style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', userSelect: 'none' }}
+                                                    >
+                                                        <span className={`db-folder-chevron ${attachmentsExpanded ? 'expanded' : ''}`} style={{ marginRight: '6px' }}>❯</span>
+                                                        Attachments ({mailContent.attachments.length})
+                                                    </div>
+                                                    {attachmentsExpanded && (
+                                                        <ul className="db-attachments__list">
+                                                            {mailContent.attachments.map((at) => (
+                                                                <li key={at.id} className="db-attachments__item">
+                                                                    <div className="db-attachments__info">
+                                                                        <span className="db-attachments__name">{at.filename}</span>
+                                                                        <span className="db-attachments__meta">{at.content_type} · {formatBytes(at.size)}</span>
+                                                                    </div>
+                                                                    <a
+                                                                        className="db-attachments__link"
+                                                                        href={apiUrl(`/api/mail/${accountId}/content/${encodeURIComponent(mailContent.id)}/attachments/${at.id}?mailbox=${encodeURIComponent(selectedFolder || 'INBOX')}`)}
+                                                                        download={at.filename}
+                                                                    >
+                                                                        Download
+                                                                    </a>
+                                                                </li>
+                                                            ))}
+                                                        </ul>
+                                                    )}
+                                                </div>
                                             )}
                                         </div>
                                     )}
                                 </div>
-                            )}
-                        </div>
-                    </>
-                )}
-            </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     )
 }
@@ -800,7 +995,7 @@ function CalendarSection() {
     return (
         <div className="db-section-panel">
             <h2>Calendar</h2>
-            <p>Takvim sekmesi burada görüntülenecek.</p>
+            <p>Calendar section will be displayed here.</p>
         </div>
     )
 }
@@ -809,7 +1004,7 @@ function ContactsSection() {
     return (
         <div className="db-section-panel">
             <h2>Contacts</h2>
-            <p>Burada rehberinizdeki kişiler listelenecek.</p>
+            <p>Your contacts will be listed here.</p>
         </div>
     )
 }
@@ -818,7 +1013,7 @@ function TodoSection() {
     return (
         <div className="db-section-panel">
             <h2>Todo</h2>
-            <p>Görev listelerinizi buraya taşıyın.</p>
+            <p>Move your task lists here.</p>
         </div>
     )
 }

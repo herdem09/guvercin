@@ -113,7 +113,7 @@ export default function MailWorkspace({ accountId, email, accountForm }) {
         {connected ? (
           <>
             <div className="db-folder-header">
-              <span className="db-folder-title">{email || 'Posta Kutusu'}</span>
+              <span className="db-folder-title">{email || 'Mailbox'}</span>
               <button className="db-folder-menu-btn">···</button>
             </div>
             <ul className="db-folder-list">
@@ -136,7 +136,7 @@ export default function MailWorkspace({ accountId, email, accountForm }) {
             </ul>
           </>
         ) : (
-          <div style={{ padding: '14px', color: '#999', fontSize: '13px' }}>Bağlantı yok</div>
+          <div style={{ padding: '14px', color: '#999', fontSize: '13px' }}>No connection</div>
         )}
       </div>
 
@@ -156,24 +156,24 @@ export default function MailWorkspace({ accountId, email, accountForm }) {
           </button>
           <button className="db-mail-toolbar-btn" onClick={() => loadMails(selectedFolder)}>
             <span className="db-mail-toolbar-icon">🔄</span>
-            Yenile
+            Refresh
           </button>
         </div>
 
         {!connected ? (
           <div className="db-empty-state">
             <div className="db-empty-icon">📭</div>
-            <div className="db-empty-text">Önce bağlanın</div>
+            <div className="db-empty-text">Connect first</div>
           </div>
         ) : loadingMails ? (
           <div className="db-loading">
             <div className="db-spinner" />
-            Yükleniyor…
+            Loading...
           </div>
         ) : mails.length === 0 ? (
           <div className="db-empty-state">
             <div className="db-empty-icon">📭</div>
-            <div className="db-empty-text">Bu klasör boş</div>
+            <div className="db-empty-text">This folder is empty</div>
           </div>
         ) : (
           <ul className="db-mail-list">
@@ -183,8 +183,8 @@ export default function MailWorkspace({ accountId, email, accountForm }) {
                 className={`db-mail-item${!mail.seen ? ' unread' : ''}${selectedMail?.id === mail.id ? ' selected' : ''}`}
                 onClick={() => openMail(mail)}
               >
-                <span className="db-mail-sender">{mail.name || mail.address || 'Bilinmeyen'}</span>
-                <span className="db-mail-subject">{mail.subject || '(Konu Yok)'}</span>
+                <span className="db-mail-sender">{mail.name || mail.address || 'Unknown'}</span>
+                <span className="db-mail-subject">{mail.subject || '(No Subject)'}</span>
                 <span className="db-mail-time">{getShortTime()}</span>
               </li>
             ))}
@@ -196,32 +196,32 @@ export default function MailWorkspace({ accountId, email, accountForm }) {
         {!connected ? (
           <div className="db-loading" style={{ paddingTop: 100 }}>
             <div className="db-spinner" />
-            IMAP Sunucusuna bağlanılıyor…
+            Connecting to IMAP Server...
           </div>
         ) : !selectedMail ? (
           <div className="db-empty-state">
             <div className="db-empty-icon">🕊️</div>
-            <div className="db-empty-text">Bir e-posta seçin</div>
+            <div className="db-empty-text">Select an email</div>
           </div>
         ) : loadingContent ? (
           <div className="db-loading" style={{ paddingTop: 60 }}>
             <div className="db-spinner" />
-            İçerik yükleniyor…
+            Loading content...
           </div>
         ) : (
           <div className="db-mail-content">
             <div className="db-mail-content-subject">
-              {mailContent?.subject || selectedMail.subject || '(Konu Yok)'}
+              {mailContent?.subject || selectedMail.subject || '(No Subject)'}
             </div>
             <div className="db-mail-meta">
-              <strong>Kimden:</strong>{' '}
+              <strong>From:</strong>{' '}
               {mailContent?.from_name
                 ? `${mailContent.from_name} <${mailContent.from_address}>`
                 : selectedMail.address}
             </div>
             {mailContent?.date && (
               <div className="db-mail-meta">
-                <strong>Tarih:</strong> {mailContent.date}
+                <strong>Date:</strong> {mailContent.date}
               </div>
             )}
             <hr className="db-mail-divider" />
@@ -230,7 +230,7 @@ export default function MailWorkspace({ accountId, email, accountForm }) {
                 <iframe ref={iframeRef} title="mail-content" sandbox="allow-same-origin" />
               </div>
             ) : (
-              <div className="db-mail-body">{mailContent?.plain_body || '(İçerik yok)'}</div>
+              <div className="db-mail-body">{mailContent?.plain_body || '(No content)'}</div>
             )}
           </div>
         )}

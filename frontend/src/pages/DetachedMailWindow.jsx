@@ -21,7 +21,7 @@ export default function DetachedMailWindow() {
   const mail = data?.mail
   const mailbox = data?.mailbox
 
-  const subject = useMemo(() => mailContent?.subject || mail?.subject || '(Konu Yok)', [mailContent, mail])
+  const subject = useMemo(() => mailContent?.subject || mail?.subject || '(No Subject)', [mailContent, mail])
   const fromLine = useMemo(() => {
     if (!mail) return '-'
     if (mailContent?.from_name && mailContent?.from_address) {
@@ -85,7 +85,7 @@ export default function DetachedMailWindow() {
     let active = true
     const timeoutId = setTimeout(() => {
       if (!active) return
-      setError('İçerik yükleme zaman aşımına uğradı.')
+      setError('Content loading timed out.')
       setLoading(false)
     }, 20000)
     setLoading(true)
@@ -94,7 +94,7 @@ export default function DetachedMailWindow() {
     fetch(apiUrl(`/api/mail/${accountId}/content/${mail.id}${mailboxParam}`), { cache: 'no-store' })
       .then(async (res) => {
         if (!res.ok) {
-          let message = 'İçerik yüklenemedi'
+          let message = 'Content could not be loaded'
           try {
             const body = await res.json()
             if (typeof body?.error === 'string' && body.error.trim()) {
@@ -116,7 +116,7 @@ export default function DetachedMailWindow() {
       .catch((err) => {
         if (!active) return
         clearTimeout(timeoutId)
-        setError(err?.message || 'Bilinmeyen hata')
+        setError(err?.message || 'Unknown error')
         setLoading(false)
       })
     return () => {
@@ -141,9 +141,9 @@ export default function DetachedMailWindow() {
   if (!mail || !accountId) {
     return (
       <div className="startup-router">
-        <p>Bu pencere için e-posta verisi bulunamadı.</p>
+        <p>Email data not found for this window.</p>
         <div className="startup-router__actions">
-          <button type="button" onClick={closeWindow}>Kapat</button>
+          <button type="button" onClick={closeWindow}>Close</button>
         </div>
       </div>
     )
@@ -153,9 +153,9 @@ export default function DetachedMailWindow() {
     <div className="dashboard-page" style={{ height: '100vh' }}>
       <div className="db-navbar">
         <div className="db-logo-icon">🕊️</div>
-        <span className="db-logo-text">Güvercin</span>
+        <span className="db-logo-text">Guvercin</span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-          <button className="db-icon-btn" title="Kapat" onClick={closeWindow}>✕</button>
+          <button className="db-icon-btn" title="Close" onClick={closeWindow}>✕</button>
         </div>
       </div>
 
@@ -164,7 +164,7 @@ export default function DetachedMailWindow() {
           {loading ? (
             <div className="db-loading" style={{ paddingTop: 60 }}>
               <div className="db-spinner" />
-              İçerik yükleniyor…
+              Loading content...
             </div>
           ) : error ? (
             <div className="db-empty-state">
@@ -176,7 +176,7 @@ export default function DetachedMailWindow() {
               <div className="db-mail-content-header">
                 <div className="db-mail-content-subject">{subject}</div>
               </div>
-              <div className="db-mail-meta"><strong>Kimden:</strong> {fromLine}</div>
+              <div className="db-mail-meta"><strong>From:</strong> {fromLine}</div>
               <hr className="db-mail-divider" />
               {mailContent?.html_body ? (
                 <div className="db-mail-body-html">
@@ -188,7 +188,7 @@ export default function DetachedMailWindow() {
                   />
                 </div>
               ) : (
-                <div className="db-mail-body">{mailContent?.plain_body || '(İçerik yok)'}</div>
+                <div className="db-mail-body">{mailContent?.plain_body || '(No content)'}</div>
               )}
             </div>
           )}
