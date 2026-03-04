@@ -2,7 +2,7 @@ import './SidebarTabs.css'
 
 export default function SidebarTabs({ tabs, activeTab, onTabSelect }) {
   return (
-    <nav className="sidebar-tabs" aria-label="Ana bölümler">
+    <nav className="sidebar-tabs" aria-label="Main sections">
       <ul>
         {tabs.map((tab) => (
           <li key={tab.id} className={tab.id === activeTab ? 'active' : ''}>

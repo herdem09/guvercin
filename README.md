@@ -4,37 +4,37 @@ Important: This software is licensed under the Apache License 2.0 with a Commons
 
 ### Backend (Rust / Axum)
 
-- Backend artık tamamen **Rust** ile yazılmıştır ve `rust-backend` klasörü altında yer alır.
-- Kullanılan başlıca teknolojiler:
+- The backend is now completely written in **Rust** and is located under the `rust-backend` folder.
+- Key technologies used:
   - Axum (HTTP server)
   - Tokio (async runtime)
-  - SQLx (SQLite erişimi)
-  - IMAP (IMAP sunucularına bağlanmak için)
+  - SQLx (SQLite access)
+  - IMAP (to connect to IMAP servers)
 
-#### Çalıştırma
+#### Execution
 
 ```bash
 cd rust-backend
 cargo run
 ```
 
-- Sunucu varsayılan olarak `0.0.0.0:5000` adresinde ayağa kalkar.
-- Frontend, eski Flask backend ile aynı API endpoint’lerini (`/api/auth/accounts`, `/api/auth/setup`, `/api/account/finalize`) kullanmaya devam eder.
+- The server starts on `0.0.0.0:5000` by default.
+- The frontend continues to use the same API endpoints as the old Flask backend (`/api/auth/accounts`, `/api/auth/setup`, `/api/account/finalize`).
 
-#### Veritabanı
+#### Database
 
-- Veritabanı dosyaları proje kökünde `databases/` klasörü altında tutulur:
-  - `general.db`: hesap ve AI konfigürasyon tabloları.
-  - `<account_id>.db`: her kullanıcı için ayrı e-posta/ek/klasör/referans tabloları.
-- Rust backend ilk çalıştığında, gerekli tabloları otomatik olarak oluşturur (Python tarafındaki şema ile uyumlu olacak şekilde).
+- Database files are kept under the `databases/` folder at the project root:
+  - `general.db`: account and AI configuration tables.
+  - `<account_id>.db`: separate email/attachment/folder/reference tables for each user.
+- When the Rust backend first runs, it automatically creates the necessary tables (to be compatible with the schema on the Python side).
 
-#### IMAP Yetkilendirmesi
+#### IMAP Authorization
 
-- `rust-backend` içindeki `imap_client` modülü, IMAP sunucusuna bağlanıp kullanıcı adı/şifre ile giriş yaparak yetkilendirmeyi test eder.
-- Bu davranış, önceki Python `imap_client.py` fonksiyonelliğini Rust ile yeniden uygular.
+- The `imap_client` module within `rust-backend` tests authorization by connecting to the IMAP server and logging in with the username/password.
+- This behavior re-implements the functionality of the previous Python `imap_client.py` using Rust.
 
 ### Frontend
 
-- Frontend kodu `frontend` klasöründedir (React/Vite).
-- Backend ile HTTP üzerinden konuşur; Rust backend’in ayağa kalkmış olması yeterlidir.
+- The frontend code is in the `frontend` folder (React/Vite).
+- It communicates with the backend over HTTP; having the Rust backend running is sufficient.
 

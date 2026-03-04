@@ -76,24 +76,28 @@ fn close_mail_window(handle: tauri::AppHandle, label: String) -> Result<(), Stri
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  std::thread::spawn(|| {
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async {
-      if let Err(e) = rust_backend::run().await {
-        eprintln!("Backend error: {}", e);
-      }
-    });
-  });
-
   tauri::Builder::default()
+    .plugin(tauri_plugin_log::Builder::default().build())
     .setup(|app| {
-      if cfg!(debug_assertions) {
-        app.handle().plugin(
-          tauri_plugin_log::Builder::default()
-            .level(log::LevelFilter::Info)
-            .build(),
-        )?;
-      }
+      let _app_handle = app.handle().clone();
+      
+      // Get app data directory for database
+      let db_dir = app.path().app_data_dir().ok().map(|path| {
+        let db_path = path.join("databases");
+        let _ = std::fs::create_dir_all(&db_path);
+        db_path
+      });
+
+      // Spawn backend in a separate thread
+      std::thread::spawn(move || {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+          if let Err(e) = rust_backend::run(db_dir).await {
+            eprintln!("Backend error: {}", e);
+          }
+        });
+      });
+
       Ok(())
     })
     .invoke_handler(tauri::generate_handler![open_mail_window, get_mail_window_data, close_mail_window])

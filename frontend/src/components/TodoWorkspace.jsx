@@ -3,8 +3,8 @@ export default function TodoWorkspace() {
         <div className="workspace-placeholder">
             <div className="db-empty-state">
                 <div className="db-empty-icon">✅</div>
-                <div className="db-empty-text">Yapılacaklar Sayfası</div>
-                <p>Planlarınıza buradan ulaşabileceksiniz.</p>
+                <div className="db-empty-text">Todo Page</div>
+                <p>You will be able to access your plans here.</p>
             </div>
         </div>
     )

@@ -5,15 +5,23 @@ use axum::{
 };
 use serde::Serialize;
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum AppError {
-    Database(sqlx::Error),
+    #[error("Database error (path: {1}): {0}")]
+    Database(#[source] sqlx::Error, String),
+    #[error("Bad request: {0}")]
     BadRequest(String),
+}
+
+impl AppError {
+    pub fn db(err: sqlx::Error, path: impl Into<String>) -> Self {
+        AppError::Database(err, path.into())
+    }
 }
 
 impl From<sqlx::Error> for AppError {
     fn from(err: sqlx::Error) -> Self {
-        AppError::Database(err)
+        AppError::Database(err, "unknown".to_string())
     }
 }
 
@@ -26,9 +34,9 @@ struct ErrorBody {
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
-            AppError::Database(e) => (
+            AppError::Database(e, path) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Database error: {e}"),
+                format!("Database error (path: {path}): {e}"),
             ),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
         };

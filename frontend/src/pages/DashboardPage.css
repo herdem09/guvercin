@@ -1,5 +1,5 @@
 /* ================================================= */
-/* Dashboard - Güvercin Mail Client                 */
+/* Dashboard - Guvercin Mail Client                 */
 /* ================================================= */
 
 .dashboard-page {
@@ -725,20 +725,79 @@ body.resizing * {
 .db-mail-list {
   flex: 1;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   list-style: none;
   padding: 0;
   margin: 0;
 }
 
+/* Stable scrollbar to prevent flickering */
+.db-mail-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.db-mail-list::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 3px;
+}
+
+.db-mail-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
 .db-mail-item {
-  padding: 10px 14px;
+  padding: 10px 8px 10px 14px;
   border-bottom: 1px solid #eee;
   cursor: pointer;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  align-items: flex-start;
+  justify-content: space-between;
   border-left: 3px solid transparent;
   border-right: 3px solid transparent;
   transition: background 0.1s;
+}
+
+.db-mail-item-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.db-mail-quick-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: 4px;
+  opacity: 0;
+  transition: opacity 0.1s ease-in-out;
+}
+
+.db-mail-item:hover .db-mail-quick-actions {
+  opacity: 1;
+}
+
+.db-mail-qa-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 4px;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+  opacity: 0.6;
+  transition: all 0.2s ease;
+}
+
+.db-mail-qa-btn:hover {
+  background: #eee;
+  border-color: #ddd;
+  opacity: 1;
 }
 
 .db-mail-item:hover:not(.selected) {
@@ -775,7 +834,16 @@ body.resizing * {
 .db-mail-time {
   font-size: 10px;
   color: #999;
-  align-self: flex-end;
+  margin-top: 2px;
+}
+
+.db-mail-sender {
+  font-size: 13px;
+  color: #222;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ── Right panel: mail content ───────────────────── */
@@ -974,6 +1042,7 @@ body.resizing * {
   margin-bottom: 12px;
   gap: 10px;
 }
+
 .db-mail-content-actions {
   display: flex;
   gap: 5px;
@@ -994,4 +1063,113 @@ body.resizing * {
 .db-mail-action-btn:hover {
   background: #f0f0f0;
   color: #000;
+}
+
+/* ── Mail Tab System ─────────────────────────────── */
+.mail-section-wrapper {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+}
+
+.mail-tab-bar {
+  display: flex;
+  align-items: stretch;
+  background: #e8e8e8;
+  border-bottom: 1px solid #ccc;
+  height: 32px;
+  flex-shrink: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  gap: 0;
+}
+
+.mail-tab-bar::-webkit-scrollbar {
+  height: 3px;
+}
+
+.mail-tab-bar::-webkit-scrollbar-thumb {
+  background: #ccc;
+  border-radius: 2px;
+}
+
+.mail-tab-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  border: none;
+  background: transparent;
+  color: #555;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  border-right: 1px solid #d0d0d0;
+  border-bottom: 2px solid transparent;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+  max-width: 200px;
+}
+
+.mail-tab-item:hover {
+  background: #ddd;
+  color: #222;
+}
+
+.mail-tab-item.active {
+  background: #fff;
+  color: #222;
+  font-weight: 600;
+  border-bottom-color: #FFCB08;
+}
+
+.mail-tab-item.main-tab {
+  min-width: 140px;
+  justify-content: center;
+  font-size: 13px;
+}
+
+.mail-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 150px;
+  display: block;
+}
+
+.mail-tab-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: #888;
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+
+.mail-tab-close:hover {
+  background: rgba(0, 0, 0, 0.12);
+  color: #333;
+}
+
+.mail-tab-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #fff;
+  padding: 0;
+}
+
+.mail-tab-content .db-mail-content {
+  padding: 28px 32px;
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }

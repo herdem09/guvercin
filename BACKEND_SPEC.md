@@ -1,16 +1,16 @@
-## Backend API ve Veritabanı Özeti
+## Backend API and Database Summary
 
-### Genel
+### General
 
-- **Backend**: `customize.py` içinde Flask uygulaması.
+- **Backend**: Flask application in `customize.py`.
 - **Port**: `5000` (`app.run(debug=True, port=5000)`).
-- **Veritabanı klasörü**: `databases/` (proje köküne göre).
-- **Ana DB**: `databases/general.db`.
-- **Kullanıcı DB’leri**: `databases/<account_id>.db`.
+- **Database folder**: `databases/` (relative to project root).
+- **Main DB**: `databases/general.db`.
+- **User DBs**: `databases/<account_id>.db`.
 
-### Ana Veritabanı (`general.db`)
+### Main Database (`general.db`)
 
-- **accounts** tablosu:
+- **accounts** table:
   - `account_id INTEGER PRIMARY KEY AUTOINCREMENT`
   - `email_address TEXT UNIQUE`
   - `display_name TEXT`
@@ -26,16 +26,16 @@
   - `theme TEXT DEFAULT 'LIGHT'`
   - `font TEXT`
 
-- **ai** tablosu:
+- **ai** table:
   - `id INTEGER PRIMARY KEY AUTOINCREMENT`
   - `model_name TEXT`
   - `type BOOLEAN`
   - `api_key_server_url TEXT`
   - `base_url_context_window TEXT`
 
-### Kullanıcı Veritabanı (`<account_id>.db`)
+### User Database (`<account_id>.db`)
 
-- **emails** tablosu:
+- **emails** table:
   - `local_id INTEGER PRIMARY KEY AUTOINCREMENT`
   - `server_uid INTEGER UNIQUE`
   - `uid_validity INTEGER NOT NULL`
@@ -58,7 +58,7 @@
   - `folder_id INTEGER NOT NULL`
   - `sync_status INTEGER DEFAULT 0`
 
-- **attachments** tablosu:
+- **attachments** table:
   - `ID INTEGER PRIMARY KEY AUTOINCREMENT`
   - `locale_mail_ID INTEGER NOT NULL`
   - `attachment_num INTEGER NOT NULL`
@@ -73,7 +73,7 @@
   - `is_inline BOOLEAN NOT NULL`
   - `inline_temp_path TEXT`
 
-- **folders** tablosu:
+- **folders** table:
   - `folder_id INTEGER PRIMARY KEY AUTOINCREMENT`
   - `path_by_name TEXT UNIQUE NOT NULL`
   - `path_by_id TEXT UNIQUE NOT NULL`
@@ -84,7 +84,7 @@
   - `last_sync_uid INTEGER DEFAULT 0`
   - `is_visible BOOLEAN DEFAULT 1`
 
-- **contacts** tablosu:
+- **contacts** table:
   - `contact_id INTEGER PRIMARY KEY AUTOINCREMENT`
   - `name TEXT`
   - `display_name TEXT`
@@ -95,55 +95,55 @@
   - `website TEXT`
   - `last_contact_time DATETIME`
 
-### HTTP API Sözleşmesi
+### HTTP API Contract
 
 #### 1. `GET /api/auth/accounts`
 
-- **Amaç**: Kayıtlı hesapları listelemek (login sayfası için).
-- **Request**: Body yok.
+- **Purpose**: To list registered accounts (for the login page).
+- **Request**: No body.
 - **Response (200)**:
   - JSON:
-    - `accounts`: `accounts` tablosundaki satırların listesi.
+    - `accounts`: List of rows from the `accounts` table.
 
 #### 2. `POST /api/auth/setup`
 
-- **Amaç**: Login ekranından gelen form ile IMAP yetkilendirme testi yapmak.
-- **Request**: `application/x-www-form-urlencoded` form alanları:
+- **Purpose**: To perform an IMAP authorization test with the form from the login screen.
+- **Request**: `application/x-www-form-urlencoded` form fields:
   - `EMAIL_ADDRESS`
   - `DISPLAY_NAME`
   - `IMAP_SERVER`
-  - `IMAP_PORT` (opsiyonel, yoksa `143`)
+  - `IMAP_PORT` (optional, defaults to `143`)
   - `SMTP_SERVER`
-  - `SMTP_PORT` (opsiyonel)
+  - `SMTP_PORT` (optional)
   - `PASSWORD`
   - `SKIP_AUTH` (`true`/`false`, default `false`)
 
-- **Davranış**:
-  - Eğer `accounts.email_address = EMAIL_ADDRESS` zaten varsa:
-    - **409** ve JSON:
+- **Behavior**:
+  - If `accounts.email_address = EMAIL_ADDRESS` already exists:
+    - **409** and JSON:
       - `status: "already_exists"`
-      - `message: "This email address is already registered."` (i18n üzerinden)
-  - Aksi halde:
-    - Eğer `SKIP_AUTH == true`:
-      - Yetkilendirme testi atlanır, `success = True`.
-    - Değilse:
-      - `imap_client.authorize(IMAP_SERVER, EMAIL_ADDRESS, PASSWORD, IMAP_PORT, verify_ssl=False)` çağrılır.
-    - Eğer `success`:
-      - Varsa IMAP oturumu `logout()` ile kapatılır.
-      - **200** ve JSON:
+      - `message: "This email address is already registered."` (via i18n)
+  - Otherwise:
+    - If `SKIP_AUTH == true`:
+      - Authorization test is skipped, `success = True`.
+    - Otherwise:
+      - `imap_client.authorize(IMAP_SERVER, EMAIL_ADDRESS, PASSWORD, IMAP_PORT, verify_ssl=False)` is called.
+    - If `success`:
+      - If an IMAP session exists, it is closed with `logout()`.
+      - **200** and JSON:
         - `status: "success"`
         - `message: "Authorization successful."`
-    - Eğer `success` değilse:
-      - **401** ve JSON:
+    - If not `success`:
+      - **401** and JSON:
         - `status: "failure"`
-        - `message`: IMAP katmanından gelen hata mesajı (i18n ile).
-        - `formData`: Orijinal form alanlarının frontend’e geri döndüğü nesne.
+        - `message`: Error message from the IMAP layer (with i18n).
+        - `formData`: Object containing the original form fields returned to the frontend.
 
 #### 3. `POST /api/account/finalize`
 
-- **Amaç**: Hesap bilgilerini, dil/font tercihini ve AI konfigürasyonunu kaydedip kullanıcı DB’sini oluşturmak.
+- **Purpose**: To save account information, language/font preference, and AI configuration, and create the user DB.
 - **Request**: `application/json` body:
-  - `account`: Nesne
+  - `account`: Object
     - `email`
     - `displayName`
     - `imapServer`
@@ -152,25 +152,25 @@
     - `smtpPort`
   - `language` (default: `en`)
   - `font` (default: `Arial`)
-  - `ai`: Nesne (opsiyonel)
+  - `ai`: Object (optional)
     - `type`
     - `model_name`
     - `api_key_server_url`
     - `base_url_context_window`
 
-- **Davranış**:
-  - Eğer aynı `email` ile kayıt varsa:
-    - `accounts` tablosunda `UPDATE` ile alanlar güncellenir.
-  - Yoksa:
-    - `INSERT` ile yeni satır eklenir.
-  - Kullanılan `account_id` ile `create_user_db(account_id)` çağrılır:
-    - Gerekirse `databases/<account_id>.db` ve içindeki tablolar oluşturulur.
-  - Eğer `ai` alanı doluysa:
-    - `ai` tablosuna yeni satır eklenir.
+- **Behavior**:
+  - If a registration with the same `email` exists:
+    - Form fields are updated with `UPDATE` in the `accounts` table.
+  - Otherwise:
+    - A new row is added with `INSERT`.
+  - `create_user_db(account_id)` is called with the used `account_id`:
+    - If necessary, `databases/<account_id>.db` and the tables within it are created.
+  - If the `ai` field is filled:
+    - A new row is added to the `ai` table.
 
 - **Response (200)**:
   - JSON:
     - `status: "success"`
     - `message: "Account finalized successfully."`
-    - `account_id`: Oluşturulan veya güncellenen hesabın `account_id` değeri.
+    - `account_id`: The `account_id` value of the created or updated account.
 

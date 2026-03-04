@@ -1,4 +1,4 @@
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    rust_backend::run().await
+    rust_backend::run(None).await
 }

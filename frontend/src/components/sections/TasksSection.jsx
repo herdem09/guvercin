@@ -1,8 +1,8 @@
 export default function TasksSection() {
   return (
     <div className="db-section-placeholder">
-      <h2>Yapılacaklar</h2>
-      <p>Bu sekme görevlerinizi organize etmeniz için hazırlandı.</p>
+      <h2>Tasks</h2>
+      <p>This tab is designed for you to organize your tasks.</p>
     </div>
   )
 }
