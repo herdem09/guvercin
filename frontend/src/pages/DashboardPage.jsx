@@ -80,7 +80,6 @@ const DashboardPage = () => {
     const [currentPage, setCurrentPage] = useState(1)
     const [perPage, setPerPage] = useState(50)
 
-    const [activeRibbonTab, setActiveRibbonTab] = useState('home')
     const [accountMenuOpen, setAccountMenuOpen] = useState(false)
     const [isMailFullscreen, setIsMailFullscreen] = useState(false)
     const [mailWindowOpen, setMailWindowOpen] = useState(false)
@@ -356,67 +355,7 @@ const DashboardPage = () => {
                 </div>
 
                 <div className="db-content-area">
-                    {activeSection === 'mail' && (
-                        <>
-                            <div className="db-main-menu">
-                                <ul>
-                                    <li className={activeRibbonTab === 'file' ? 'active' : ''}>
-                                        <button onClick={() => setActiveRibbonTab('file')}>{t('Files')}</button>
-                                    </li>
-                                    <li className={activeRibbonTab === 'home' ? 'active' : ''}>
-                                        <button onClick={() => setActiveRibbonTab('home')}>{t('Home')}</button>
-                                    </li>
-                                    <li className={activeRibbonTab === 'send-receive' ? 'active' : ''}>
-                                        <button onClick={() => setActiveRibbonTab('send-receive')}>{t('Send/Receive')}</button>
-                                    </li>
-                                    <li className={activeRibbonTab === 'folder' ? 'active' : ''}>
-                                        <button onClick={() => setActiveRibbonTab('folder')}>{t('Folders')}</button>
-                                    </li>
-                                    <li className={activeRibbonTab === 'view' ? 'active' : ''}>
-                                        <button onClick={() => setActiveRibbonTab('view')}>{t('View')}</button>
-                                    </li>
-                                </ul>
-                            </div>
-                            <div className="db-submenu">
-                                {activeRibbonTab === 'home' && (
-                                    <ul>
-                                        <li><button onClick={() => { }}>🆕 {t('New Mail')}</button></li>
-                                        <li><button onClick={() => { }}>🗑️ {t('Delete')}</button></li>
-                                        <li><button onClick={() => { }}>📦 {t('Archive')}</button></li>
-                                        <li><button onClick={() => { }}>↩️ {t('Reply')}</button></li>
-                                        <li><button onClick={() => { }}>🔃 {t('Reply All')}</button></li>
-                                        <li><button onClick={() => { }}>➡️ {t('Forward')}</button></li>
-                                        <li><button onClick={() => { }}>🚫 {t('Junk')}</button></li>
-                                    </ul>
-                                )}
-                                {activeRibbonTab === 'file' && (
-                                    <ul>
-                                        <li><button onClick={() => { }}>� {t('Save')}</button></li>
-                                        <li><button onClick={() => { }}>🖨️ {t('Print')}</button></li>
-                                        <li><button onClick={() => { }}>📤 {t('Export')}</button></li>
-                                    </ul>
-                                )}
-                                {activeRibbonTab === 'send-receive' && (
-                                    <ul>
-                                        <li><button onClick={() => loadMails(selectedFolder)}>🔄 {t('Update Folder')}</button></li>
-                                        <li><button onClick={() => { }}>📡 {t('Send All')}</button></li>
-                                    </ul>
-                                )}
-                                {activeRibbonTab === 'folder' && (
-                                    <ul>
-                                        <li><button onClick={() => { }}>📁 {t('New Folder')}</button></li>
-                                        <li><button onClick={() => { }}>🏷️ {t('Rename')}</button></li>
-                                    </ul>
-                                )}
-                                {activeRibbonTab === 'view' && (
-                                    <ul>
-                                        <li><button onClick={() => { }}>�️ {t('Reading Pane')}</button></li>
-                                        <li><button onClick={() => { }}>📏 {t('Layout')}</button></li>
-                                    </ul>
-                                )}
-                            </div>
-                        </>
-                    )}
+
 
                     <div className="db-section-area">
                         {activeSection === 'mail' && (
@@ -440,6 +379,7 @@ const DashboardPage = () => {
                                 loadMails={loadMails}
                                 openMail={openMail}
                                 detachMailToWindow={detachMailToWindow}
+                                detachMailToWindowFromList={detachMailToWindowFromList}
                                 iframeRef={iframeRef}
                                 getShortTime={getShortTime}
                                 currentPage={currentPage}
@@ -464,10 +404,12 @@ function MailSection({
     connected, setConnected, accountId, accountForm, email,
     folders, selectedFolder, setSelectedFolder, mails,
     selectedMail, setSelectedMail, mailContent, setMailContent, loadingMails, loadingContent,
-    connecting, loadMails, openMail, detachMailToWindow, iframeRef, getShortTime,
+    connecting, loadMails, openMail, detachMailToWindow, detachMailToWindowFromList, iframeRef, getShortTime,
     currentPage, setCurrentPage, perPage, setPerPage,
     isMailFullscreen, toggleMailFullscreen
 }) {
+    const { t } = useTranslation()
+    const [activeRibbonTab, setActiveRibbonTab] = useState('home')
     const [expandedFolders, setExpandedFolders] = useState(['INBOX', 'Folders', 'Labels', 'Etiketler'])
     const [folderWidth, setFolderWidth] = useState(240)
     const [listWidth, setListWidth] = useState(340)
@@ -688,6 +630,64 @@ function MailSection({
                         <span className="mail-tab-close" onClick={(e) => closeTab(e, tab.id)}>✕</span>
                     </button>
                 ))}
+            </div>
+
+            <div className="db-main-menu">
+                <ul>
+                    <li className={activeRibbonTab === 'file' ? 'active' : ''}>
+                        <button onClick={() => setActiveRibbonTab('file')}>{t('Files')}</button>
+                    </li>
+                    <li className={activeRibbonTab === 'home' ? 'active' : ''}>
+                        <button onClick={() => setActiveRibbonTab('home')}>{t('Home')}</button>
+                    </li>
+                    <li className={activeRibbonTab === 'send-receive' ? 'active' : ''}>
+                        <button onClick={() => setActiveRibbonTab('send-receive')}>{t('Send/Receive')}</button>
+                    </li>
+                    <li className={activeRibbonTab === 'folder' ? 'active' : ''}>
+                        <button onClick={() => setActiveRibbonTab('folder')}>{t('Folders')}</button>
+                    </li>
+                    <li className={activeRibbonTab === 'view' ? 'active' : ''}>
+                        <button onClick={() => setActiveRibbonTab('view')}>{t('View')}</button>
+                    </li>
+                </ul>
+            </div>
+            <div className="db-submenu">
+                {activeRibbonTab === 'home' && (
+                    <ul>
+                        <li><button onClick={() => { }}>🆕 {t('New Mail')}</button></li>
+                        <li><button onClick={() => { }}>🗑️ {t('Delete')}</button></li>
+                        <li><button onClick={() => { }}>📦 {t('Archive')}</button></li>
+                        <li><button onClick={() => { }}>↩️ {t('Reply')}</button></li>
+                        <li><button onClick={() => { }}>🔃 {t('Reply All')}</button></li>
+                        <li><button onClick={() => { }}>➡️ {t('Forward')}</button></li>
+                        <li><button onClick={() => { }}>🚫 {t('Junk')}</button></li>
+                    </ul>
+                )}
+                {activeRibbonTab === 'file' && (
+                    <ul>
+                        <li><button onClick={() => { }}>💾 {t('Save')}</button></li>
+                        <li><button onClick={() => { }}>🖨️ {t('Print')}</button></li>
+                        <li><button onClick={() => { }}>📤 {t('Export')}</button></li>
+                    </ul>
+                )}
+                {activeRibbonTab === 'send-receive' && (
+                    <ul>
+                        <li><button onClick={() => loadMails(selectedFolder)}>🔄 {t('Update Folder')}</button></li>
+                        <li><button onClick={() => { }}>📡 {t('Send All')}</button></li>
+                    </ul>
+                )}
+                {activeRibbonTab === 'folder' && (
+                    <ul>
+                        <li><button onClick={() => { }}>📁 {t('New Folder')}</button></li>
+                        <li><button onClick={() => { }}>🏷️ {t('Rename')}</button></li>
+                    </ul>
+                )}
+                {activeRibbonTab === 'view' && (
+                    <ul>
+                        <li><button onClick={() => { }}>📖 {t('Reading Pane')}</button></li>
+                        <li><button onClick={() => { }}>📏 {t('Layout')}</button></li>
+                    </ul>
+                )}
             </div>
 
             {/* ── Tab content or normal inbox view ───── */}
