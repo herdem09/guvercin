@@ -473,6 +473,15 @@ function MailSection({
     const [listWidth, setListWidth] = useState(340)
     const [isPerPageOpen, setIsPerPageOpen] = useState(false)
     const [attachmentsExpanded, setAttachmentsExpanded] = useState(true)
+    const [layoutCols, setLayoutCols] = useState(1)
+
+    // Reset layout to 1 column when exiting fullscreen
+    useEffect(() => {
+        if (!isMailFullscreen) {
+            setLayoutCols(1)
+        }
+    }, [isMailFullscreen])
+
     const perPageRef = useRef(null)
     const isResizingFolder = useRef(false)
     const isResizingList = useRef(false)
@@ -848,6 +857,34 @@ function MailSection({
                                 >
                                     {isMailFullscreen ? '↔' : '⇔'}
                                 </button>
+
+                                {isMailFullscreen && (
+                                    <>
+                                        <div className="db-toolbar-separator" />
+                                        <div className="db-layout-controls">
+                                            <button
+                                                className={`db-mail-toolbar-btn ${layoutCols === 1 ? 'active' : ''}`}
+                                                onClick={() => setLayoutCols(1)}
+                                                title="1 Column"
+                                            >1️⃣</button>
+                                            <button
+                                                className={`db-mail-toolbar-btn ${layoutCols === 2 ? 'active' : ''}`}
+                                                onClick={() => setLayoutCols(2)}
+                                                title="2 Columns"
+                                            >2️⃣</button>
+                                            <button
+                                                className={`db-mail-toolbar-btn ${layoutCols === 3 ? 'active' : ''}`}
+                                                onClick={() => setLayoutCols(3)}
+                                                title="3 Columns"
+                                            >3️⃣</button>
+                                            <button
+                                                className={`db-mail-toolbar-btn ${layoutCols === 4 ? 'active' : ''}`}
+                                                onClick={() => setLayoutCols(4)}
+                                                title="4 Columns"
+                                            >4️⃣</button>
+                                        </div>
+                                    </>
+                                )}
                             </div>
                             {!connected ? (
                                 <div className="db-empty-state">
@@ -862,7 +899,7 @@ function MailSection({
                                     <div className="db-empty-text">This folder is empty</div>
                                 </div>
                             ) : (
-                                <ul className="db-mail-list">
+                                <ul className="db-mail-list" data-cols={layoutCols}>
                                     {mails.map((mail) => (
                                         <li key={mail.id} className={`db-mail-item ${!mail.seen ? 'unread' : ''} ${selectedMail?.id === mail.id ? 'selected' : ''}`} onClick={() => openMail(mail)}>
                                             <div className="db-mail-item-content">
