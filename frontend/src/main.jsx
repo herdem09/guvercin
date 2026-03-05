@@ -4,6 +4,7 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App.jsx'
 import './index.css'
 import './i18n'
+import { OfflineSyncProvider } from './context/OfflineSyncContext.jsx'
 
 function showFatalOverlay(title, details) {
   try {
@@ -55,9 +56,11 @@ window.addEventListener('unhandledrejection', (event) => {
 try {
   ReactDOM.createRoot(document.getElementById('root')).render(
     <React.StrictMode>
-      <BrowserRouter>
-        <App />
-      </BrowserRouter>
+      <OfflineSyncProvider>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </OfflineSyncProvider>
     </React.StrictMode>,
   )
 } catch (err) {

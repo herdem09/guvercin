@@ -4,6 +4,7 @@ import { apiUrl } from './utils/api'
 import LoginPage from './pages/LoginPage.jsx'
 import LanguagePage from './pages/LanguagePage.jsx'
 import FontPage from './pages/FontPage.jsx'
+import OfflineSetupPage from './pages/OfflineSetupPage.jsx'
 import AiChooserPage from './pages/AiChooserPage.jsx'
 import NotAuthPage from './pages/NotAuthPage.jsx'
 import DashboardPage from './pages/DashboardPage.jsx'
@@ -42,12 +43,13 @@ function App() {
       localStorage.removeItem('temp_account_form')
       localStorage.removeItem('temp_language')
       localStorage.removeItem('temp_font')
+      localStorage.removeItem('temp_offline_config')
       i18n.changeLanguage('en')
     }
 
     const tempFont = localStorage.getItem('temp_font')
     const savedFont = localStorage.getItem('font')
-    const onboardingPaths = ['/login', '/language', '/font', '/ai_chooser', '/not_auth']
+    const onboardingPaths = ['/login', '/language', '/font', '/offline-setup', '/ai_chooser', '/not_auth']
 
     let fontToUse = "'Inter', sans-serif"
 
@@ -84,6 +86,7 @@ function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/language" element={<LanguagePage />} />
       <Route path="/font" element={<FontPage />} />
+      <Route path="/offline-setup" element={<OfflineSetupPage />} />
       <Route path="/ai_chooser" element={<AiChooserPage />} />
       <Route path="/not_auth" element={<NotAuthPage />} />
       <Route path="/dashboard" element={<DashboardPage />} />
@@ -98,13 +101,18 @@ function StartupRouter() {
   const { t } = useTranslation()
   const navigate = useNavigate()
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const [error, setError] = useState(null)
+  const [retryCount, setRetryCount] = useState(0)
 
   useEffect(() => {
     let active = true
+    let retryTimer
 
     const fetchAccounts = async () => {
       try {
+        setError(null)
+        setLoading(true)
+
         const response = await fetch(apiUrl('/api/auth/accounts'))
         if (!response.ok) {
           throw new Error('Failed to load accounts')
@@ -127,7 +135,13 @@ function StartupRouter() {
         if (!active) {
           return
         }
-        setError(t('Unable to load accounts. Please try again.'))
+
+        const errorMessage = t('Unable to load accounts. Retrying...')
+        setError(errorMessage)
+
+        // Automatic retry after 2 seconds
+        setRetryCount(prev => prev + 1)
+        retryTimer = setTimeout(fetchAccounts, 2000)
       } finally {
         if (active) {
           setLoading(false)
@@ -138,8 +152,9 @@ function StartupRouter() {
     fetchAccounts()
     return () => {
       active = false
+      if (retryTimer) clearTimeout(retryTimer)
     }
-  }, [navigate, t])
+  }, [navigate, t, retryCount])
 
   if (error) {
     return (
@@ -159,7 +174,7 @@ function StartupRouter() {
 
   return (
     <div className="startup-router">
-      <p>{loading ? t('Checking registered accounts...') : t('Checking registered accounts...')}</p>
+      <p>{t('Checking registered accounts...')}</p>
     </div>
   )
 }

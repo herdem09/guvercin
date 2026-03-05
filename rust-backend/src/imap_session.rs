@@ -70,11 +70,11 @@ impl ImapSession {
         let data = match self {
             ImapSession::Plain(s) => s.fetch(
                 sequence,
-                "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)] FLAGS UID)",
+                "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] FLAGS UID)",
             ),
             ImapSession::Tls(s) => s.fetch(
                 sequence,
-                "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT)] FLAGS UID)",
+                "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] FLAGS UID)",
             ),
         };
 
@@ -101,6 +101,7 @@ impl ImapSession {
                 let header_str = String::from_utf8_lossy(header_bytes);
                 let subject = parse_header(&header_str, "Subject");
                 let from_raw = parse_header(&header_str, "From");
+                let date = parse_header(&header_str, "Date");
                 let (name, address) = split_from(&from_raw);
 
                 previews.push(MailPreview {
@@ -108,6 +109,7 @@ impl ImapSession {
                     name,
                     address,
                     subject,
+                    date,
                     seen,
                 });
             }
@@ -124,6 +126,56 @@ impl ImapSession {
         let msg = fetches.iter().next()?;
         let raw = msg.body()?;
         Some(raw.to_vec())
+    }
+
+    fn uid_store_flag(&mut self, uid: &str, flag: &str, add: bool) -> Result<(), String> {
+        let op = if add {
+            format!("+FLAGS ({flag})")
+        } else {
+            format!("-FLAGS ({flag})")
+        };
+        let res = match self {
+            ImapSession::Plain(s) => s.uid_store(uid, &op),
+            ImapSession::Tls(s) => s.uid_store(uid, &op),
+        };
+        res.map(|_| ()).map_err(|e| format!("{e}"))
+    }
+
+    fn uid_store_keyword(&mut self, uid: &str, keyword: &str, add: bool) -> Result<(), String> {
+        let op = if add {
+            format!(r#"+FLAGS ("{keyword}")"#)
+        } else {
+            format!(r#"-FLAGS ("{keyword}")"#)
+        };
+        let res = match self {
+            ImapSession::Plain(s) => s.uid_store(uid, &op),
+            ImapSession::Tls(s) => s.uid_store(uid, &op),
+        };
+        res.map(|_| ()).map_err(|e| format!("{e}"))
+    }
+
+    fn uid_move_to(&mut self, uid: &str, folder: &str) -> Result<(), String> {
+        // COPY + \Deleted + EXPUNGE fallback that works on common IMAP servers.
+        let copied = match self {
+            ImapSession::Plain(s) => s.uid_copy(uid, folder),
+            ImapSession::Tls(s) => s.uid_copy(uid, folder),
+        };
+        copied.map_err(|e| format!("{e}"))?;
+        self.uid_store_flag(uid, "\\Deleted", true)?;
+        let expunge = match self {
+            ImapSession::Plain(s) => s.expunge(),
+            ImapSession::Tls(s) => s.expunge(),
+        };
+        expunge.map(|_| ()).map_err(|e| format!("{e}"))
+    }
+
+    fn uid_delete(&mut self, uid: &str) -> Result<(), String> {
+        self.uid_store_flag(uid, "\\Deleted", true)?;
+        let expunge = match self {
+            ImapSession::Plain(s) => s.expunge(),
+            ImapSession::Tls(s) => s.expunge(),
+        };
+        expunge.map(|_| ()).map_err(|e| format!("{e}"))
     }
 }
 
@@ -242,9 +294,16 @@ pub fn fetch_mail_list(
     (total, previews)
 }
 
-pub fn fetch_mail_raw(state: &Arc<ImapState>, account_id: i64, uid: &str) -> Option<Vec<u8>> {
+pub fn fetch_mail_raw_in_mailbox(
+    state: &Arc<ImapState>,
+    account_id: i64,
+    mailbox: &str,
+    uid: &str,
+) -> Option<Vec<u8>> {
     let mut sessions = state.sessions.lock().unwrap();
-    sessions.get_mut(&account_id)?.fetch_mail_raw(uid)
+    let session = sessions.get_mut(&account_id)?;
+    session.select_mailbox(mailbox).ok()?;
+    session.fetch_mail_raw(uid)
 }
 
 pub fn parse_mail_content(uid: String, raw: &[u8]) -> MailContent {
@@ -280,6 +339,72 @@ pub fn disconnect(state: &Arc<ImapState>, account_id: i64) {
         }
         info!("IMAP session closed for account {account_id}");
     }
+}
+
+pub fn is_connected(state: &Arc<ImapState>, account_id: i64) -> bool {
+    let sessions = state.sessions.lock().unwrap();
+    sessions.contains_key(&account_id)
+}
+
+pub fn mark_seen(
+    state: &Arc<ImapState>,
+    account_id: i64,
+    uid: &str,
+    seen: bool,
+) -> Result<(), String> {
+    let mut sessions = state.sessions.lock().unwrap();
+    let session = sessions
+        .get_mut(&account_id)
+        .ok_or_else(|| format!("No IMAP session for account {account_id}"))?;
+    session.uid_store_flag(uid, "\\Seen", seen)
+}
+
+pub fn mark_flagged(
+    state: &Arc<ImapState>,
+    account_id: i64,
+    uid: &str,
+    flagged: bool,
+) -> Result<(), String> {
+    let mut sessions = state.sessions.lock().unwrap();
+    let session = sessions
+        .get_mut(&account_id)
+        .ok_or_else(|| format!("No IMAP session for account {account_id}"))?;
+    session.uid_store_flag(uid, "\\Flagged", flagged)
+}
+
+pub fn set_label(
+    state: &Arc<ImapState>,
+    account_id: i64,
+    uid: &str,
+    label: &str,
+    add: bool,
+) -> Result<(), String> {
+    let mut sessions = state.sessions.lock().unwrap();
+    let session = sessions
+        .get_mut(&account_id)
+        .ok_or_else(|| format!("No IMAP session for account {account_id}"))?;
+    session.uid_store_keyword(uid, label, add)
+}
+
+pub fn move_mail(
+    state: &Arc<ImapState>,
+    account_id: i64,
+    uid: &str,
+    destination: &str,
+) -> Result<(), String> {
+    let mut sessions = state.sessions.lock().unwrap();
+    let session = sessions
+        .get_mut(&account_id)
+        .ok_or_else(|| format!("No IMAP session for account {account_id}"))?;
+    session.uid_move_to(uid, destination)
+}
+
+pub fn delete_mail(state: &Arc<ImapState>, account_id: i64, uid: &str) -> Result<(), String> {
+    let mut sessions = state.sessions.lock().unwrap();
+    let session = sessions
+        .get_mut(&account_id)
+        .ok_or_else(|| format!("No IMAP session for account {account_id}"))?;
+    session.uid_delete(uid)
 }
 
 fn build_mail_content(uid: String, parsed: &ParsedMail) -> MailContent {

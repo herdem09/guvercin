@@ -1,4 +1,12 @@
 {
+  "name": "guvercin",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "app:dev": "tauri dev --config frontend/src-tauri/tauri.conf.json",
+    "app:build": "tauri build --config frontend/src-tauri/tauri.conf.json"
+  },
   "devDependencies": {
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/cli": "^2.10.0"

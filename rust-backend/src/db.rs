@@ -25,7 +25,7 @@ impl AppState {
         let general_db_path = databases_dir.join("general.db");
         let general_db_path_str = general_db_path.to_string_lossy().into_owned();
         tracing::info!("Connecting to general database: {:?}", general_db_path);
-        
+
         let general_pool = connect_sqlite(&general_db_path)
             .await
             .map_err(|e| AppError::db(e, &general_db_path_str))?;
@@ -74,15 +74,15 @@ async fn connect_sqlite(path: &Path) -> sqlx::Result<SqlitePool> {
 pub async fn get_user_db_pool(state: &AppState, account_id: i64) -> Result<SqlitePool, AppError> {
     let user_db_path = state.databases_dir.join(format!("{account_id}.db"));
     let user_db_path_str = user_db_path.to_string_lossy().into_owned();
-    
+
     let pool = connect_sqlite(&user_db_path)
         .await
         .map_err(|e| AppError::db(e, &user_db_path_str))?;
-        
+
     init_user_db(&pool)
         .await
         .map_err(|e| AppError::db(e, &user_db_path_str))?;
-        
+
     Ok(pool)
 }
 
@@ -111,7 +111,6 @@ async fn init_general_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
-
 
     // Migration for existing databases
     let _ = sqlx::query("ALTER TABLE accounts ADD COLUMN ssl_mode TEXT DEFAULT 'STARTTLS'")
@@ -228,6 +227,172 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
+
+    // offline configuration rules
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS download_mails (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            node_path TEXT NOT NULL,
+            node_type TEXT NOT NULL,
+            rule_type TEXT NOT NULL,
+            source TEXT NOT NULL,
+            is_active BOOLEAN DEFAULT 1,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_download_mails_unique_active
+        ON download_mails(node_path, node_type, rule_type, is_active)
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS offline_config (
+            id INTEGER PRIMARY KEY CHECK(id = 1),
+            enabled BOOLEAN NOT NULL DEFAULT 1,
+            initial_sync_mode TEXT NOT NULL DEFAULT 'all',
+            initial_sync_value INTEGER,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO offline_config (id, enabled, initial_sync_mode, initial_sync_value)
+        VALUES (1, 1, 'all', NULL)
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    // offline queue for mutation sync
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS offline_sync_queue (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_type TEXT NOT NULL,
+            target_uid TEXT,
+            target_folder TEXT,
+            payload_json TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            last_error TEXT,
+            next_retry_at DATETIME,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_offline_sync_queue_status_retry
+        ON offline_sync_queue(status, next_retry_at, created_at)
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS outbox_mails (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            draft_rfc822 TEXT,
+            from_addr TEXT,
+            to_addrs TEXT,
+            cc_addrs TEXT,
+            bcc_addrs TEXT,
+            subject TEXT,
+            body_text TEXT,
+            attachments_json TEXT,
+            status TEXT NOT NULL DEFAULT 'pending',
+            attempt_count INTEGER NOT NULL DEFAULT 0,
+            next_retry_at DATETIME,
+            last_error TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_outbox_status_retry
+        ON outbox_mails(status, next_retry_at, created_at)
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS sync_checkpoints (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            folder_path TEXT UNIQUE NOT NULL,
+            last_synced_uid INTEGER DEFAULT 0,
+            last_uid_validity INTEGER DEFAULT 0,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS mailbox_capabilities_cache (
+            capability_key TEXT PRIMARY KEY,
+            capability_value TEXT,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    // lightweight local cache for offline list/content
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS local_mail_cache (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            uid TEXT NOT NULL,
+            folder TEXT NOT NULL,
+            sender_name TEXT,
+            sender_address TEXT,
+            subject TEXT,
+            seen BOOLEAN DEFAULT 0,
+            date_value TEXT,
+            plain_body TEXT,
+            html_body TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(uid, folder)
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    let _ = sqlx::query("ALTER TABLE local_mail_cache ADD COLUMN raw_rfc822 BLOB")
+        .execute(pool)
+        .await;
 
     Ok(())
 }

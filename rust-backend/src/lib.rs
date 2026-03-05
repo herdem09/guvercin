@@ -6,6 +6,7 @@ mod imap_session;
 mod mail_models;
 mod mail_routes;
 mod models;
+mod offline_routes;
 mod routes;
 
 use axum::{
@@ -53,6 +54,10 @@ pub async fn run(db_dir: Option<PathBuf>) -> anyhow::Result<()> {
         .route("/health", get(routes::health_check))
         .route("/api/auth/accounts", get(routes::get_accounts))
         .route("/api/auth/setup", post(routes::setup_account))
+        .route(
+            "/api/auth/mailboxes-preview",
+            post(routes::preview_mailboxes),
+        )
         .route("/api/account/finalize", post(routes::finalize_account))
         .with_state(db_state);
 
@@ -82,6 +87,34 @@ pub async fn run(db_dir: Option<PathBuf>) -> anyhow::Result<()> {
         .route(
             "/api/mail/:account_id/disconnect",
             delete(mail_routes::disconnect_imap),
+        )
+        .route(
+            "/api/offline/:account_id/config",
+            get(offline_routes::get_offline_config).put(offline_routes::put_offline_config),
+        )
+        .route(
+            "/api/offline/:account_id/status",
+            get(offline_routes::get_offline_status),
+        )
+        .route(
+            "/api/offline/:account_id/actions",
+            post(offline_routes::post_offline_action),
+        )
+        .route(
+            "/api/offline/:account_id/sync-now",
+            post(offline_routes::sync_now),
+        )
+        .route(
+            "/api/offline/:account_id/local-list",
+            get(offline_routes::get_local_mail_list),
+        )
+        .route(
+            "/api/offline/:account_id/local-content/:uid",
+            get(offline_routes::get_local_mail_content),
+        )
+        .route(
+            "/api/offline/:account_id/local-content/:uid/attachments/:attachment_index",
+            get(offline_routes::download_local_attachment),
         )
         .with_state(mail_state);
 

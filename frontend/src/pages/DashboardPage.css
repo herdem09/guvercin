@@ -98,8 +98,14 @@ body.resizing * {
   background: rgba(0, 0, 0, 0.06);
 }
 
-.db-clock {
+.db-navbar-right {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.db-clock {
   display: flex;
   gap: 10px;
 }
@@ -387,7 +393,8 @@ body.resizing * {
 
 .db-resizer {
   width: 4px;
-  background: transparent;
+  /* Visible divider so it doesn't look like a random gap */
+  background: rgba(0, 0, 0, 0.08);
   cursor: col-resize;
   transition: background 0.2s;
   flex-shrink: 0;
@@ -406,12 +413,54 @@ body.resizing * {
   flex-direction: column;
   border-right: 1px solid #ccc;
   flex-shrink: 0;
-  overflow-y: auto;
+  overflow: hidden;
+  min-width: 160px;
 }
 
 .db-folder-scroll-area {
   flex: 1;
   padding: 6px 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.db-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  border-bottom: 1px solid #ddd;
+  background: #ededed;
+  flex-shrink: 0;
+}
+
+.db-panel-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: #555;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-panel-hide-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #444;
+  transition: background 0.15s;
+}
+
+.db-panel-hide-btn:hover {
+  background: rgba(0, 0, 0, 0.08);
 }
 
 .db-folder-list {
@@ -556,9 +605,12 @@ body.resizing * {
   border-bottom: 1px solid #ccc;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 40px;
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 0 8px 0 0;
   flex-shrink: 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
 .db-mail-toolbar-section {
@@ -581,6 +633,7 @@ body.resizing * {
   color: #333;
   transition: background 0.15s;
   padding: 0;
+  flex: 0 0 auto;
 }
 
 .db-mail-toolbar-btn:hover {
@@ -619,6 +672,7 @@ body.resizing * {
   height: 20px;
   background: #ccc;
   margin: 0;
+  flex: 0 0 auto;
 }
 
 .db-toolbar-spacer {
@@ -630,6 +684,7 @@ body.resizing * {
   align-items: center;
   gap: 4px;
   margin-left: 0;
+  flex: 0 0 auto;
 }
 
 .db-pagination-btn {
@@ -660,6 +715,7 @@ body.resizing * {
   color: #666;
   min-width: 16px;
   text-align: center;
+  flex: 0 0 auto;
 }
 
 .db-perpage-wrapper {
@@ -667,6 +723,7 @@ body.resizing * {
   display: flex;
   align-items: center;
   position: relative;
+  flex: 0 0 auto;
 }
 
 .db-perpage-combobox {
@@ -735,6 +792,7 @@ body.resizing * {
   flex-direction: column;
   flex-shrink: 0;
   overflow: hidden;
+  min-width: var(--db-list-min, 380px);
 }
 
 .db-right-panel {
@@ -743,6 +801,48 @@ body.resizing * {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.db-dock-tabs {
+  display: flex;
+  flex-direction: row;
+  flex-shrink: 0;
+  align-self: stretch;
+}
+
+.db-collapsed-tab {
+  width: 28px;
+  background: #f0f0f0;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s;
+}
+
+.db-dock-tabs--right .db-collapsed-tab {
+  border-left: 1px solid #ccc;
+}
+
+.db-dock-tabs--left .db-collapsed-tab {
+  border-right: 1px solid #ccc;
+}
+
+.db-collapsed-tab:hover {
+  background: #e8e8e8;
+}
+
+.db-collapsed-tab__label {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  font-size: 12px;
+  font-weight: 700;
+  color: #555;
+  letter-spacing: 0.4px;
+  user-select: none;
 }
 
 .db-mail-list {
@@ -817,6 +917,21 @@ body.resizing * {
   border-left: 3px solid transparent;
   border-right: 3px solid transparent;
   transition: background 0.1s;
+}
+
+.db-mail-select {
+  flex: 0 0 auto;
+  width: 18px;
+  margin-right: 8px;
+  padding-top: 2px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.db-mail-select input {
+  width: 14px;
+  height: 14px;
 }
 
 .db-mail-item-content {
@@ -1233,4 +1348,42 @@ body.resizing * {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+}
+
+.db-compose-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(6, 14, 24, 0.45);
+  display: grid;
+  place-items: center;
+  z-index: 1200;
+}
+
+.db-compose-card {
+  width: min(620px, 92vw);
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 22px 46px rgba(0, 0, 0, 0.25);
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.db-compose-card input,
+.db-compose-card textarea {
+  border: 1px solid #c8d3e6;
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.db-compose-card textarea {
+  min-height: 180px;
+  resize: vertical;
+}
+
+.db-compose-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }

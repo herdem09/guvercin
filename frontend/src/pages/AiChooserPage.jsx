@@ -25,12 +25,14 @@ function AiChooserPage() {
             const formData = JSON.parse(localStorage.getItem('temp_account_form') || '{}')
             const language = localStorage.getItem('temp_language') || 'en'
             const font = localStorage.getItem('temp_font') || 'Arial'
+            const offline = JSON.parse(localStorage.getItem('temp_offline_config') || '{"enabled":true,"download_rules":[],"initial_sync_policy":{"mode":"all","value":null}}')
 
             const finalPayload = {
                 account: formData,
                 language,
                 font,
-                ai: payload
+                ai: payload,
+                offline,
             }
 
             const response = await fetch(apiUrl('/api/account/finalize'), {
