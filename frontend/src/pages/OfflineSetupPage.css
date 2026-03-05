@@ -1,0 +1,121 @@
+.offline-setup-page {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  padding: 20px;
+  width: 100%;
+  animation: fadeIn 0.5s ease-out;
+}
+
+.offline-setup-card {
+  background-color: rgba(255, 255, 255, 0.95);
+  padding: 24px;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  width: 95%;
+  max-width: 860px;
+  height: 620px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  backdrop-filter: blur(10px);
+}
+
+.off-subtitle {
+  margin: 0;
+  text-align: center;
+  color: #677588;
+  font-size: 0.95rem;
+}
+
+.off-loading,
+.off-error {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  text-align: center;
+  color: #526073;
+}
+
+.off-error button {
+  margin-top: 10px;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #ffcb08;
+  cursor: pointer;
+}
+
+.off-tree {
+  flex: 1;
+  overflow: auto;
+  border: 2px solid #ffcd10;
+  border-radius: 10px;
+  background-color: #fffbea;
+  padding: 8px 6px;
+}
+
+.off-node__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+}
+
+.off-node__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: #343a40;
+  font-size: 0.94rem;
+}
+
+.off-chevron,
+.off-chevron-placeholder {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: #4f5f73;
+}
+
+.off-chevron {
+  cursor: pointer;
+  transition: transform 0.15s ease;
+}
+
+.off-chevron.open {
+  transform: rotate(90deg);
+}
+
+.off-policy {
+  border-top: 1px solid #f1e4a5;
+  padding-top: 12px;
+}
+
+.off-policy h3 {
+  margin: 0 0 8px;
+  color: #343a40;
+  font-size: 1rem;
+}
+
+.off-policy__modes {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+  color: #343a40;
+}
+
+.off-policy input[type='number'] {
+  width: 180px;
+  padding: 8px 10px;
+  border: 2px solid #ffcd10;
+  border-radius: 8px;
+  background-color: #fff;
+}

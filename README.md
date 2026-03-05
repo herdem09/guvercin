@@ -11,15 +11,28 @@ Important: This software is licensed under the Apache License 2.0 with a Commons
   - SQLx (SQLite access)
   - IMAP (to connect to IMAP servers)
 
-#### Execution
+### Desktop App (Single Process UX)
+
+The app is configured as a **single Tauri desktop application**:
+- Frontend starts inside Tauri.
+- Rust backend starts automatically inside the same desktop app process lifecycle.
+- You do **not** need to run backend separately.
+
+#### Run (development)
 
 ```bash
-cd rust-backend
-cargo run
+npm run app:dev
 ```
 
-- The server starts on `0.0.0.0:5000` by default.
-- The frontend continues to use the same API endpoints as the old Flask backend (`/api/auth/accounts`, `/api/auth/setup`, `/api/account/finalize`).
+#### Build desktop bundle
+
+```bash
+npm run app:build
+```
+
+Notes:
+- Backend HTTP API is still served internally on `127.0.0.1:5000` by the Tauri-embedded backend thread.
+- No separate `cargo run` for backend is required during normal desktop app usage.
 
 #### Database
 
@@ -37,4 +50,3 @@ cargo run
 
 - The frontend code is in the `frontend` folder (React/Vite).
 - It communicates with the backend over HTTP; having the Rust backend running is sufficient.
-

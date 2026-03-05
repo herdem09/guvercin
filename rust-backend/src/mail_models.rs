@@ -6,6 +6,7 @@ pub struct MailPreview {
     pub name: String,
     pub address: String,
     pub subject: String,
+    pub date: String,
     pub seen: bool,
 }
 

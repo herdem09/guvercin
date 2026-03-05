@@ -14,9 +14,10 @@ use crate::{
     imap_client,
     models::{
         AccountSummary, AccountsResponse, FinalizeAccountBody, FinalizeAccountData,
-        FinalizeSuccessResponse, SetupAccountForm, SetupFailureFormData, SetupFailureResponse,
-        SetupSuccessResponse,
+        FinalizeSuccessResponse, MailboxPreviewRequest, MailboxPreviewResponse, SetupAccountForm,
+        SetupFailureFormData, SetupFailureResponse, SetupSuccessResponse,
     },
+    offline_routes,
 };
 
 pub async fn health_check() -> impl IntoResponse {
@@ -125,6 +126,66 @@ pub async fn setup_account(
     }
 }
 
+pub async fn preview_mailboxes(Json(payload): Json<MailboxPreviewRequest>) -> impl IntoResponse {
+    let imap_port: u16 = payload
+        .imap_port
+        .as_deref()
+        .map(|s| s.trim())
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(143);
+    let ssl_mode = payload
+        .ssl_mode
+        .as_deref()
+        .map(|s| s.trim())
+        .unwrap_or("STARTTLS");
+
+    match imap_client::preview_mailboxes(
+        payload.imap_server.trim(),
+        payload.email.trim(),
+        payload.password.trim(),
+        imap_port,
+        false,
+        ssl_mode,
+    )
+    .await
+    {
+        Ok(mailboxes) => {
+            let mut folders = Vec::new();
+            let mut labels = Vec::new();
+
+            for mailbox in &mailboxes {
+                let lower = mailbox.to_lowercase();
+                if lower.starts_with("labels/")
+                    || lower.starts_with("etiketler/")
+                    || lower.starts_with("[labels]/")
+                {
+                    labels.push(mailbox.clone());
+                } else {
+                    folders.push(mailbox.clone());
+                }
+            }
+
+            (
+                StatusCode::OK,
+                Json(MailboxPreviewResponse {
+                    mailboxes,
+                    folders,
+                    labels,
+                }),
+            )
+                .into_response()
+        }
+        Err(err) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({
+                "status": "error",
+                "message": err
+            })),
+        )
+            .into_response(),
+    }
+}
+
 pub async fn finalize_account(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<FinalizeAccountBody>,
@@ -139,6 +200,7 @@ pub async fn finalize_account(
     let language = payload.language.unwrap_or_else(|| "en".to_string());
     let font = payload.font.unwrap_or_else(|| "Arial".to_string());
     let ai_config = payload.ai;
+    let offline_config = payload.offline;
 
     let email = account.email.trim().to_string();
     let display_name = account
@@ -159,7 +221,11 @@ pub async fn finalize_account(
         .map(|s| s.trim())
         .and_then(|p| p.parse().ok());
     let password = account.password.as_deref().map(|s| s.trim().to_string());
-    let ssl_mode = account.ssl_mode.as_deref().unwrap_or("STARTTLS").to_string();
+    let ssl_mode = account
+        .ssl_mode
+        .as_deref()
+        .unwrap_or("STARTTLS")
+        .to_string();
 
     let mut tx = state.general_pool.begin().await?;
 
@@ -237,6 +303,9 @@ pub async fn finalize_account(
         .await?;
         user_tx.commit().await?;
     }
+
+    offline_routes::save_offline_setup(&state, account_id, offline_config).await?;
+    offline_routes::spawn_initial_sync(state.clone(), account_id);
 
     let resp = FinalizeSuccessResponse {
         status: "success",

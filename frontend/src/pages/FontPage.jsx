@@ -48,7 +48,7 @@ function FontPage() {
         setSaving(true)
         setBtnText('Saved!')
         setTimeout(() => {
-            navigate('/ai_chooser')
+            navigate('/offline-setup')
         }, 500)
     }
 

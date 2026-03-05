@@ -51,6 +51,23 @@ pub struct SetupSuccessResponse {
     pub message: String,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MailboxPreviewRequest {
+    pub email: String,
+    pub imap_server: String,
+    pub imap_port: Option<String>,
+    pub password: String,
+    pub ssl_mode: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct MailboxPreviewResponse {
+    pub mailboxes: Vec<String>,
+    pub folders: Vec<String>,
+    pub labels: Vec<String>,
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetupFailureFormData {
@@ -77,6 +94,7 @@ pub struct FinalizeAccountBody {
     pub language: Option<String>,
     pub font: Option<String>,
     pub ai: Option<AiConfig>,
+    pub offline: Option<OfflineSetupPayload>,
 }
 
 #[derive(Deserialize)]
@@ -100,9 +118,83 @@ pub struct AiConfig {
     pub base_url_context_window: Option<String>,
 }
 
+#[derive(Deserialize, Serialize, Clone)]
+pub struct OfflineSetupPayload {
+    pub enabled: bool,
+    #[serde(default)]
+    pub download_rules: Vec<DownloadRuleInput>,
+    pub initial_sync_policy: InitialSyncPolicyInput,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+pub struct DownloadRuleInput {
+    pub node_path: String,
+    pub node_type: String,
+    pub rule_type: String,
+    pub source: String,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+pub struct InitialSyncPolicyInput {
+    pub mode: String,
+    pub value: Option<i64>,
+}
+
 #[derive(Serialize)]
 pub struct FinalizeSuccessResponse {
     pub status: &'static str,
     pub message: String,
     pub account_id: i64,
+}
+
+#[derive(Serialize, FromRow)]
+pub struct DownloadRuleRecord {
+    pub id: i64,
+    pub node_path: String,
+    pub node_type: String,
+    pub rule_type: String,
+    pub source: String,
+    pub is_active: i64,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Serialize)]
+pub struct OfflineConfigResponse {
+    pub enabled: bool,
+    pub initial_sync_policy: InitialSyncPolicyInput,
+    pub download_rules: Vec<DownloadRuleRecord>,
+}
+
+#[derive(Deserialize)]
+pub struct OfflineActionRequest {
+    pub action_type: String,
+    pub target_uid: Option<String>,
+    pub target_folder: Option<String>,
+    pub payload: Option<serde_json::Value>,
+}
+
+#[derive(Serialize)]
+pub struct OfflineActionResponse {
+    pub status: &'static str,
+    pub queued_id: i64,
+}
+
+#[derive(Serialize)]
+pub struct SyncNowResponse {
+    pub status: &'static str,
+    pub processed: usize,
+    pub failed: usize,
+}
+
+#[derive(Serialize)]
+pub struct OfflineStatusResponse {
+    pub network_online: bool,
+    pub backend_reachable: bool,
+    pub imap_reachable: bool,
+    pub smtp_reachable: bool,
+    pub queue_depth: i64,
+    pub sync_state: String,
+    pub last_sync_at: Option<String>,
+    pub last_error: Option<String>,
 }

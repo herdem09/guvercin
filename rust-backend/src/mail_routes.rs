@@ -47,12 +47,13 @@ pub async fn connect_imap(
     .unwrap_or_else(|e| Err(format!("Task panic: {e}")));
 
     if result.is_ok() {
-        let _ = sqlx::query("UPDATE accounts SET auth_token = ?, ssl_mode = ? WHERE account_id = ?")
-            .bind(&body.password)
-            .bind(&body.ssl_mode)
-            .bind(body.account_id)
-            .execute(&state._db.general_pool)
-            .await;
+        let _ =
+            sqlx::query("UPDATE accounts SET auth_token = ?, ssl_mode = ? WHERE account_id = ?")
+                .bind(&body.password)
+                .bind(&body.ssl_mode)
+                .bind(body.account_id)
+                .execute(&state._db.general_pool)
+                .await;
     }
 
     match result {
@@ -75,20 +76,51 @@ pub async fn connect_imap_stored(
         Err(_) => return (StatusCode::NOT_FOUND, Json(json!({"error": "Account not found"}))).into_response(),
     };
 
-    let email: String = account.try_get::<Option<String>, _>("email_address").unwrap_or_default().unwrap_or_default();
-    let host: String = account.try_get::<Option<String>, _>("imap_host").unwrap_or_default().unwrap_or_default();
-    let port: i64 = account.try_get::<Option<i64>, _>("imap_port").unwrap_or_default().unwrap_or(143);
-    let password: String = account.try_get::<Option<String>, _>("auth_token").unwrap_or_default().unwrap_or_default();
-    let ssl: String = account.try_get::<Option<String>, _>("ssl_mode").unwrap_or_default().unwrap_or_else(|| "STARTTLS".to_string());
+    let email: String = account
+        .try_get::<Option<String>, _>("email_address")
+        .unwrap_or_default()
+        .unwrap_or_default();
+    let host: String = account
+        .try_get::<Option<String>, _>("imap_host")
+        .unwrap_or_default()
+        .unwrap_or_default();
+    let port: i64 = account
+        .try_get::<Option<i64>, _>("imap_port")
+        .unwrap_or_default()
+        .unwrap_or(143);
+    let password: String = account
+        .try_get::<Option<String>, _>("auth_token")
+        .unwrap_or_default()
+        .unwrap_or_default();
+    let ssl: String = account
+        .try_get::<Option<String>, _>("ssl_mode")
+        .unwrap_or_default()
+        .unwrap_or_else(|| "STARTTLS".to_string());
 
     if password.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(json!({"error": "No password stored"}))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "No password stored"})),
+        )
+            .into_response();
     }
 
     let result = tokio::task::spawn_blocking({
         let imap_state = state.imap.clone();
-        move || imap_session::connect_and_login(&imap_state, account_id, &email, &password, &host, port as u16, &ssl)
-    }).await.unwrap_or_else(|e| Err(format!("Task panic: {e}")));
+        move || {
+            imap_session::connect_and_login(
+                &imap_state,
+                account_id,
+                &email,
+                &password,
+                &host,
+                port as u16,
+                &ssl,
+            )
+        }
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("Task panic: {e}")));
 
     match result {
         Ok(()) => (StatusCode::OK, Json(json!({"status": "connected"}))).into_response(),
@@ -135,6 +167,12 @@ fn default_per_page() -> usize {
     50
 }
 
+#[derive(Deserialize)]
+pub struct MailContentQuery {
+    #[serde(default = "default_inbox")]
+    pub mailbox: String,
+}
+
 pub async fn get_mail_list(
     State(state): State<Arc<MailAppState>>,
     Path(account_id): Path<i64>,
@@ -148,6 +186,33 @@ pub async fn get_mail_list(
     .await
     .unwrap_or_default();
 
+    if let Ok(pool) = crate::db::get_user_db_pool(&state._db, account_id).await {
+        for mail in &mails {
+            let _ = sqlx::query(
+                r#"
+                INSERT INTO local_mail_cache (uid, folder, sender_name, sender_address, subject, date_value, seen, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(uid, folder) DO UPDATE SET
+                    sender_name = excluded.sender_name,
+                    sender_address = excluded.sender_address,
+                    subject = excluded.subject,
+                    date_value = excluded.date_value,
+                    seen = excluded.seen,
+                    updated_at = CURRENT_TIMESTAMP
+                "#,
+            )
+            .bind(&mail.id)
+            .bind(&q.mailbox)
+            .bind(&mail.name)
+            .bind(&mail.address)
+            .bind(&mail.subject)
+            .bind(&mail.date)
+            .bind(mail.seen as i64)
+            .execute(&pool)
+            .await;
+        }
+    }
+
     Json(MailListResponse {
         total_count: total,
         mails,
@@ -160,12 +225,14 @@ pub async fn get_mail_list(
 pub async fn get_mail_content(
     State(state): State<Arc<MailAppState>>,
     Path((account_id, uid)): Path<(i64, String)>,
+    Query(q): Query<MailContentQuery>,
 ) -> impl IntoResponse {
     let uid_for_response = uid.clone();
     let raw = tokio::task::spawn_blocking({
         let imap_state = state.imap.clone();
         let uid = uid.clone();
-        move || imap_session::fetch_mail_raw(&imap_state, account_id, &uid)
+        let mailbox = q.mailbox.clone();
+        move || imap_session::fetch_mail_raw_in_mailbox(&imap_state, account_id, &mailbox, &uid)
     })
     .await
     .ok()
@@ -173,6 +240,23 @@ pub async fn get_mail_content(
 
     if let Some(raw_bytes) = raw {
         let content = imap_session::parse_mail_content(uid_for_response, &raw_bytes);
+        if let Ok(pool) = crate::db::get_user_db_pool(&state._db, account_id).await {
+            let _ = sqlx::query(
+                r#"
+                UPDATE local_mail_cache
+                SET plain_body = ?, html_body = ?, date_value = ?, raw_rfc822 = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE uid = ? AND folder = ?
+                "#,
+            )
+            .bind(&content.plain_body)
+            .bind(&content.html_body)
+            .bind(&content.date)
+            .bind(raw_bytes)
+            .bind(&content.id)
+            .bind(&q.mailbox)
+            .execute(&pool)
+            .await;
+        }
         Json(content).into_response()
     } else {
         (
@@ -186,11 +270,13 @@ pub async fn get_mail_content(
 pub async fn download_attachment(
     State(state): State<Arc<MailAppState>>,
     Path((account_id, uid, attachment_index)): Path<(i64, String, usize)>,
+    Query(q): Query<MailContentQuery>,
 ) -> impl IntoResponse {
     let raw = tokio::task::spawn_blocking({
         let imap_state = state.imap.clone();
         let uid = uid.clone();
-        move || imap_session::fetch_mail_raw(&imap_state, account_id, &uid)
+        let mailbox = q.mailbox.clone();
+        move || imap_session::fetch_mail_raw_in_mailbox(&imap_state, account_id, &mailbox, &uid)
     })
     .await
     .ok()

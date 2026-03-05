@@ -45,4 +45,5 @@ export function hydrateAccountSession(account) {
   localStorage.removeItem('temp_account_form')
   localStorage.removeItem('temp_language')
   localStorage.removeItem('temp_font')
+  localStorage.removeItem('temp_offline_config')
 }
