@@ -113,12 +113,12 @@ const DashboardPage = () => {
 
     const [accountMenuOpen, setAccountMenuOpen] = useState(false)
     const [isMailFullscreen, setIsMailFullscreen] = useState(false)
-    const [isSyncing, setIsSyncing] = useState(false)
 
     const accountButtonRef = useRef(null)
     const accountMenuRef = useRef(null)
     const iframeRef = useRef(null)
     const syncAbortRef = useRef(null)
+    const isSyncingRef = useRef(false)
     const nextMailWindowId = useRef(0)
     const canUseRemoteMail = backendReachable && remoteMailAvailable
 
@@ -248,7 +248,7 @@ const DashboardPage = () => {
 
     const syncMailsFromRemote = useCallback(async (folder, page = currentPage, limit = perPage) => {
         if (!accountId || !canUseRemoteMail) return
-        setIsSyncing(true)
+        isSyncingRef.current = true
         try {
             const abort = new AbortController()
             syncAbortRef.current = abort
@@ -265,7 +265,7 @@ const DashboardPage = () => {
                 console.error('Sync error:', err)
             }
         } finally {
-            setIsSyncing(false)
+            isSyncingRef.current = false
             syncAbortRef.current = null
         }
     }, [accountId, canUseRemoteMail, currentPage, perPage])
@@ -322,12 +322,12 @@ const DashboardPage = () => {
             // Önce cache'den yükle (hızlı)
             loadMailsFromCache(selectedFolder, page, perPage).then((cacheLoaded) => {
                 // Sonra arka planda senkronizasyon yap (online ise)
-                if (canUseRemoteMail && !isSyncing) {
+                if (canUseRemoteMail && !isSyncingRef.current) {
                     syncMailsFromRemote(selectedFolder, page, perPage)
                 }
             })
         }
-    }, [activeSection, backendReachable, canUseRemoteMail, selectedFolder, perPage, loadMailsFromCache, syncMailsFromRemote, isSyncing])
+    }, [activeSection, backendReachable, canUseRemoteMail, selectedFolder, perPage, loadMailsFromCache, syncMailsFromRemote])
 
     const openMail = async (mail) => {
         setIsMailFullscreen(false)
@@ -986,7 +986,7 @@ function MailSection({
                         <li><button onClick={() => {
                             loadMailsFromCache(selectedFolder, currentPage, perPage)
                                 .then(() => {
-                                    if (canUseRemoteMail && !isSyncing) {
+                                    if (canUseRemoteMail && !isSyncingRef.current) {
                                         syncMailsFromRemote(selectedFolder, currentPage, perPage)
                                     }
                                 })
@@ -1147,15 +1147,15 @@ function MailSection({
                                             // Refresh: önce cache yükle, sonra remote senkronizasyon yap
                                             loadMailsFromCache(selectedFolder, currentPage, perPage)
                                                 .then(() => {
-                                                    if (canUseRemoteMail && !isSyncing) {
+                                                    if (canUseRemoteMail && !isSyncingRef.current) {
                                                         syncMailsFromRemote(selectedFolder, currentPage, perPage)
                                                     }
                                                 })
                                         }}
-                                        title={isSyncing ? 'Syncing...' : 'Refresh'}
-                                        disabled={isSyncing}
+                                        title={isSyncingRef.current ? 'Syncing...' : 'Refresh'}
+                                        disabled={isSyncingRef.current}
                                     >
-                                        {isSyncing ? '⟳' : '🔄'}
+                                        {isSyncingRef.current ? '⟳' : '🔄'}
                                     </button>
                                     <button
                                         type="button"
