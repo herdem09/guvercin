@@ -41,6 +41,14 @@ pub enum ImapSession {
 }
 
 impl ImapSession {
+    fn noop(&mut self) -> Result<(), String> {
+        let result = match self {
+            ImapSession::Plain(s) => s.noop(),
+            ImapSession::Tls(s) => s.noop(),
+        };
+        result.map(|_| ()).map_err(|e| format!("{e}"))
+    }
+
     fn list_mailboxes(&mut self) -> Vec<String> {
         let result = match self {
             ImapSession::Plain(s) => s.list(Some(""), Some("*")),
@@ -342,8 +350,19 @@ pub fn disconnect(state: &Arc<ImapState>, account_id: i64) {
 }
 
 pub fn is_connected(state: &Arc<ImapState>, account_id: i64) -> bool {
-    let sessions = state.sessions.lock().unwrap();
-    sessions.contains_key(&account_id)
+    let mut sessions = state.sessions.lock().unwrap();
+    let health = match sessions.get_mut(&account_id) {
+        Some(session) => session.noop(),
+        None => return false,
+    };
+
+    if let Err(err) = health {
+        warn!("IMAP session unhealthy for account {account_id}: {err}");
+        sessions.remove(&account_id);
+        return false;
+    }
+
+    true
 }
 
 pub fn mark_seen(

@@ -138,6 +138,81 @@ body.resizing * {
   background: rgba(0, 0, 0, 0.1);
 }
 
+.db-sync-indicator {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.db-sync-indicator__btn {
+  position: relative;
+}
+
+.db-sync-indicator__dot {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.9);
+  background: #9aa0a6; /* default gray */
+}
+
+.db-sync-indicator__dot.live {
+  background: #1db954;
+}
+
+.db-sync-indicator__dot.offline {
+  background: #6b7280;
+}
+
+.db-sync-indicator__dot.syncing {
+  background: #ff8f00;
+}
+
+.db-sync-popover {
+  display: none;
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  min-width: 260px;
+  max-width: 320px;
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 12px 14px;
+  box-shadow: 0 20px 45px rgba(17, 17, 17, 0.25);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+  color: #14142b;
+  z-index: 220;
+}
+
+.db-sync-indicator:hover .db-sync-popover,
+.db-sync-indicator:focus-within .db-sync-popover {
+  display: block;
+}
+
+.db-sync-popover__title {
+  font-weight: 800;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.db-sync-popover__row {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 0;
+  color: #2b2b2b;
+  word-break: break-word;
+}
+
+.db-sync-popover__error {
+  margin-top: 8px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #b00020;
+}
+
 .db-account-wrapper {
   position: relative;
 }

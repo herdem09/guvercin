@@ -124,6 +124,12 @@ pub struct OfflineSetupPayload {
     #[serde(default)]
     pub download_rules: Vec<DownloadRuleInput>,
     pub initial_sync_policy: InitialSyncPolicyInput,
+    #[serde(default = "default_cache_raw_rfc822")]
+    pub cache_raw_rfc822: bool,
+}
+
+fn default_cache_raw_rfc822() -> bool {
+    true
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -164,6 +170,7 @@ pub struct OfflineConfigResponse {
     pub enabled: bool,
     pub initial_sync_policy: InitialSyncPolicyInput,
     pub download_rules: Vec<DownloadRuleRecord>,
+    pub cache_raw_rfc822: bool,
 }
 
 #[derive(Deserialize)]
@@ -197,4 +204,27 @@ pub struct OfflineStatusResponse {
     pub sync_state: String,
     pub last_sync_at: Option<String>,
     pub last_error: Option<String>,
+    pub transfer: Option<TransferSnapshot>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct TransferSnapshot {
+    pub receiving: Option<TransferProgress>,
+    pub sending: Option<TransferProgress>,
+}
+
+#[derive(Serialize, Clone)]
+pub struct TransferProgress {
+    /// "receiving" or "sending"
+    pub direction: String,
+    /// e.g. "emails", "queue"
+    pub resource: String,
+    pub mailbox: Option<String>,
+    pub total: Option<i64>,
+    pub done: i64,
+    pub remaining: Option<i64>,
+    /// Optional human-friendly detail like "mark_read" or "sync INBOX".
+    pub detail: Option<String>,
+    /// Unix epoch milliseconds, for UI "stale" handling.
+    pub updated_at_ms: i64,
 }

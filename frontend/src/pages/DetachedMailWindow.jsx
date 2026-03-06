@@ -20,6 +20,7 @@ export default function DetachedMailWindow() {
   const accountId = data?.accountId
   const mail = data?.mail
   const mailbox = data?.mailbox
+  const preferOffline = !!data?.preferOffline
 
   const subject = useMemo(() => mailContent?.subject || mail?.subject || '(No Subject)', [mailContent, mail])
   const fromLine = useMemo(() => {
@@ -91,8 +92,16 @@ export default function DetachedMailWindow() {
     setLoading(true)
     setError('')
     const mailboxParam = mailbox ? `?mailbox=${encodeURIComponent(mailbox)}` : ''
-    fetch(apiUrl(`/api/mail/${accountId}/content/${mail.id}${mailboxParam}`), { cache: 'no-store' })
-      .then(async (res) => {
+    const fetchContent = async () => {
+      const primaryPath = preferOffline
+        ? `/api/offline/${accountId}/local-content/${mail.id}${mailboxParam}`
+        : `/api/mail/${accountId}/content/${mail.id}${mailboxParam}`
+      const fallbackPath = preferOffline
+        ? `/api/mail/${accountId}/content/${mail.id}${mailboxParam}`
+        : `/api/offline/${accountId}/local-content/${mail.id}${mailboxParam}`
+
+      const loadFromPath = async (path) => {
+        const res = await fetch(apiUrl(path), { cache: 'no-store' })
         if (!res.ok) {
           let message = 'Content could not be loaded'
           try {
@@ -106,7 +115,19 @@ export default function DetachedMailWindow() {
           throw new Error(message)
         }
         return res.json()
-      })
+      }
+
+      try {
+        return await loadFromPath(primaryPath)
+      } catch (primaryError) {
+        if (primaryPath === fallbackPath) {
+          throw primaryError
+        }
+        return loadFromPath(fallbackPath)
+      }
+    }
+
+    fetchContent()
       .then((json) => {
         if (!active) return
         clearTimeout(timeoutId)
@@ -123,7 +144,7 @@ export default function DetachedMailWindow() {
       active = false
       clearTimeout(timeoutId)
     }
-  }, [accountId, mail, mailContent])
+  }, [accountId, mail, mailContent, mailbox, preferOffline])
 
   const closeWindow = async () => {
     try {

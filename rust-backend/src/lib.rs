@@ -97,6 +97,10 @@ pub async fn run(db_dir: Option<PathBuf>) -> anyhow::Result<()> {
             get(offline_routes::get_offline_status),
         )
         .route(
+            "/api/offline/:account_id/local-mailboxes",
+            get(offline_routes::get_local_mailboxes),
+        )
+        .route(
             "/api/offline/:account_id/actions",
             post(offline_routes::post_offline_action),
         )

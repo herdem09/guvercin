@@ -75,6 +75,7 @@ function OfflineSetupPage() {
   const [expanded, setExpanded] = useState(() => new Set(['all', 'group:folders', 'group:labels']))
   const [policyMode, setPolicyMode] = useState('all')
   const [policyValue, setPolicyValue] = useState('')
+  const [cacheRawRfc822, setCacheRawRfc822] = useState(true)
 
   const folderTree = useMemo(() => buildTreeNodes(folders, 'folder'), [folders])
   const labelTree = useMemo(() => buildTreeNodes(labels, 'label'), [labels])
@@ -228,6 +229,7 @@ function OfflineSetupPage() {
           mode: policyMode,
           value: normalizedValue && normalizedValue > 0 ? normalizedValue : null,
         },
+        cache_raw_rfc822: cacheRawRfc822,
       }),
     )
     navigate('/ai_chooser')
@@ -319,6 +321,10 @@ function OfflineSetupPage() {
               onChange={(e) => setPolicyValue(e.target.value)}
             />
           )}
+          <label style={{ display: 'flex', gap: '10px', alignItems: 'center', marginTop: '12px' }}>
+            <input type="checkbox" checked={cacheRawRfc822} onChange={(e) => setCacheRawRfc822(e.target.checked)} />
+            <span>{t('Cache attachments for offline use')}</span>
+          </label>
         </div>
 
         <button type="button" className="continue-button" onClick={persistAndContinue} disabled={loading}>

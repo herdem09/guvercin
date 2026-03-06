@@ -65,11 +65,32 @@ function useClock() {
     return { time: timeStr, date: dateStr }
 }
 
+function CollapsedTab({ label, title, onClick }) {
+    return (
+        <button type="button" className="db-collapsed-tab" title={title} onClick={onClick}>
+            <span className="db-collapsed-tab__label">{label}</span>
+        </button>
+    )
+}
+
 const DashboardPage = () => {
     const { t } = useTranslation()
     const navigate = useNavigate()
     const { time, date } = useClock()
-    const { networkOnline, queueDepth, syncState, refreshStatus, flushQueue } = useOfflineSync()
+    const {
+        networkOnline,
+        backendReachable,
+        imapReachable,
+        smtpReachable,
+        remoteMailAvailable,
+        queueDepth,
+        syncState,
+        lastSyncAt,
+        lastError,
+        transfer,
+        refreshStatus,
+        flushQueue,
+    } = useOfflineSync()
 
     const [activeSection, setActiveSection] = useState('mail')
     const [accountId, setAccountId] = useState(null)
@@ -92,11 +113,12 @@ const DashboardPage = () => {
 
     const [accountMenuOpen, setAccountMenuOpen] = useState(false)
     const [isMailFullscreen, setIsMailFullscreen] = useState(false)
-    const [mailWindowOpen, setMailWindowOpen] = useState(false)
 
     const accountButtonRef = useRef(null)
     const accountMenuRef = useRef(null)
     const iframeRef = useRef(null)
+    const nextMailWindowId = useRef(0)
+    const canUseRemoteMail = backendReachable && remoteMailAvailable
 
     useEffect(() => {
         const storedId = localStorage.getItem('current_account_id')
@@ -108,6 +130,10 @@ const DashboardPage = () => {
             navigate('/login')
         }
     }, [navigate, refreshStatus])
+
+    useEffect(() => {
+        setConnected(imapReachable)
+    }, [imapReachable])
 
     const fetchAccount = async (id) => {
         try {
@@ -154,64 +180,155 @@ const DashboardPage = () => {
     }
 
     const loadFolders = useCallback(async () => {
-        if (!accountId) return
+        if (!accountId || !backendReachable) return
         try {
-            const res = await fetch(apiUrl(`/api/mail/${accountId}/mailboxes`))
-            const data = await res.json()
-            setFolders(data.mailboxes || [])
+            // Offline cache'den hızlıca yükle
+            let res = await fetch(apiUrl(`/api/offline/${accountId}/local-mailboxes`), { cache: 'no-store' })
+            if (res.ok) {
+                const data = await res.json()
+                setFolders(data.mailboxes || [])
+            }
+            
+            // Eğer online'yız, remote'tan da senkronizasyon yap
+            if (canUseRemoteMail) {
+                res = await fetch(apiUrl(`/api/mail/${accountId}/mailboxes`), { cache: 'no-store' })
+                if (res.ok) {
+                    const data = await res.json()
+                    setFolders(data.mailboxes || [])
+                }
+            }
         } catch {
-            // noop
+            setFolders([])
         }
-    }, [accountId])
+    }, [accountId, backendReachable, canUseRemoteMail])
 
     const autoConnectAttempted = useRef(false)
 
     useEffect(() => {
         const autoConnect = async () => {
-            if (!networkOnline || !accountId || connected || connecting || autoConnectAttempted.current) return
+            if (!backendReachable || !networkOnline || !accountId || connected || connecting || autoConnectAttempted.current) return
             autoConnectAttempted.current = true
             setConnecting(true)
             try {
                 const res = await fetch(apiUrl(`/api/mail/${accountId}/connect-stored`), { method: 'POST' })
                 if (res.ok) setConnected(true)
-            } catch { }
+            } catch {
+                // noop
+            }
             setConnecting(false)
         }
         autoConnect()
-    }, [accountId, connected, connecting, networkOnline])
+    }, [accountId, backendReachable, connected, connecting, networkOnline])
 
     useEffect(() => {
-        if (networkOnline && !connected) {
+        if (backendReachable && networkOnline && !connected) {
             autoConnectAttempted.current = false
         }
-    }, [networkOnline, connected])
+    }, [backendReachable, networkOnline, connected])
 
-    const loadMails = useCallback(async (folder, page = currentPage, limit = perPage) => {
-        if (!accountId) return
-        setLoadingMails(true)
+    const [isSyncing, setIsSyncing] = useState(false)
+    const syncAbortRef = useRef(null)
+
+    const loadMailsFromCache = useCallback(async (folder, page = currentPage, limit = perPage) => {
+        if (!accountId || !backendReachable) return
         try {
-            const endpoint = networkOnline && connected
-                ? `/api/mail/${accountId}/list?mailbox=${encodeURIComponent(folder)}&page=${page}&per_page=${limit}`
-                : `/api/offline/${accountId}/local-list?mailbox=${encodeURIComponent(folder)}&page=${page}&per_page=${limit}`
-            const res = await fetch(apiUrl(endpoint))
-            const data = await res.json()
-            setMails(data.mails || [])
+            const res = await fetch(
+                apiUrl(`/api/offline/${accountId}/local-list?mailbox=${encodeURIComponent(folder)}&page=${page}&per_page=${limit}`),
+                { cache: 'no-store' },
+            )
+            if (res.ok) {
+                const data = await res.json()
+                setMails(data.mails || [])
+                return true
+            }
         } catch {
-            // noop
+            setMails([])
         }
-        setLoadingMails(false)
-    }, [accountId, connected, currentPage, networkOnline, perPage])
+        return false
+    }, [accountId, backendReachable, currentPage, perPage])
+
+    const syncMailsFromRemote = useCallback(async (folder, page = currentPage, limit = perPage) => {
+        if (!accountId || !canUseRemoteMail) return
+        setIsSyncing(true)
+        try {
+            const abort = new AbortController()
+            syncAbortRef.current = abort
+            const res = await fetch(
+                apiUrl(`/api/mail/${accountId}/list?mailbox=${encodeURIComponent(folder)}&page=${page}&per_page=${limit}`),
+                { cache: 'no-store', signal: abort.signal },
+            )
+            if (res.ok && abort.signal.aborted === false) {
+                const data = await res.json()
+                setMails(data.mails || [])
+            }
+        } catch (err) {
+            if (err.name !== 'AbortError') {
+                console.error('Sync error:', err)
+            }
+        } finally {
+            setIsSyncing(false)
+            syncAbortRef.current = null
+        }
+    }, [accountId, canUseRemoteMail, currentPage, perPage])
+
+    const loadMails = useCallback(
+        async (folder, page = currentPage, limit = perPage, forceRemote = false) => {
+            if (!accountId || !backendReachable) return
+            setLoadingMails(true)
+            try {
+                // Sync abort işi varsa iptal et
+                if (syncAbortRef.current) {
+                    syncAbortRef.current.abort()
+                }
+
+                if (forceRemote || canUseRemoteMail) {
+                    // Direkt remote'dan yükle (force refresh)
+                    const res = await fetch(
+                        apiUrl(`/api/mail/${accountId}/list?mailbox=${encodeURIComponent(folder)}&page=${page}&per_page=${limit}`),
+                        { cache: 'no-store' },
+                    )
+                    if (res.ok) {
+                        const data = await res.json()
+                        setMails(data.mails || [])
+                    } else {
+                        setMails([])
+                    }
+                } else {
+                    // Offline: cache'den yükle
+                    await loadMailsFromCache(folder, page, limit)
+                }
+            } catch {
+                setMails([])
+            } finally {
+                setLoadingMails(false)
+            }
+        },
+        [accountId, backendReachable, canUseRemoteMail, currentPage, perPage, loadMailsFromCache],
+    )
 
     useEffect(() => {
-        if (connected && activeSection === 'mail') loadFolders()
-    }, [connected, loadFolders, activeSection])
+        if (accountId && activeSection === 'mail' && backendReachable) loadFolders()
+    }, [accountId, activeSection, backendReachable, loadFolders])
 
     useEffect(() => {
-        if (activeSection === 'mail') {
+        if (folders.length > 0 && !folders.includes(selectedFolder)) {
+            setSelectedFolder(folders[0])
+        }
+    }, [folders, selectedFolder])
+
+    useEffect(() => {
+        if (activeSection === 'mail' && backendReachable) {
             setCurrentPage(1)
-            loadMails(selectedFolder, 1, perPage)
+            const page = 1
+            // Önce cache'den yükle (hızlı)
+            loadMailsFromCache(selectedFolder, page, perPage).then((cacheLoaded) => {
+                // Sonra arka planda senkronizasyon yap (online ise)
+                if (canUseRemoteMail && !isSyncing) {
+                    syncMailsFromRemote(selectedFolder, page, perPage)
+                }
+            })
         }
-    }, [connected, selectedFolder, activeSection, networkOnline]) // Only reload when folder/section changes - loadMails will handle page/limit changes
+    }, [activeSection, backendReachable, canUseRemoteMail, selectedFolder, perPage, loadMailsFromCache, syncMailsFromRemote, isSyncing])
 
     const openMail = async (mail) => {
         setIsMailFullscreen(false)
@@ -220,10 +337,18 @@ const DashboardPage = () => {
         setLoadingContent(true)
         try {
             const mailbox = selectedFolder || 'INBOX'
-            const endpoint = networkOnline && connected
-                ? `/api/mail/${accountId}/content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
-                : `/api/offline/${accountId}/local-content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
-            const res = await fetch(apiUrl(endpoint))
+            let endpoint
+            
+            // Offline endpoint'i dene (cache)
+            endpoint = `/api/offline/${accountId}/local-content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
+            let res = await fetch(apiUrl(endpoint), { cache: 'no-store' })
+            
+            // Eğer offline cache'de yoksa ve online'yız, remote'tan çek
+            if (!res.ok && canUseRemoteMail) {
+                endpoint = `/api/mail/${accountId}/content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
+                res = await fetch(apiUrl(endpoint), { cache: 'no-store' })
+            }
+            
             if (res.ok) {
                 const data = await res.json()
                 setMailContent(data)
@@ -235,7 +360,7 @@ const DashboardPage = () => {
     }
 
     const queueAction = async (actionType, targetUid, payload = {}) => {
-        if (!accountId) return
+        if (!accountId || !backendReachable) return
         await fetch(apiUrl(`/api/offline/${accountId}/actions`), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -252,20 +377,9 @@ const DashboardPage = () => {
         }
     }
 
-    const markRead = async (mail, read) => {
-        setMails((prev) =>
-            prev.map((m) => (m.id === mail.id ? { ...m, seen: !!read } : m)),
-        )
-        await queueAction(read ? 'mark_read' : 'mark_unread', mail.id)
-    }
-
     const removeMailOptimistic = async (mail) => {
         setMails((prev) => prev.filter((m) => m.id !== mail.id))
         await queueAction('delete', mail.id)
-    }
-
-    const toggleFlag = async (mail) => {
-        await queueAction(mail.flagged ? 'unflag' : 'flag', mail.id)
     }
 
     const moveMail = async (mail, destination) => {
@@ -289,19 +403,20 @@ const DashboardPage = () => {
         if (!selectedMail) return
         try {
             const { invoke } = await import('@tauri-apps/api/core')
-            const mailWindowLabel = `mail-${Date.now()}-${Math.random().toString(16).slice(2)}`
+            nextMailWindowId.current += 1
+            const mailWindowLabel = `mail-${nextMailWindowId.current}`
             const mailData = {
                 mail: selectedMail,
                 mailContent: mailContent,
                 accountId: accountId,
                 mailbox: selectedFolder || 'INBOX',
+                preferOffline: !canUseRemoteMail,
             }
 
             await invoke('open_mail_window', {
                 label: mailWindowLabel,
                 mailDataJson: JSON.stringify(mailData),
             })
-            setMailWindowOpen(true)
             setSelectedMail(null)
             setMailContent(null)
         } catch (e) {
@@ -315,20 +430,26 @@ const DashboardPage = () => {
             // First we need to fetch the content because it's not loaded yet
             const mailbox = selectedFolder || 'INBOX'
             let content = null
+            const endpoint = canUseRemoteMail
+                ? `/api/mail/${accountId}/content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
+                : `/api/offline/${accountId}/local-content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
             const res = await fetch(
-                apiUrl(`/api/mail/${accountId}/content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`)
+                apiUrl(endpoint),
+                { cache: 'no-store' },
             )
             if (res.ok) {
                 content = await res.json()
             }
 
             const { invoke } = await import('@tauri-apps/api/core')
-            const mailWindowLabel = `mail-${Date.now()}-${Math.random().toString(16).slice(2)}`
+            nextMailWindowId.current += 1
+            const mailWindowLabel = `mail-${nextMailWindowId.current}`
             const mailData = {
                 mail: mail,
                 mailContent: content,
                 accountId: accountId,
                 mailbox: mailbox,
+                preferOffline: !canUseRemoteMail,
             }
 
             await invoke('open_mail_window', {
@@ -371,6 +492,20 @@ const DashboardPage = () => {
         return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
     }
 
+    const formatTransfer = (p) => {
+        if (!p) return null
+        const mailbox = p.mailbox ? ` (${p.mailbox})` : ''
+        const detail = p.detail ? ` - ${p.detail}` : ''
+        if (Number.isFinite(p.total) && Number.isFinite(p.done)) {
+            const left = Number.isFinite(p.remaining) ? `, ${p.remaining} left` : ''
+            return `${p.direction}: ${p.resource}${mailbox} ${p.done}/${p.total}${left}${detail}`
+        }
+        if (Number.isFinite(p.done)) {
+            return `${p.direction}: ${p.resource}${mailbox} ${p.done}${detail}`
+        }
+        return `${p.direction}: ${p.resource}${mailbox}${detail}`
+    }
+
     useEffect(() => {
         if (iframeRef.current && mailContent?.html_body) {
             const doc = iframeRef.current.contentDocument
@@ -396,10 +531,28 @@ const DashboardPage = () => {
                         <span className="db-clock-item">{time}</span>
                         <span className="db-clock-item">{date}</span>
                     </div>
-                    <div className="db-clock" title="Offline Sync Status">
-                        <span className="db-clock-item">{networkOnline ? 'Online' : 'Offline'}</span>
-                        <span className="db-clock-item">{syncState}</span>
-                        <span className="db-clock-item">Queue: {queueDepth}</span>
+                    <div className={`db-sync-indicator ${syncState === 'syncing' ? 'is-syncing' : ''}`}>
+                        <button type="button" className="db-icon-btn db-sync-indicator__btn" aria-label="Sync and network status">
+                            🌐
+                            <span
+                                className={`db-sync-indicator__dot ${canUseRemoteMail ? 'live' : 'offline'} ${syncState === 'syncing' ? 'syncing' : ''}`}
+                                aria-hidden="true"
+                            />
+                        </button>
+                        <div className="db-sync-popover" role="tooltip">
+                            <div className="db-sync-popover__title">Network</div>
+                            <div className="db-sync-popover__row">Mode: {canUseRemoteMail ? 'Live' : 'Offline Cache'}</div>
+                            <div className="db-sync-popover__row">Sync: {syncState}</div>
+                            <div className="db-sync-popover__row">Queue: {queueDepth}</div>
+                            <div className="db-sync-popover__row">Browser: {networkOnline ? 'online' : 'offline'}</div>
+                            <div className="db-sync-popover__row">Backend: {backendReachable ? 'reachable' : 'down'}</div>
+                            <div className="db-sync-popover__row">IMAP: {imapReachable ? 'reachable' : 'down'}</div>
+                            <div className="db-sync-popover__row">SMTP: {smtpReachable ? 'configured' : 'not set'}</div>
+                            {lastSyncAt && <div className="db-sync-popover__row">Last sync: {lastSyncAt}</div>}
+                            {formatTransfer(transfer?.receiving) && <div className="db-sync-popover__row">{formatTransfer(transfer.receiving)}</div>}
+                            {formatTransfer(transfer?.sending) && <div className="db-sync-popover__row">{formatTransfer(transfer.sending)}</div>}
+                            {lastError && <div className="db-sync-popover__error">Error: {lastError}</div>}
+                        </div>
                     </div>
                     <button className="db-icon-btn" title="Notifications">🔔</button>
                     <button className="db-icon-btn" title="Settings">⚙️</button>
@@ -447,11 +600,7 @@ const DashboardPage = () => {
                     <div className="db-section-area">
                         {activeSection === 'mail' && (
                             <MailSection
-                                connected={connected}
-                                setConnected={setConnected}
                                 accountId={accountId}
-                                accountForm={accountForm}
-                                email={email}
                                 folders={folders}
                                 selectedFolder={selectedFolder}
                                 setSelectedFolder={setSelectedFolder}
@@ -475,12 +624,9 @@ const DashboardPage = () => {
                                 setPerPage={setPerPage}
                                 isMailFullscreen={isMailFullscreen}
                                 toggleMailFullscreen={toggleMailFullscreen}
-                                markRead={markRead}
                                 removeMailOptimistic={removeMailOptimistic}
-                                toggleFlag={toggleFlag}
                                 moveMail={moveMail}
-                                queueDepth={queueDepth}
-                                networkOnline={networkOnline}
+                                canUseRemoteMail={canUseRemoteMail}
                                 composeOpen={composeOpen}
                                 setComposeOpen={setComposeOpen}
                                 composeForm={composeForm}
@@ -499,16 +645,18 @@ const DashboardPage = () => {
 }
 
 function MailSection({
-    connected, setConnected, accountId, accountForm, email,
+    accountId,
     folders, selectedFolder, setSelectedFolder, mails,
     selectedMail, setSelectedMail, mailContent, setMailContent, loadingMails, loadingContent,
     connecting, loadMails, openMail, detachMailToWindow, detachMailToWindowFromList, iframeRef, getShortTime,
     currentPage, setCurrentPage, perPage, setPerPage,
     isMailFullscreen, toggleMailFullscreen,
-    markRead, removeMailOptimistic, toggleFlag, moveMail,
-    queueDepth, networkOnline, composeOpen, setComposeOpen, composeForm, setComposeForm, sendComposedMail,
+    removeMailOptimistic, moveMail,
+    canUseRemoteMail, composeOpen, setComposeOpen, composeForm, setComposeForm, sendComposedMail,
 }) {
     const { t } = useTranslation()
+    const hasFolderAccess = folders.length > 0
+    const hasMailSource = canUseRemoteMail || hasFolderAccess
     const [activeRibbonTab, setActiveRibbonTab] = useState('home')
     const [expandedFolders, setExpandedFolders] = useState(['INBOX', 'Folders', 'Labels', 'Etiketler'])
     const [folderWidth, setFolderWidth] = useState(240)
@@ -521,13 +669,7 @@ function MailSection({
     const [isPerPageOpen, setIsPerPageOpen] = useState(false)
     const [attachmentsExpanded, setAttachmentsExpanded] = useState(true)
     const [layoutCols, setLayoutCols] = useState(1)
-
-    // Reset layout to 1 column when exiting fullscreen
-    useEffect(() => {
-        if (!isMailFullscreen) {
-            setLayoutCols(1)
-        }
-    }, [isMailFullscreen])
+    const displayCols = isMailFullscreen ? layoutCols : 1
 
     const perPageRef = useRef(null)
     const isResizingFolder = useRef(false)
@@ -563,19 +705,27 @@ function MailSection({
     const [tabContents, setTabContents] = useState({}) // tabId -> mailContent
     const [loadingTab, setLoadingTab] = useState(false)
     const tabIframeRefs = useRef({})
+    const nextTabId = useRef(0)
 
     const openMailInTab = async (mail, existingContent) => {
-        const tabId = `tab-${Date.now()}-${Math.random().toString(16).slice(2)}`
+        nextTabId.current += 1
+        const tabId = `tab-${nextTabId.current}`
         let content = existingContent
         if (!content) {
             setLoadingTab(true)
             try {
                 const mailbox = selectedFolder || 'INBOX'
+                const endpoint = canUseRemoteMail
+                    ? `/api/mail/${accountId}/content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
+                    : `/api/offline/${accountId}/local-content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
                 const res = await fetch(
-                    apiUrl(`/api/mail/${accountId}/content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`)
+                    apiUrl(endpoint),
+                    { cache: 'no-store' },
                 )
                 if (res.ok) content = await res.json()
-            } catch { }
+            } catch {
+                // noop
+            }
             setLoadingTab(false)
         }
         setTabs(prev => [...prev, { id: tabId, mail, mailbox: selectedFolder || 'INBOX' }])
@@ -650,22 +800,22 @@ function MailSection({
         const el = mailToolbarRef.current
         if (!el || typeof ResizeObserver === 'undefined') return
 
-        recomputeMinListWidth()
-        const ro = new ResizeObserver(recomputeMinListWidth)
+        const frame = window.requestAnimationFrame(recomputeMinListWidth)
+        const ro = new ResizeObserver(() => {
+            window.requestAnimationFrame(recomputeMinListWidth)
+        })
         ro.observe(el)
-        return () => ro.disconnect()
+        return () => {
+            window.cancelAnimationFrame(frame)
+            ro.disconnect()
+        }
     }, [recomputeMinListWidth])
 
     // Recompute when toolbar content changes without a size change (e.g. fullscreen toggles layout buttons).
     useEffect(() => {
-        recomputeMinListWidth()
-    }, [recomputeMinListWidth, isMailFullscreen, layoutCols])
-
-    const CollapsedTab = ({ label, title, onClick }) => (
-        <button type="button" className="db-collapsed-tab" title={title} onClick={onClick}>
-            <span className="db-collapsed-tab__label">{label}</span>
-        </button>
-    )
+        const frame = window.requestAnimationFrame(recomputeMinListWidth)
+        return () => window.cancelAnimationFrame(frame)
+    }, [recomputeMinListWidth, isMailFullscreen, displayCols])
 
     const toggleMailSelected = (mailId) => {
         setSelectedMailIds((prev) => {
@@ -834,7 +984,14 @@ function MailSection({
                 )}
                 {activeRibbonTab === 'send-receive' && (
                     <ul>
-                        <li><button onClick={() => loadMails(selectedFolder)}>🔄 {t('Update Folder')}</button></li>
+                        <li><button onClick={() => {
+                            loadMailsFromCache(selectedFolder, currentPage, perPage)
+                                .then(() => {
+                                    if (canUseRemoteMail && !isSyncing) {
+                                        syncMailsFromRemote(selectedFolder, currentPage, perPage)
+                                    }
+                                })
+                        }}>🔄 {t('Update Folder')}</button></li>
                         <li><button onClick={() => { }}>📡 {t('Send All')}</button></li>
                     </ul>
                 )}
@@ -894,7 +1051,7 @@ function MailSection({
                                                 </div>
                                                 <a
                                                     className="db-attachments__link"
-                                                    href={attachmentUrl(accountId, activeTabContent.id, at.id, activeTab.mailbox, networkOnline && connected)}
+                                                    href={attachmentUrl(accountId, activeTabContent.id, at.id, activeTab.mailbox, canUseRemoteMail)}
                                                     download={at.filename}
                                                 >Download</a>
                                             </li>
@@ -931,7 +1088,7 @@ function MailSection({
                                         ❯
                                     </button>
                                 </div>
-                                {connected ? (
+                                {hasFolderAccess ? (
                                     <div className="db-folder-scroll-area">
                                         <ul className="db-folder-list">
                                             {folderTree.map(node => renderFolderItem(node))}
@@ -939,7 +1096,11 @@ function MailSection({
                                     </div>
                                 ) : (
                                     <div style={{ padding: '20px', color: '#999', fontSize: '13px', textAlign: 'center' }}>
-                                        {connecting ? 'Connecting...' : 'Waiting for connection...'}
+                                        {connecting
+                                            ? 'Connecting...'
+                                            : canUseRemoteMail
+                                                ? 'No mailboxes available.'
+                                                : 'No offline mailboxes cached yet.'}
                                     </div>
                                 )}
                             </div>
@@ -983,10 +1144,19 @@ function MailSection({
                                     <button
                                         type="button"
                                         className="db-mail-toolbar-btn"
-                                        onClick={() => loadMails(selectedFolder, currentPage, perPage)}
-                                        title="Refresh"
+                                        onClick={() => {
+                                            // Refresh: önce cache yükle, sonra remote senkronizasyon yap
+                                            loadMailsFromCache(selectedFolder, currentPage, perPage)
+                                                .then(() => {
+                                                    if (canUseRemoteMail && !isSyncing) {
+                                                        syncMailsFromRemote(selectedFolder, currentPage, perPage)
+                                                    }
+                                                })
+                                        }}
+                                        title={isSyncing ? 'Syncing...' : 'Refresh'}
+                                        disabled={isSyncing}
                                     >
-                                        🔄
+                                        {isSyncing ? '⟳' : '🔄'}
                                     </button>
                                     <button
                                         type="button"
@@ -1115,10 +1285,16 @@ function MailSection({
                                         </>
                                     )}
                                 </div>
-                                {!connected ? (
+                                {!hasMailSource ? (
                                     <div className="db-empty-state">
                                         <div className="db-empty-icon">📭</div>
-                                        <div className="db-empty-text">{connecting ? 'Connecting...' : 'Waiting for connection...'}</div>
+                                        <div className="db-empty-text">
+                                            {connecting
+                                                ? 'Connecting...'
+                                                : canUseRemoteMail
+                                                    ? 'No messages available.'
+                                                    : 'No offline cache available for this account yet.'}
+                                        </div>
                                     </div>
                                 ) : loadingMails ? (
                                     <div className="db-loading"><div className="db-spinner" />Loading...</div>
@@ -1128,7 +1304,7 @@ function MailSection({
                                         <div className="db-empty-text">This folder is empty</div>
                                     </div>
                                 ) : (
-                                    <ul className="db-mail-list" data-cols={layoutCols}>
+                                    <ul className="db-mail-list" data-cols={displayCols}>
                                         {mails.map((mail) => (
                                             <li
                                                 key={mail.id}
@@ -1186,10 +1362,16 @@ function MailSection({
 
                         {!isMailFullscreen && (
                             <div className="db-right-panel">
-                                {!connected ? (
-                                    <div className="db-loading" style={{ paddingTop: 100 }}>
-                                        <div className="db-spinner" />
-                                        Connecting to IMAP Server...
+                                {!hasMailSource ? (
+                                    <div className="db-empty-state" style={{ paddingTop: 100 }}>
+                                        <div className="db-empty-icon">🕊️</div>
+                                        <div className="db-empty-text">
+                                            {connecting
+                                                ? 'Connecting...'
+                                                : canUseRemoteMail
+                                                    ? 'No messages loaded yet.'
+                                                    : 'Offline cache is not available yet.'}
+                                        </div>
                                     </div>
                                 ) : !selectedMail ? (
                                     <div className="db-empty-state">
@@ -1253,7 +1435,7 @@ function MailSection({
                                                                 </div>
                                                                 <a
                                                                     className="db-attachments__link"
-                                                                    href={attachmentUrl(accountId, mailContent.id, at.id, selectedFolder || 'INBOX', networkOnline && connected)}
+                                                                    href={attachmentUrl(accountId, mailContent.id, at.id, selectedFolder || 'INBOX', canUseRemoteMail)}
                                                                     download={at.filename}
                                                                 >
                                                                     Download

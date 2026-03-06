@@ -12,6 +12,7 @@ export function OfflineSyncProvider({ children }) {
   const [queueDepth, setQueueDepth] = useState(0)
   const [lastSyncAt, setLastSyncAt] = useState(null)
   const [lastError, setLastError] = useState(null)
+  const [transfer, setTransfer] = useState(null)
 
   useEffect(() => {
     const onOnline = () => setNetworkOnline(true)
@@ -39,10 +40,14 @@ export function OfflineSyncProvider({ children }) {
       setQueueDepth(Number(data.queue_depth || 0))
       setLastSyncAt(data.last_sync_at || null)
       setLastError(data.last_error || null)
+      setTransfer(data.transfer || null)
     } catch (err) {
       setBackendReachable(false)
+      setImapReachable(false)
+      setSmtpReachable(false)
       setSyncState('offline')
       setLastError(err?.message || 'Unable to reach backend')
+      setTransfer(null)
     }
   }, [])
 
@@ -69,16 +74,20 @@ export function OfflineSyncProvider({ children }) {
     return () => clearInterval(timer)
   }, [flushQueue, networkOnline, refreshStatus])
 
+  const remoteMailAvailable = backendReachable && imapReachable
+
   const value = useMemo(
     () => ({
       networkOnline,
       backendReachable,
       imapReachable,
       smtpReachable,
+      remoteMailAvailable,
       syncState,
       queueDepth,
       lastSyncAt,
       lastError,
+      transfer,
       refreshStatus,
       flushQueue,
     }),
@@ -87,10 +96,12 @@ export function OfflineSyncProvider({ children }) {
       backendReachable,
       imapReachable,
       smtpReachable,
+      remoteMailAvailable,
       syncState,
       queueDepth,
       lastSyncAt,
       lastError,
+      transfer,
       refreshStatus,
       flushQueue,
     ],
