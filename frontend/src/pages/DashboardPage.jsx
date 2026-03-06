@@ -113,10 +113,12 @@ const DashboardPage = () => {
 
     const [accountMenuOpen, setAccountMenuOpen] = useState(false)
     const [isMailFullscreen, setIsMailFullscreen] = useState(false)
+    const [isSyncing, setIsSyncing] = useState(false)
 
     const accountButtonRef = useRef(null)
     const accountMenuRef = useRef(null)
     const iframeRef = useRef(null)
+    const syncAbortRef = useRef(null)
     const nextMailWindowId = useRef(0)
     const canUseRemoteMail = backendReachable && remoteMailAvailable
 
@@ -225,9 +227,6 @@ const DashboardPage = () => {
             autoConnectAttempted.current = false
         }
     }, [backendReachable, networkOnline, connected])
-
-    const [isSyncing, setIsSyncing] = useState(false)
-    const syncAbortRef = useRef(null)
 
     const loadMailsFromCache = useCallback(async (folder, page = currentPage, limit = perPage) => {
         if (!accountId || !backendReachable) return
