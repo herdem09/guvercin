@@ -1,13 +1,17 @@
 use std::path::{Path, PathBuf};
+use std::{collections::HashMap, sync::Arc};
 
 use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
+use tokio::sync::Mutex;
 
 use crate::error::AppError;
+use crate::models::TransferSnapshot;
 
 #[derive(Clone)]
 pub struct AppState {
     pub general_pool: SqlitePool,
     pub databases_dir: PathBuf,
+    pub transfer_progress: Arc<Mutex<HashMap<i64, TransferSnapshot>>>,
 }
 
 impl AppState {
@@ -37,6 +41,7 @@ impl AppState {
         Ok(Self {
             general_pool,
             databases_dir,
+            transfer_progress: Arc::new(Mutex::new(HashMap::new())),
         })
     }
 }
@@ -277,6 +282,13 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
+
+    // Migration: keep a flag for whether we persist raw RFC822 (includes attachments) in the offline cache.
+    let _ = sqlx::query(
+        "ALTER TABLE offline_config ADD COLUMN cache_raw_rfc822 BOOLEAN NOT NULL DEFAULT 1",
+    )
+    .execute(pool)
+    .await;
 
     // offline queue for mutation sync
     sqlx::query(

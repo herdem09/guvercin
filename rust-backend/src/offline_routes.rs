@@ -18,12 +18,12 @@ use crate::{
     db::{self, AppState},
     error::AppError,
     imap_session::{self, ImapState},
-    mail_models::{MailContent, MailListResponse, MailPreview},
+    mail_models::{MailContent, MailListResponse, MailPreview, MailboxListResponse},
     mail_routes::MailAppState,
     models::{
         DownloadRuleInput, DownloadRuleRecord, InitialSyncPolicyInput, OfflineActionRequest,
         OfflineActionResponse, OfflineConfigResponse, OfflineSetupPayload, OfflineStatusResponse,
-        SyncNowResponse,
+        SyncNowResponse, TransferProgress, TransferSnapshot,
     },
 };
 
@@ -49,6 +49,7 @@ struct SyncPolicy {
     enabled: bool,
     mode: String,
     value: Option<i64>,
+    cache_raw_rfc822: bool,
 }
 
 fn default_inbox() -> String {
@@ -61,6 +62,77 @@ fn default_page() -> usize {
 
 fn default_per_page() -> usize {
     50
+}
+
+fn now_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+async fn set_transfer_receiving(
+    app_state: &Arc<AppState>,
+    account_id: i64,
+    progress: Option<TransferProgress>,
+) {
+    let mut map = app_state.transfer_progress.lock().await;
+    let entry = map.entry(account_id).or_insert(TransferSnapshot {
+        receiving: None,
+        sending: None,
+    });
+    entry.receiving = progress;
+}
+
+async fn set_transfer_sending(
+    app_state: &Arc<AppState>,
+    account_id: i64,
+    progress: Option<TransferProgress>,
+) {
+    let mut map = app_state.transfer_progress.lock().await;
+    let entry = map.entry(account_id).or_insert(TransferSnapshot {
+        receiving: None,
+        sending: None,
+    });
+    entry.sending = progress;
+}
+
+async fn get_transfer_snapshot(app_state: &Arc<AppState>, account_id: i64) -> Option<TransferSnapshot> {
+    let map = app_state.transfer_progress.lock().await;
+    map.get(&account_id).cloned()
+}
+
+pub async fn get_local_mailboxes(
+    State(state): State<Arc<MailAppState>>,
+    Path(account_id): Path<i64>,
+) -> Result<Json<MailboxListResponse>, AppError> {
+    let pool = db::get_user_db_pool(&state._db, account_id).await?;
+
+    let mut mailboxes = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT path_by_name
+        FROM folders
+        WHERE is_visible = 1
+        ORDER BY CASE WHEN UPPER(path_by_name) = 'INBOX' THEN 0 ELSE 1 END, path_by_name ASC
+        "#,
+    )
+    .fetch_all(&pool)
+    .await?;
+
+    if mailboxes.is_empty() {
+        mailboxes = sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT DISTINCT folder
+            FROM local_mail_cache
+            ORDER BY CASE WHEN UPPER(folder) = 'INBOX' THEN 0 ELSE 1 END, folder ASC
+            "#,
+        )
+        .fetch_all(&pool)
+        .await?;
+    }
+
+    Ok(Json(MailboxListResponse { mailboxes }))
 }
 
 pub async fn get_local_mail_list(
@@ -218,21 +290,22 @@ pub async fn download_local_attachment(
         Err(e) => return e.into_response(),
     };
 
-    let row = match sqlx::query("SELECT raw_rfc822 FROM local_mail_cache WHERE uid = ? AND folder = ?")
-        .bind(&uid)
-        .bind(&q.mailbox)
-        .fetch_optional(&pool)
-        .await
-    {
-        Ok(row) => row,
-        Err(e) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": format!("DB error: {e}")})),
-            )
-                .into_response()
-        }
-    };
+    let row =
+        match sqlx::query("SELECT raw_rfc822 FROM local_mail_cache WHERE uid = ? AND folder = ?")
+            .bind(&uid)
+            .bind(&q.mailbox)
+            .fetch_optional(&pool)
+            .await
+        {
+            Ok(row) => row,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": format!("DB error: {e}")})),
+                )
+                    .into_response()
+            }
+        };
 
     let Some(row) = row else {
         return (
@@ -298,6 +371,7 @@ pub async fn save_offline_setup(
             mode: "all".to_string(),
             value: None,
         },
+        cache_raw_rfc822: true,
     });
 
     let pool = db::get_user_db_pool(app_state, account_id).await?;
@@ -305,18 +379,20 @@ pub async fn save_offline_setup(
 
     sqlx::query(
         r#"
-        INSERT INTO offline_config (id, enabled, initial_sync_mode, initial_sync_value, updated_at)
-        VALUES (1, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO offline_config (id, enabled, initial_sync_mode, initial_sync_value, cache_raw_rfc822, updated_at)
+        VALUES (1, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(id) DO UPDATE SET
             enabled = excluded.enabled,
             initial_sync_mode = excluded.initial_sync_mode,
             initial_sync_value = excluded.initial_sync_value,
+            cache_raw_rfc822 = excluded.cache_raw_rfc822,
             updated_at = CURRENT_TIMESTAMP
         "#,
     )
     .bind(setup.enabled as i64)
     .bind(&setup.initial_sync_policy.mode)
     .bind(setup.initial_sync_policy.value)
+    .bind(setup.cache_raw_rfc822 as i64)
     .execute(&mut *tx)
     .await?;
 
@@ -351,12 +427,12 @@ pub async fn get_offline_config(
 ) -> Result<Json<OfflineConfigResponse>, AppError> {
     let pool = db::get_user_db_pool(&state._db, account_id).await?;
     let row = sqlx::query(
-        "SELECT enabled, initial_sync_mode, initial_sync_value FROM offline_config WHERE id = 1",
+        "SELECT enabled, initial_sync_mode, initial_sync_value, cache_raw_rfc822 FROM offline_config WHERE id = 1",
     )
     .fetch_optional(&pool)
     .await?;
 
-    let (enabled, mode, value) = if let Some(r) = row {
+    let (enabled, mode, value, cache_raw_rfc822) = if let Some(r) = row {
         (
             r.try_get::<Option<i64>, _>("enabled")
                 .ok()
@@ -370,9 +446,14 @@ pub async fn get_offline_config(
             r.try_get::<Option<i64>, _>("initial_sync_value")
                 .ok()
                 .flatten(),
+            r.try_get::<Option<i64>, _>("cache_raw_rfc822")
+                .ok()
+                .flatten()
+                .unwrap_or(1)
+                != 0,
         )
     } else {
-        (true, "all".to_string(), None)
+        (true, "all".to_string(), None, true)
     };
 
     let rules = sqlx::query_as::<_, DownloadRuleRecord>(
@@ -390,6 +471,7 @@ pub async fn get_offline_config(
         enabled,
         initial_sync_policy: InitialSyncPolicyInput { mode, value },
         download_rules: rules,
+        cache_raw_rfc822,
     }))
 }
 
@@ -474,6 +556,7 @@ pub async fn get_offline_status(
         sync_state,
         last_sync_at,
         last_error,
+        transfer: get_transfer_snapshot(&state._db, account_id).await,
     }))
 }
 
@@ -488,6 +571,8 @@ pub async fn post_offline_action(
         .as_ref()
         .map(|p| p.to_string())
         .unwrap_or_else(|| "{}".to_string());
+    let payload_value = payload.payload.clone().unwrap_or_else(|| json!({}));
+    let mut tx = pool.begin().await?;
 
     if payload.action_type == "send" {
         let from_addr = payload
@@ -528,7 +613,7 @@ pub async fn post_offline_action(
         .bind(to_addrs)
         .bind(subject)
         .bind(body_text)
-        .execute(&pool)
+        .execute(&mut *tx)
         .await?;
     }
 
@@ -538,11 +623,22 @@ pub async fn post_offline_action(
         VALUES (?, ?, ?, ?, 'pending', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         "#,
     )
-    .bind(payload.action_type)
-    .bind(payload.target_uid)
-    .bind(payload.target_folder)
+    .bind(&payload.action_type)
+    .bind(&payload.target_uid)
+    .bind(&payload.target_folder)
     .bind(payload_json)
-    .execute(&pool)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
+
+    apply_local_action_side_effects(
+        &pool,
+        &payload.action_type,
+        payload.target_uid.as_deref(),
+        payload.target_folder.as_deref(),
+        &payload_value,
+    )
     .await?;
 
     Ok(Json(OfflineActionResponse {
@@ -600,6 +696,25 @@ pub async fn process_queue_once(
 
     let mut processed = 0usize;
     let mut failed = 0usize;
+
+    let sending_total = rows.len() as i64;
+    if sending_total > 0 {
+        set_transfer_sending(
+            &state._db,
+            account_id,
+            Some(TransferProgress {
+                direction: "sending".to_string(),
+                resource: "queue".to_string(),
+                mailbox: None,
+                total: Some(sending_total),
+                done: 0,
+                remaining: Some(sending_total),
+                detail: Some("offline actions".to_string()),
+                updated_at_ms: now_ms(),
+            }),
+        )
+        .await;
+    }
 
     for row in rows {
         let id = row.try_get::<i64, _>("id").unwrap_or_default();
@@ -664,7 +779,7 @@ pub async fn process_queue_once(
                     .unwrap_or_default();
                 imap_session::set_label(&state.imap, account_id, &target_uid, label, false)
             }
-            "send" => Ok(()),
+            "send" => Err("Queued send is not implemented on the backend yet".to_string()),
             _ => Err(format!("Unsupported action type: {action_type}")),
         };
 
@@ -707,8 +822,26 @@ pub async fn process_queue_once(
                 .await;
             }
         }
+
+        let done = (processed + failed) as i64;
+        set_transfer_sending(
+            &state._db,
+            account_id,
+            Some(TransferProgress {
+                direction: "sending".to_string(),
+                resource: "queue".to_string(),
+                mailbox: None,
+                total: Some(sending_total),
+                done,
+                remaining: Some((sending_total - done).max(0)),
+                detail: Some(action_type.clone()),
+                updated_at_ms: now_ms(),
+            }),
+        )
+        .await;
     }
 
+    set_transfer_sending(&state._db, account_id, None).await;
     Ok((processed, failed))
 }
 
@@ -842,9 +975,11 @@ async fn sync_cached_mailboxes(
         }
 
         upsert_folder_metadata(&user_pool, &mailbox).await?;
-        sync_single_mailbox(&user_pool, imap_state, account_id, &mailbox, &policy).await?;
+        sync_single_mailbox(app_state, &user_pool, imap_state, account_id, &mailbox, &policy)
+            .await?;
     }
 
+    set_transfer_receiving(app_state, account_id, None).await;
     Ok(())
 }
 
@@ -873,14 +1008,19 @@ async fn load_sync_rules_and_policy(
     }
 
     let row = sqlx::query(
-        "SELECT enabled, initial_sync_mode, initial_sync_value FROM offline_config WHERE id = 1",
+        "SELECT enabled, initial_sync_mode, initial_sync_value, cache_raw_rfc822 FROM offline_config WHERE id = 1",
     )
     .fetch_optional(pool)
     .await?;
 
     let policy = if let Some(r) = row {
         SyncPolicy {
-            enabled: r.try_get::<Option<i64>, _>("enabled").ok().flatten().unwrap_or(1) != 0,
+            enabled: r
+                .try_get::<Option<i64>, _>("enabled")
+                .ok()
+                .flatten()
+                .unwrap_or(1)
+                != 0,
             mode: r
                 .try_get::<Option<String>, _>("initial_sync_mode")
                 .ok()
@@ -890,12 +1030,19 @@ async fn load_sync_rules_and_policy(
                 .try_get::<Option<i64>, _>("initial_sync_value")
                 .ok()
                 .flatten(),
+            cache_raw_rfc822: r
+                .try_get::<Option<i64>, _>("cache_raw_rfc822")
+                .ok()
+                .flatten()
+                .unwrap_or(1)
+                != 0,
         }
     } else {
         SyncPolicy {
             enabled: true,
             mode: "all".to_string(),
             value: None,
+            cache_raw_rfc822: true,
         }
     };
 
@@ -903,11 +1050,70 @@ async fn load_sync_rules_and_policy(
 }
 
 fn mailbox_is_selected(mailbox: &str, includes: &[String], excludes: &[String]) -> bool {
-    let included = includes.iter().any(|path| {
-        path == "*" || mailbox == path || mailbox.starts_with(&format!("{path}/"))
-    });
+    let included = includes
+        .iter()
+        .any(|path| path == "*" || mailbox == path || mailbox.starts_with(&format!("{path}/")));
     let excluded = excludes.iter().any(|path| mailbox == path);
     included && !excluded
+}
+
+async fn apply_local_action_side_effects(
+    pool: &SqlitePool,
+    action_type: &str,
+    target_uid: Option<&str>,
+    target_folder: Option<&str>,
+    payload: &serde_json::Value,
+) -> Result<(), AppError> {
+    let Some(uid) = target_uid.filter(|value| !value.is_empty()) else {
+        return Ok(());
+    };
+    let folder = target_folder.unwrap_or("INBOX");
+
+    match action_type {
+        "mark_read" => {
+            sqlx::query(
+                "UPDATE local_mail_cache SET seen = 1, updated_at = CURRENT_TIMESTAMP WHERE uid = ? AND folder = ?",
+            )
+            .bind(uid)
+            .bind(folder)
+            .execute(pool)
+            .await?;
+        }
+        "mark_unread" => {
+            sqlx::query(
+                "UPDATE local_mail_cache SET seen = 0, updated_at = CURRENT_TIMESTAMP WHERE uid = ? AND folder = ?",
+            )
+            .bind(uid)
+            .bind(folder)
+            .execute(pool)
+            .await?;
+        }
+        "delete" => {
+            sqlx::query("DELETE FROM local_mail_cache WHERE uid = ? AND folder = ?")
+                .bind(uid)
+                .bind(folder)
+                .execute(pool)
+                .await?;
+        }
+        "move" => {
+            let destination = payload
+                .get("destination")
+                .and_then(|value| value.as_str())
+                .unwrap_or(folder);
+            upsert_folder_metadata(pool, destination).await?;
+            sqlx::query(
+                "UPDATE local_mail_cache SET folder = ?, updated_at = CURRENT_TIMESTAMP WHERE uid = ? AND folder = ?",
+            )
+            .bind(destination)
+            .bind(uid)
+            .bind(folder)
+            .execute(pool)
+            .await?;
+        }
+        _ => {}
+    }
+
+    Ok(())
 }
 
 async fn upsert_folder_metadata(pool: &SqlitePool, mailbox: &str) -> Result<(), AppError> {
@@ -939,6 +1145,7 @@ async fn upsert_folder_metadata(pool: &SqlitePool, mailbox: &str) -> Result<(), 
 }
 
 async fn sync_single_mailbox(
+    app_state: &Arc<AppState>,
     pool: &SqlitePool,
     imap_state: &Arc<ImapState>,
     account_id: i64,
@@ -968,6 +1175,31 @@ async fn sync_single_mailbox(
             break;
         }
 
+        // Update UI progress (best-effort).
+        let progress_total: Option<i64> = if policy.mode == "by_count" {
+            limit.map(|v| v as i64)
+        } else if policy.mode == "all" {
+            Some(total as i64)
+        } else {
+            None
+        };
+        let progress_remaining: Option<i64> = progress_total.map(|t| (t - synced_count as i64).max(0));
+        set_transfer_receiving(
+            app_state,
+            account_id,
+            Some(TransferProgress {
+                direction: "receiving".to_string(),
+                resource: "emails".to_string(),
+                mailbox: Some(mailbox.to_string()),
+                total: progress_total,
+                done: synced_count as i64,
+                remaining: progress_remaining,
+                detail: Some("syncing mailbox".to_string()),
+                updated_at_ms: now_ms(),
+            }),
+        )
+        .await;
+
         let mut reached_policy_end = false;
         for mail in mails {
             if limit.is_some_and(|max_count| synced_count >= max_count) {
@@ -983,8 +1215,34 @@ async fn sync_single_mailbox(
             }
 
             cache_mail_preview(pool, mailbox, &mail).await?;
-            cache_mail_body(pool, imap_state, account_id, mailbox, &mail.id).await?;
+            cache_mail_body(
+                pool,
+                imap_state,
+                account_id,
+                mailbox,
+                &mail.id,
+                policy.cache_raw_rfc822,
+            )
+            .await?;
             synced_count += 1;
+
+            let progress_remaining: Option<i64> =
+                progress_total.map(|t| (t - synced_count as i64).max(0));
+            set_transfer_receiving(
+                app_state,
+                account_id,
+                Some(TransferProgress {
+                    direction: "receiving".to_string(),
+                    resource: "emails".to_string(),
+                    mailbox: Some(mailbox.to_string()),
+                    total: progress_total,
+                    done: synced_count as i64,
+                    remaining: progress_remaining,
+                    detail: Some("downloading emails".to_string()),
+                    updated_at_ms: now_ms(),
+                }),
+            )
+            .await;
         }
 
         if reached_policy_end || page * per_page >= total {
@@ -1047,6 +1305,40 @@ async fn cache_mail_preview(
     .execute(pool)
     .await?;
 
+    // Also store into the legacy `emails` table (account_id.db) so downloads are visible there.
+    // This table isn't currently used by the API, but users may inspect it directly.
+    if let Ok(server_uid) = mail.id.parse::<i64>() {
+        let folder_id: i64 = sqlx::query_scalar("SELECT folder_id FROM folders WHERE path_by_name = ?")
+            .bind(mailbox)
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or(0);
+
+        if folder_id > 0 {
+            let _ = sqlx::query(
+                r#"
+                INSERT INTO emails (server_uid, uid_validity, message_id, in_reply_to, sender_from, recipient_to, recipient_cc, recipient_bcc, subject, date_sent, attach_amount, is_read, folder_id, sync_status)
+                VALUES (?, 0, NULL, NULL, ?, '', NULL, NULL, ?, ?, NULL, ?, ?, 1)
+                ON CONFLICT(server_uid) DO UPDATE SET
+                    sender_from = excluded.sender_from,
+                    subject = excluded.subject,
+                    date_sent = excluded.date_sent,
+                    is_read = excluded.is_read,
+                    folder_id = excluded.folder_id,
+                    sync_status = excluded.sync_status
+                "#,
+            )
+            .bind(server_uid)
+            .bind(&mail.address)
+            .bind(&mail.subject)
+            .bind(&mail.date)
+            .bind(mail.seen as i64)
+            .bind(folder_id)
+            .execute(pool)
+            .await;
+        }
+    }
+
     Ok(())
 }
 
@@ -1056,6 +1348,7 @@ async fn cache_mail_body(
     account_id: i64,
     mailbox: &str,
     uid: &str,
+    cache_raw_rfc822: bool,
 ) -> Result<(), AppError> {
     let raw = tokio::task::spawn_blocking({
         let imap_state = imap_state.clone();
@@ -1082,11 +1375,34 @@ async fn cache_mail_body(
     .bind(&content.plain_body)
     .bind(&content.html_body)
     .bind(&content.date)
-    .bind(raw)
+    .bind(if cache_raw_rfc822 { Some(raw) } else { None })
     .bind(uid)
     .bind(mailbox)
     .execute(pool)
     .await?;
+
+    // Mirror into `emails` table (best-effort).
+    if let Ok(server_uid) = uid.parse::<i64>() {
+        let attach_amount = if cache_raw_rfc822 {
+            content.attachments.len() as i64
+        } else {
+            0
+        };
+        let _ = sqlx::query(
+            r#"
+            UPDATE emails
+            SET body_text = ?, body_html = ?, attach_amount = ?, date_sent = ?, sync_status = 1
+            WHERE server_uid = ?
+            "#,
+        )
+        .bind(&content.plain_body)
+        .bind(&content.html_body)
+        .bind(attach_amount)
+        .bind(&content.date)
+        .bind(server_uid)
+        .execute(pool)
+        .await;
+    }
 
     Ok(())
 }
