@@ -4,6 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use chrono::DateTime;
 use imap;
 use native_tls::TlsConnector;
 use tracing::{error, info, warn};
@@ -127,8 +128,8 @@ impl ImapSession {
 
     fn fetch_mail_raw(&mut self, uid: &str) -> Option<Vec<u8>> {
         let data = match self {
-            ImapSession::Plain(s) => s.uid_fetch(uid, "BODY[]"),
-            ImapSession::Tls(s) => s.uid_fetch(uid, "BODY[]"),
+            ImapSession::Plain(s) => s.uid_fetch(uid, "BODY.PEEK[]"),
+            ImapSession::Tls(s) => s.uid_fetch(uid, "BODY.PEEK[]"),
         };
         let fetches = data.ok()?;
         let msg = fetches.iter().next()?;
@@ -184,6 +185,86 @@ impl ImapSession {
             ImapSession::Tls(s) => s.expunge(),
         };
         expunge.map(|_| ()).map_err(|e| format!("{e}"))
+    }
+
+    /// UID SEARCH UID <since_uid>:* — returns UIDs of messages we haven't seen yet.
+    fn search_new_uids(&mut self, since_uid: u32) -> Vec<u32> {
+        let query = format!("UID {}:*", since_uid + 1);
+        let result = match self {
+            ImapSession::Plain(s) => s.uid_search(&query),
+            ImapSession::Tls(s) => s.uid_search(&query),
+        };
+        match result {
+            Ok(set) => {
+                let mut v: Vec<u32> = set.into_iter().collect();
+                v.sort_unstable();
+                v
+            }
+            Err(e) => {
+                warn!("UID SEARCH error: {e}");
+                vec![]
+            }
+        }
+    }
+
+    /// Fetch headers for an explicit comma-separated UID set (e.g. "101,102,103").
+    fn fetch_headers_by_uid_set(&mut self, uid_set: &str, account_id: i64, mailbox: &str) -> Vec<MailPreview> {
+        let data = match self {
+            ImapSession::Plain(s) => s.uid_fetch(
+                uid_set,
+                "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] FLAGS UID)",
+            ),
+            ImapSession::Tls(s) => s.uid_fetch(
+                uid_set,
+                "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] FLAGS UID)",
+            ),
+        };
+
+        let fetches = match data {
+            Ok(f) => f,
+            Err(e) => {
+                warn!("uid_fetch error: {e}");
+                return vec![];
+            }
+        };
+
+        let mut previews = Vec::new();
+        for msg in fetches.iter() {
+            let uid = if let Some(uid) = msg.uid {
+                uid.to_string()
+            } else {
+                warn!(
+                    "uid_fetch returned message without UID (account_id={}, mailbox={}, uid_set={}, seq={})",
+                    account_id,
+                    mailbox,
+                    uid_set,
+                    msg.message
+                );
+                msg.message.to_string()
+            };
+            let seen = msg
+                .flags()
+                .iter()
+                .any(|f| matches!(f, imap::types::Flag::Seen));
+
+            if let Some(header_bytes) = msg.header() {
+                let header_str = String::from_utf8_lossy(header_bytes);
+                let subject = parse_header(&header_str, "Subject");
+                let from_raw = parse_header(&header_str, "From");
+                let date = parse_header(&header_str, "Date");
+                let (name, address) = split_from(&from_raw);
+
+                previews.push(MailPreview {
+                    id: uid,
+                    name,
+                    address,
+                    subject,
+                    date,
+                    seen,
+                });
+            }
+        }
+        previews
     }
 }
 
@@ -298,7 +379,23 @@ pub fn fetch_mail_list(
     let sequence = format!("{lo}:{hi}");
 
     let mut previews = session.fetch_headers(&sequence);
-    previews.reverse(); // newest first
+
+    fn date_ms(date_value: &str) -> i64 {
+        DateTime::parse_from_rfc2822(date_value)
+            .map(|dt| dt.timestamp_millis())
+            .unwrap_or(0)
+    }
+    fn uid_num(id: &str) -> u32 {
+        id.parse::<u32>().unwrap_or(0)
+    }
+
+    // Sort newest-first by sent date. Tie-break by UID (if available).
+    previews.sort_by(|a, b| {
+        date_ms(&b.date)
+            .cmp(&date_ms(&a.date))
+            .then_with(|| uid_num(&b.id).cmp(&uid_num(&a.id)))
+            .then_with(|| b.id.cmp(&a.id))
+    });
     (total, previews)
 }
 
@@ -312,6 +409,61 @@ pub fn fetch_mail_raw_in_mailbox(
     let session = sessions.get_mut(&account_id)?;
     session.select_mailbox(mailbox).ok()?;
     session.fetch_mail_raw(uid)
+}
+
+/// Return UIDs of messages with UID > since_uid in the given mailbox.
+/// Returns (total_count, new_uids). total_count is the current EXISTS count.
+pub fn fetch_new_uids_since(
+    state: &Arc<ImapState>,
+    account_id: i64,
+    mailbox: &str,
+    since_uid: u32,
+) -> (usize, Vec<u32>) {
+    let mut sessions = state.sessions.lock().unwrap();
+    let session = match sessions.get_mut(&account_id) {
+        Some(s) => s,
+        None => {
+            warn!("No IMAP session for account {account_id}");
+            return (0, vec![]);
+        }
+    };
+
+    let total = match session.select_mailbox(mailbox) {
+        Ok(n) => n as usize,
+        Err(e) => {
+            error!("select_mailbox {mailbox}: {e}");
+            return (0, vec![]);
+        }
+    };
+
+    if total == 0 {
+        return (0, vec![]);
+    }
+
+    let new_uids = session.search_new_uids(since_uid);
+    (total, new_uids)
+}
+
+/// Fetch mail previews (headers) for a specific list of UIDs.
+pub fn fetch_headers_for_uids(
+    state: &Arc<ImapState>,
+    account_id: i64,
+    mailbox: &str,
+    uids: &[u32],
+) -> Vec<MailPreview> {
+    if uids.is_empty() {
+        return vec![];
+    }
+    let mut sessions = state.sessions.lock().unwrap();
+    let session = match sessions.get_mut(&account_id) {
+        Some(s) => s,
+        None => return vec![],
+    };
+    // Select mailbox (already selected from fetch_new_uids_since, but be safe)
+    let _ = session.select_mailbox(mailbox);
+    // Build UID set string e.g. "101,102,103"
+    let uid_set: String = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
+    session.fetch_headers_by_uid_set(&uid_set, account_id, mailbox)
 }
 
 pub fn parse_mail_content(uid: String, raw: &[u8]) -> MailContent {

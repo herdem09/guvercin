@@ -685,7 +685,7 @@ body.resizing * {
   padding: 0 8px 0 0;
   flex-shrink: 0;
   flex-wrap: nowrap;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .db-mail-toolbar-section {
@@ -842,7 +842,7 @@ body.resizing * {
   border-radius: 4px;
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
   margin-top: 4px;
-  z-index: 1000;
+  z-index: 5000;
   max-height: 200px;
   overflow-y: auto;
 }
@@ -866,7 +866,7 @@ body.resizing * {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  overflow: hidden;
+  overflow: visible;
   min-width: var(--db-list-min, 380px);
 }
 
@@ -1059,6 +1059,15 @@ body.resizing * {
   font-weight: 600;
   border-left-color: #FFCB08;
   border-right-color: #FFCB08;
+  background: #FFF2A8;
+  box-shadow: inset 0 0 0 1px rgba(255, 203, 8, 0.9);
+}
+
+.db-mail-item.unread .db-mail-sender::before {
+  content: "●";
+  display: inline-block;
+  margin-right: 6px;
+  color: #b88700;
 }
 
 .db-mail-item.selected {
@@ -1120,6 +1129,11 @@ body.resizing * {
   color: #222;
   margin-bottom: 10px;
   flex-shrink: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .db-mail-content-header .db-mail-content-subject {

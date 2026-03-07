@@ -7,6 +7,7 @@ use axum::{
     },
     response::{IntoResponse, Response},
 };
+use chrono::DateTime;
 use serde::Deserialize;
 use serde_json::json;
 use sqlx::Row;
@@ -188,15 +189,19 @@ pub async fn get_mail_list(
 
     if let Ok(pool) = crate::db::get_user_db_pool(&state._db, account_id).await {
         for mail in &mails {
+            let date_ms: i64 = DateTime::parse_from_rfc2822(&mail.date)
+                .map(|dt| dt.timestamp_millis())
+                .unwrap_or(0);
             let _ = sqlx::query(
                 r#"
-                INSERT INTO local_mail_cache (uid, folder, sender_name, sender_address, subject, date_value, seen, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO local_mail_cache (uid, folder, sender_name, sender_address, subject, date_value, date_ms, seen, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(uid, folder) DO UPDATE SET
                     sender_name = excluded.sender_name,
                     sender_address = excluded.sender_address,
                     subject = excluded.subject,
                     date_value = excluded.date_value,
+                    date_ms = excluded.date_ms,
                     seen = excluded.seen,
                     updated_at = CURRENT_TIMESTAMP
                 "#,
@@ -207,6 +212,7 @@ pub async fn get_mail_list(
             .bind(&mail.address)
             .bind(&mail.subject)
             .bind(&mail.date)
+            .bind(date_ms)
             .bind(mail.seen as i64)
             .execute(&pool)
             .await;
@@ -241,16 +247,20 @@ pub async fn get_mail_content(
     if let Some(raw_bytes) = raw {
         let content = imap_session::parse_mail_content(uid_for_response, &raw_bytes);
         if let Ok(pool) = crate::db::get_user_db_pool(&state._db, account_id).await {
+            let date_ms: i64 = DateTime::parse_from_rfc2822(&content.date)
+                .map(|dt| dt.timestamp_millis())
+                .unwrap_or(0);
             let _ = sqlx::query(
                 r#"
                 UPDATE local_mail_cache
-                SET plain_body = ?, html_body = ?, date_value = ?, raw_rfc822 = ?, updated_at = CURRENT_TIMESTAMP
+                SET plain_body = ?, html_body = ?, date_value = ?, date_ms = ?, raw_rfc822 = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE uid = ? AND folder = ?
                 "#,
             )
             .bind(&content.plain_body)
             .bind(&content.html_body)
             .bind(&content.date)
+            .bind(date_ms)
             .bind(raw_bytes)
             .bind(&content.id)
             .bind(&q.mailbox)
