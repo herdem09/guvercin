@@ -215,7 +215,7 @@ pub async fn get_local_mail_content(
 
     let row = sqlx::query(
         r#"
-        SELECT uid, subject, sender_name, sender_address, date_value, plain_body, html_body, raw_rfc822
+        SELECT uid, subject, sender_name, sender_address, date_value, cc_value, bcc_value, plain_body, html_body, raw_rfc822
         FROM local_mail_cache
         WHERE uid = ? AND folder = ?
         "#,
@@ -266,6 +266,16 @@ pub async fn get_local_mail_content(
                     .unwrap_or_default(),
                 from_address: r
                     .try_get::<Option<String>, _>("sender_address")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                cc: r
+                    .try_get::<Option<String>, _>("cc_value")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                bcc: r
+                    .try_get::<Option<String>, _>("bcc_value")
                     .ok()
                     .flatten()
                     .unwrap_or_default(),
@@ -707,6 +717,18 @@ pub async fn post_offline_action(
             .and_then(|p| p.get("to"))
             .map(|v| v.to_string())
             .unwrap_or_else(|| "[]".to_string());
+        let cc_addrs = payload
+            .payload
+            .as_ref()
+            .and_then(|p| p.get("cc"))
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "[]".to_string());
+        let bcc_addrs = payload
+            .payload
+            .as_ref()
+            .and_then(|p| p.get("bcc"))
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "[]".to_string());
         let subject = payload
             .payload
             .as_ref()
@@ -724,12 +746,14 @@ pub async fn post_offline_action(
 
         sqlx::query(
             r#"
-            INSERT INTO outbox_mails (from_addr, to_addrs, subject, body_text, status)
-            VALUES (?, ?, ?, ?, 'pending')
+            INSERT INTO outbox_mails (from_addr, to_addrs, cc_addrs, bcc_addrs, subject, body_text, status)
+            VALUES (?, ?, ?, ?, ?, ?, 'pending')
             "#,
         )
         .bind(from_addr)
         .bind(to_addrs)
+        .bind(cc_addrs)
+        .bind(bcc_addrs)
         .bind(subject)
         .bind(body_text)
         .execute(&mut *tx)
@@ -1910,7 +1934,7 @@ async fn cache_mail_body(
     sqlx::query(
         r#"
         UPDATE local_mail_cache
-        SET plain_body = ?, html_body = ?, date_value = ?, date_ms = ?, raw_rfc822 = ?, updated_at = CURRENT_TIMESTAMP
+        SET plain_body = ?, html_body = ?, date_value = ?, date_ms = ?, cc_value = ?, bcc_value = ?, raw_rfc822 = ?, updated_at = CURRENT_TIMESTAMP
         WHERE uid = ? AND folder = ?
         "#,
     )
@@ -1918,6 +1942,8 @@ async fn cache_mail_body(
     .bind(&rewritten_html)
     .bind(&content.date)
     .bind(date_ms)
+    .bind(&content.cc)
+    .bind(&content.bcc)
     .bind(if cache_raw_rfc822 { Some(raw) } else { None })
     .bind(uid)
     .bind(mailbox)

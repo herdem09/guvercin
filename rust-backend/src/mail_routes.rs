@@ -253,7 +253,7 @@ pub async fn get_mail_content(
             let _ = sqlx::query(
                 r#"
                 UPDATE local_mail_cache
-                SET plain_body = ?, html_body = ?, date_value = ?, date_ms = ?, raw_rfc822 = ?, updated_at = CURRENT_TIMESTAMP
+                SET plain_body = ?, html_body = ?, date_value = ?, date_ms = ?, cc_value = ?, bcc_value = ?, raw_rfc822 = ?, updated_at = CURRENT_TIMESTAMP
                 WHERE uid = ? AND folder = ?
                 "#,
             )
@@ -261,6 +261,8 @@ pub async fn get_mail_content(
             .bind(&content.html_body)
             .bind(&content.date)
             .bind(date_ms)
+            .bind(&content.cc)
+            .bind(&content.bcc)
             .bind(raw_bytes)
             .bind(&content.id)
             .bind(&q.mailbox)

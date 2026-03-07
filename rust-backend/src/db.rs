@@ -392,6 +392,8 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             seen BOOLEAN DEFAULT 0,
             date_value TEXT,
             date_ms INTEGER DEFAULT 0,
+            cc_value TEXT,
+            bcc_value TEXT,
             plain_body TEXT,
             html_body TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -408,6 +410,14 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .await;
 
     let _ = sqlx::query("ALTER TABLE local_mail_cache ADD COLUMN date_ms INTEGER DEFAULT 0")
+        .execute(pool)
+        .await;
+
+    let _ = sqlx::query("ALTER TABLE local_mail_cache ADD COLUMN cc_value TEXT")
+        .execute(pool)
+        .await;
+
+    let _ = sqlx::query("ALTER TABLE local_mail_cache ADD COLUMN bcc_value TEXT")
         .execute(pool)
         .await;
 
