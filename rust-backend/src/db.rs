@@ -391,6 +391,7 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             subject TEXT,
             seen BOOLEAN DEFAULT 0,
             date_value TEXT,
+            date_ms INTEGER DEFAULT 0,
             plain_body TEXT,
             html_body TEXT,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -405,6 +406,35 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let _ = sqlx::query("ALTER TABLE local_mail_cache ADD COLUMN raw_rfc822 BLOB")
         .execute(pool)
         .await;
+
+    let _ = sqlx::query("ALTER TABLE local_mail_cache ADD COLUMN date_ms INTEGER DEFAULT 0")
+        .execute(pool)
+        .await;
+
+    // cache for external inline assets referenced by HTML bodies (e.g. <img src="https://...">)
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS inline_asset_cache (
+            asset_id TEXT PRIMARY KEY,
+            url TEXT NOT NULL,
+            content_type TEXT NOT NULL,
+            body BLOB NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_inline_asset_cache_updated
+        ON inline_asset_cache(updated_at)
+        "#,
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }

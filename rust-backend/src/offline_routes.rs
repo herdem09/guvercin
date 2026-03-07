@@ -154,7 +154,7 @@ pub async fn get_local_mail_list(
         SELECT uid, sender_name, sender_address, subject, date_value, seen
         FROM local_mail_cache
         WHERE folder = ?
-        ORDER BY updated_at DESC
+        ORDER BY date_ms DESC, uid DESC
         LIMIT ? OFFSET ?
         "#,
     )
@@ -231,6 +231,27 @@ pub async fn get_local_mail_content(
                 return Json(imap_session::parse_mail_content(uid, &raw)).into_response();
             }
 
+            let html_body = r
+                .try_get::<Option<String>, _>("html_body")
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            let plain_body = r
+                .try_get::<Option<String>, _>("plain_body")
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+
+            // If we only cached the preview (headers) but not the body yet, treat it as a miss
+            // so the frontend can fall back to the remote endpoint when online.
+            if html_body.trim().is_empty() && plain_body.trim().is_empty() {
+                return (
+                    StatusCode::NOT_FOUND,
+                    Json(json!({"error":"Mail body not cached offline"})),
+                )
+                    .into_response();
+            }
+
             Json(MailContent {
                 id: r.try_get::<String, _>("uid").unwrap_or(uid),
                 subject: r
@@ -253,16 +274,8 @@ pub async fn get_local_mail_content(
                     .ok()
                     .flatten()
                     .unwrap_or_default(),
-                html_body: r
-                    .try_get::<Option<String>, _>("html_body")
-                    .ok()
-                    .flatten()
-                    .unwrap_or_default(),
-                plain_body: r
-                    .try_get::<Option<String>, _>("plain_body")
-                    .ok()
-                    .flatten()
-                    .unwrap_or_default(),
+                html_body,
+                plain_body,
                 attachments: vec![],
             })
             .into_response()
@@ -278,6 +291,70 @@ pub async fn get_local_mail_content(
         )
             .into_response(),
     }
+}
+
+#[derive(serde::Serialize)]
+struct InlinePrefetchResponse {
+    html_body: String,
+    cached_count: usize,
+}
+
+pub async fn prefetch_local_inline_assets(
+    State(state): State<Arc<MailAppState>>,
+    Path((account_id, uid)): Path<(i64, String)>,
+    Query(q): Query<LocalMailListQuery>,
+) -> impl IntoResponse {
+    let pool = match db::get_user_db_pool(&state._db, account_id).await {
+        Ok(p) => p,
+        Err(e) => return e.into_response(),
+    };
+
+    let row = sqlx::query("SELECT html_body FROM local_mail_cache WHERE uid = ? AND folder = ?")
+        .bind(&uid)
+        .bind(&q.mailbox)
+        .fetch_optional(&pool)
+        .await;
+
+    let Ok(Some(row)) = row else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error":"Mail not found in offline cache"})),
+        )
+            .into_response();
+    };
+
+    let html = row
+        .try_get::<Option<String>, _>("html_body")
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+    if html.is_empty() {
+        return Json(InlinePrefetchResponse {
+            html_body: html,
+            cached_count: 0,
+        })
+        .into_response();
+    }
+
+    let url_to_asset = cache_inline_assets_for_html(&pool, account_id, &html).await;
+    let rewritten = rewrite_html_inline_image_srcs(&html, account_id, &url_to_asset);
+
+    if rewritten != html {
+        let _ = sqlx::query(
+            "UPDATE local_mail_cache SET html_body = ?, updated_at = CURRENT_TIMESTAMP WHERE uid = ? AND folder = ?",
+        )
+        .bind(&rewritten)
+        .bind(&uid)
+        .bind(&q.mailbox)
+        .execute(&pool)
+        .await;
+    }
+
+    Json(InlinePrefetchResponse {
+        html_body: rewritten,
+        cached_count: url_to_asset.len(),
+    })
+    .into_response()
 }
 
 pub async fn download_local_attachment(
@@ -351,6 +428,48 @@ pub async fn download_local_attachment(
         StatusCode::NOT_FOUND,
         Json(json!({"error":"Attachment not found"})),
     )
+        .into_response()
+}
+
+pub async fn get_inline_asset(
+    State(state): State<Arc<MailAppState>>,
+    Path((account_id, asset_id)): Path<(i64, String)>,
+) -> impl IntoResponse {
+    let pool = match db::get_user_db_pool(&state._db, account_id).await {
+        Ok(p) => p,
+        Err(e) => return e.into_response(),
+    };
+
+    let row = match sqlx::query("SELECT content_type, body FROM inline_asset_cache WHERE asset_id = ?")
+        .bind(&asset_id)
+        .fetch_optional(&pool)
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => return AppError::from(e).into_response(),
+    };
+
+    let Some(row) = row else {
+        return (StatusCode::NOT_FOUND, Json(json!({"error":"Inline asset not cached"}))).into_response();
+    };
+
+    let content_type = row
+        .try_get::<String, _>("content_type")
+        .unwrap_or_else(|_| "application/octet-stream".to_string());
+    if !content_type.to_ascii_lowercase().starts_with("image/") {
+        return (StatusCode::NOT_FOUND, Json(json!({"error":"Unsupported inline asset type"}))).into_response();
+    }
+
+    let body: Vec<u8> = row
+        .try_get::<Vec<u8>, _>("body")
+        .unwrap_or_default();
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, content_type)
+        .header(CONTENT_LENGTH, body.len().to_string())
+        .body(Body::from(body))
+        .unwrap_or_else(|_| Response::builder().status(StatusCode::INTERNAL_SERVER_ERROR).body(Body::empty()).unwrap())
         .into_response()
 }
 
@@ -969,17 +1088,259 @@ async fn sync_cached_mailboxes(
     .await
     .unwrap_or_default();
 
-    for mailbox in mailbox_list {
-        if !mailbox_is_selected(&mailbox, &includes, &excludes) {
-            continue;
-        }
+    let selected_mailboxes: Vec<String> = mailbox_list
+        .into_iter()
+        .filter(|mailbox| mailbox_is_selected(mailbox, &includes, &excludes))
+        .collect();
 
-        upsert_folder_metadata(&user_pool, &mailbox).await?;
-        sync_single_mailbox(app_state, &user_pool, imap_state, account_id, &mailbox, &policy)
-            .await?;
+    for mailbox in &selected_mailboxes {
+        upsert_folder_metadata(&user_pool, mailbox).await?;
+    }
+
+    if policy.mode == "by_count" {
+        let n = policy
+            .value
+            .unwrap_or(0)
+            .max(0)
+            .try_into()
+            .unwrap_or(0usize);
+        if n > 0 && !selected_mailboxes.is_empty() {
+            let mut all_checkpoints_zero = true;
+            for mailbox in &selected_mailboxes {
+                let last_synced_uid: i64 = sqlx::query_scalar(
+                    "SELECT last_synced_uid FROM sync_checkpoints WHERE folder_path = ?",
+                )
+                .bind(mailbox)
+                .fetch_optional(&user_pool)
+                .await?
+                .unwrap_or(0);
+                if last_synced_uid > 0 {
+                    all_checkpoints_zero = false;
+                    break;
+                }
+            }
+
+            if all_checkpoints_zero {
+                initial_sync_global_by_count(
+                    app_state,
+                    &user_pool,
+                    imap_state,
+                    account_id,
+                    &selected_mailboxes,
+                    &policy,
+                    n,
+                )
+                .await?;
+                set_transfer_receiving(app_state, account_id, None).await;
+                return Ok(());
+            }
+        }
+    }
+
+    for mailbox in selected_mailboxes {
+        sync_single_mailbox(app_state, &user_pool, imap_state, account_id, &mailbox, &policy).await?;
     }
 
     set_transfer_receiving(app_state, account_id, None).await;
+    Ok(())
+}
+
+#[derive(Clone)]
+struct MailCandidate {
+    mailbox: String,
+    uid: u32,
+    date_ms: i64,
+}
+
+async fn initial_sync_global_by_count(
+    app_state: &Arc<AppState>,
+    pool: &SqlitePool,
+    imap_state: &Arc<ImapState>,
+    account_id: i64,
+    mailboxes: &[String],
+    policy: &SyncPolicy,
+    limit_total: usize,
+) -> Result<(), AppError> {
+    let candidate_per_page = limit_total.clamp(50, 200);
+    let max_pages = 5usize;
+
+    let mut totals_by_mailbox = std::collections::HashMap::<String, usize>::new();
+    let mut candidates: Vec<MailCandidate> = Vec::new();
+
+    for page in 1..=max_pages {
+        for mailbox in mailboxes {
+            let total = *totals_by_mailbox.get(mailbox).unwrap_or(&usize::MAX);
+            if total != usize::MAX && (page - 1) * candidate_per_page >= total {
+                continue;
+            }
+
+            let (total_count, previews) = tokio::task::spawn_blocking({
+                let imap_state = imap_state.clone();
+                let mailbox = mailbox.clone();
+                move || {
+                    imap_session::fetch_mail_list(
+                        &imap_state,
+                        account_id,
+                        &mailbox,
+                        page,
+                        candidate_per_page,
+                    )
+                }
+            })
+            .await
+            .unwrap_or_default();
+
+            totals_by_mailbox.insert(mailbox.clone(), total_count);
+
+            for p in previews {
+                let Ok(uid) = p.id.parse::<u32>() else {
+                    continue;
+                };
+                let date_ms = chrono::DateTime::parse_from_rfc2822(&p.date)
+                    .map(|dt| dt.timestamp_millis())
+                    .unwrap_or(0);
+                candidates.push(MailCandidate {
+                    mailbox: mailbox.clone(),
+                    uid,
+                    date_ms,
+                });
+            }
+        }
+
+        if candidates.len() >= limit_total {
+            break;
+        }
+    }
+
+    candidates.sort_by(|a, b| b.date_ms.cmp(&a.date_ms).then_with(|| b.uid.cmp(&a.uid)));
+    candidates.truncate(limit_total);
+
+    let mut uids_by_mailbox: std::collections::HashMap<String, Vec<u32>> = std::collections::HashMap::new();
+    for c in candidates {
+        uids_by_mailbox.entry(c.mailbox).or_default().push(c.uid);
+    }
+
+    for (mailbox, mut uids) in uids_by_mailbox {
+        uids.sort_unstable();
+        uids.dedup();
+        sync_specific_uids(
+            app_state,
+            pool,
+            imap_state,
+            account_id,
+            &mailbox,
+            &uids,
+            policy.cache_raw_rfc822,
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
+async fn sync_specific_uids(
+    app_state: &Arc<AppState>,
+    pool: &SqlitePool,
+    imap_state: &Arc<ImapState>,
+    account_id: i64,
+    mailbox: &str,
+    uids: &[u32],
+    cache_raw_rfc822: bool,
+) -> Result<(), AppError> {
+    if uids.is_empty() {
+        return Ok(());
+    }
+
+    let total_new = uids.len() as i64;
+    set_transfer_receiving(
+        app_state,
+        account_id,
+        Some(TransferProgress {
+            direction: "receiving".to_string(),
+            resource: "emails".to_string(),
+            mailbox: Some(mailbox.to_string()),
+            total: Some(total_new),
+            done: 0,
+            remaining: Some(total_new),
+            detail: Some(format!("{total_new} selected message(s)")),
+            updated_at_ms: now_ms(),
+        }),
+    )
+    .await;
+
+    let mut done = 0i64;
+    let mut max_uid_synced = 0u32;
+
+    for chunk in uids.chunks(50) {
+        let chunk_uids: Vec<u32> = chunk.to_vec();
+        let chunk_uids_for_fetch = chunk_uids.clone();
+        let mails = tokio::task::spawn_blocking({
+            let imap_state = imap_state.clone();
+            let mailbox = mailbox.to_string();
+            move || {
+                imap_session::fetch_headers_for_uids(
+                    &imap_state,
+                    account_id,
+                    &mailbox,
+                    &chunk_uids_for_fetch,
+                )
+            }
+        })
+        .await
+        .unwrap_or_default();
+
+        let aligned = align_previews_to_uids(&chunk_uids, &mails);
+        for (uid, mut mail) in aligned {
+            max_uid_synced = bump_max_uid_synced(max_uid_synced, uid);
+            let uid_str = uid.to_string();
+            mail.id = uid_str.clone();
+
+            cache_mail_preview(pool, mailbox, &mail).await?;
+            cache_mail_body_if_missing(
+                pool,
+                imap_state,
+                account_id,
+                mailbox,
+                &uid_str,
+                cache_raw_rfc822,
+            )
+            .await?;
+
+            done += 1;
+            set_transfer_receiving(
+                app_state,
+                account_id,
+                Some(TransferProgress {
+                    direction: "receiving".to_string(),
+                    resource: "emails".to_string(),
+                    mailbox: Some(mailbox.to_string()),
+                    total: Some(total_new),
+                    done,
+                    remaining: Some((total_new - done).max(0)),
+                    detail: Some("downloading emails".to_string()),
+                    updated_at_ms: now_ms(),
+                }),
+            )
+            .await;
+        }
+    }
+
+    if max_uid_synced > 0 {
+        let _ = sqlx::query(
+            r#"
+            INSERT INTO sync_checkpoints (folder_path, last_synced_uid, last_uid_validity, updated_at)
+            VALUES (?, ?, 0, CURRENT_TIMESTAMP)
+            ON CONFLICT(folder_path) DO UPDATE SET
+                last_synced_uid = excluded.last_synced_uid,
+                updated_at = CURRENT_TIMESTAMP
+            "#,
+        )
+        .bind(mailbox)
+        .bind(max_uid_synced as i64)
+        .execute(pool)
+        .await;
+    }
+
     Ok(())
 }
 
@@ -1152,82 +1513,122 @@ async fn sync_single_mailbox(
     mailbox: &str,
     policy: &SyncPolicy,
 ) -> Result<(), AppError> {
-    let sync_marker = Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
     let per_page = 50usize;
-    let mut page = 1usize;
-    let mut synced_count = 0usize;
     let cutoff = policy_cutoff(policy);
     let limit = policy
         .value
         .filter(|_| policy.mode == "by_count")
         .map(|value| value.max(0) as usize);
 
-    loop {
-        let (total, mails) = tokio::task::spawn_blocking({
+    // Read checkpoint: the highest UID we last fully synced.
+    let last_synced_uid: u32 = sqlx::query_scalar(
+        "SELECT last_synced_uid FROM sync_checkpoints WHERE folder_path = ?",
+    )
+    .bind(mailbox)
+    .fetch_optional(pool)
+    .await?
+    .map(|v: i64| v.max(0) as u32)
+    .unwrap_or(0);
+
+    // Ask IMAP for UIDs newer than our checkpoint.
+    let (_total, new_uids) = tokio::task::spawn_blocking({
+        let imap_state = imap_state.clone();
+        let mailbox = mailbox.to_string();
+        move || imap_session::fetch_new_uids_since(&imap_state, account_id, &mailbox, last_synced_uid)
+    })
+    .await
+    .unwrap_or((0, vec![]));
+
+    // Apply initial policy limits on the first-ever sync.
+    let uids_to_sync: Vec<u32> = if last_synced_uid == 0 {
+        let mut filtered = new_uids;
+        if let Some(max_count) = limit {
+            let skip = filtered.len().saturating_sub(max_count);
+            filtered = filtered[skip..].to_vec();
+        }
+        filtered
+    } else {
+        new_uids
+    };
+
+    if uids_to_sync.is_empty() {
+        tracing::debug!("No new messages for mailbox {mailbox} (checkpoint UID={last_synced_uid})");
+        return Ok(());
+    }
+
+    let total_new = uids_to_sync.len() as i64;
+    tracing::info!(
+        "Incremental sync: {} new message(s) for {} (since UID {})",
+        total_new, mailbox, last_synced_uid
+    );
+
+    set_transfer_receiving(
+        app_state,
+        account_id,
+        Some(TransferProgress {
+            direction: "receiving".to_string(),
+            resource: "emails".to_string(),
+            mailbox: Some(mailbox.to_string()),
+            total: Some(total_new),
+            done: 0,
+            remaining: Some(total_new),
+            detail: Some(format!("{total_new} new message(s)")),
+            updated_at_ms: now_ms(),
+        }),
+    )
+    .await;
+
+    let mut synced_count = 0usize;
+    let mut max_uid_synced: u32 = last_synced_uid;
+
+    'outer: for chunk in uids_to_sync.chunks(per_page) {
+        let chunk_uids: Vec<u32> = chunk.to_vec();
+        let chunk_uids_for_fetch = chunk_uids.clone();
+        let mails = tokio::task::spawn_blocking({
             let imap_state = imap_state.clone();
             let mailbox = mailbox.to_string();
-            move || imap_session::fetch_mail_list(&imap_state, account_id, &mailbox, page, per_page)
+            move || {
+                imap_session::fetch_headers_for_uids(
+                    &imap_state,
+                    account_id,
+                    &mailbox,
+                    &chunk_uids_for_fetch,
+                )
+            }
         })
         .await
         .unwrap_or_default();
 
-        if total == 0 || mails.is_empty() {
-            break;
-        }
-
-        // Update UI progress (best-effort).
-        let progress_total: Option<i64> = if policy.mode == "by_count" {
-            limit.map(|v| v as i64)
-        } else if policy.mode == "all" {
-            Some(total as i64)
-        } else {
-            None
-        };
-        let progress_remaining: Option<i64> = progress_total.map(|t| (t - synced_count as i64).max(0));
-        set_transfer_receiving(
-            app_state,
-            account_id,
-            Some(TransferProgress {
-                direction: "receiving".to_string(),
-                resource: "emails".to_string(),
-                mailbox: Some(mailbox.to_string()),
-                total: progress_total,
-                done: synced_count as i64,
-                remaining: progress_remaining,
-                detail: Some("syncing mailbox".to_string()),
-                updated_at_ms: now_ms(),
-            }),
-        )
-        .await;
-
-        let mut reached_policy_end = false;
-        for mail in mails {
+        let aligned = align_previews_to_uids(&chunk_uids, &mails);
+        for (uid, mail) in aligned {
             if limit.is_some_and(|max_count| synced_count >= max_count) {
-                reached_policy_end = true;
-                break;
+                break 'outer;
             }
             if cutoff
                 .as_ref()
                 .is_some_and(|threshold| mail_date_before_threshold(&mail.date, threshold))
             {
-                reached_policy_end = true;
-                break;
+                break 'outer;
             }
 
+            max_uid_synced = bump_max_uid_synced(max_uid_synced, uid);
+            let uid_str = uid.to_string();
+            let mut mail = mail;
+            mail.id = uid_str.clone();
+
             cache_mail_preview(pool, mailbox, &mail).await?;
-            cache_mail_body(
+            // Skip body fetch if already cached — avoids re-downloading on every sync.
+            cache_mail_body_if_missing(
                 pool,
                 imap_state,
                 account_id,
                 mailbox,
-                &mail.id,
+                &uid_str,
                 policy.cache_raw_rfc822,
             )
             .await?;
             synced_count += 1;
 
-            let progress_remaining: Option<i64> =
-                progress_total.map(|t| (t - synced_count as i64).max(0));
             set_transfer_receiving(
                 app_state,
                 account_id,
@@ -1235,29 +1636,86 @@ async fn sync_single_mailbox(
                     direction: "receiving".to_string(),
                     resource: "emails".to_string(),
                     mailbox: Some(mailbox.to_string()),
-                    total: progress_total,
+                    total: Some(total_new),
                     done: synced_count as i64,
-                    remaining: progress_remaining,
+                    remaining: Some((total_new - synced_count as i64).max(0)),
                     detail: Some("downloading emails".to_string()),
                     updated_at_ms: now_ms(),
                 }),
             )
             .await;
         }
-
-        if reached_policy_end || page * per_page >= total {
-            break;
-        }
-        page += 1;
     }
 
-    sqlx::query("DELETE FROM local_mail_cache WHERE folder = ? AND updated_at < ?")
+    // Persist checkpoint so next sync starts from here.
+    if max_uid_synced > last_synced_uid {
+        sqlx::query(
+            r#"
+            INSERT INTO sync_checkpoints (folder_path, last_synced_uid, last_uid_validity, updated_at)
+            VALUES (?, ?, 0, CURRENT_TIMESTAMP)
+            ON CONFLICT(folder_path) DO UPDATE SET
+                last_synced_uid = excluded.last_synced_uid,
+                updated_at = CURRENT_TIMESTAMP
+            "#,
+        )
         .bind(mailbox)
-        .bind(sync_marker)
+        .bind(max_uid_synced as i64)
         .execute(pool)
         .await?;
+        tracing::info!("Checkpoint saved: {mailbox} last_uid={max_uid_synced}");
+    }
 
     Ok(())
+}
+
+fn bump_max_uid_synced(current: u32, processed_uid: u32) -> u32 {
+    current.max(processed_uid)
+}
+
+fn align_previews_to_uids(chunk_uids: &[u32], previews: &[MailPreview]) -> Vec<(u32, MailPreview)> {
+    use std::collections::{HashMap, HashSet};
+
+    if chunk_uids.is_empty() || previews.is_empty() {
+        return vec![];
+    }
+
+    let uid_set: HashSet<u32> = chunk_uids.iter().copied().collect();
+    let mut idx_by_uid: HashMap<u32, usize> = HashMap::new();
+    for (idx, preview) in previews.iter().enumerate() {
+        if let Ok(uid) = preview.id.parse::<u32>() {
+            if uid_set.contains(&uid) {
+                idx_by_uid.entry(uid).or_insert(idx);
+            }
+        }
+    }
+
+    let matched = idx_by_uid.len();
+    let fallback_positional =
+        previews.len() == chunk_uids.len() && (matched == 0 || matched < (previews.len() / 2));
+
+    if fallback_positional {
+        return chunk_uids
+            .iter()
+            .copied()
+            .zip(previews.iter().cloned())
+            .map(|(uid, mut preview)| {
+                preview.id = uid.to_string();
+                (uid, preview)
+            })
+            .collect();
+    }
+
+    chunk_uids
+        .iter()
+        .copied()
+        .filter_map(|uid| {
+            idx_by_uid.get(&uid).map(|idx| {
+                let mut preview = previews[*idx].clone();
+                preview.id = uid.to_string();
+                (uid, preview)
+            })
+        })
+        .collect()
 }
 
 fn policy_cutoff(policy: &SyncPolicy) -> Option<DateTime<Utc>> {
@@ -1277,21 +1735,74 @@ fn mail_date_before_threshold(date_value: &str, threshold: &DateTime<Utc>) -> bo
         .unwrap_or(false)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn preview(id: &str) -> MailPreview {
+        MailPreview {
+            id: id.to_string(),
+            name: "n".to_string(),
+            address: "a@example.com".to_string(),
+            subject: "s".to_string(),
+            date: "Mon, 01 Jan 2024 00:00:00 +0000".to_string(),
+            seen: false,
+        }
+    }
+
+    #[test]
+    fn align_previews_uses_uid_match_when_available() {
+        let chunk = vec![101, 102, 103];
+        let previews = vec![preview("103"), preview("101"), preview("102")];
+        let aligned = align_previews_to_uids(&chunk, &previews);
+        let got: Vec<u32> = aligned.iter().map(|(uid, _)| *uid).collect();
+        assert_eq!(got, chunk);
+        for (uid, p) in aligned {
+            assert_eq!(p.id, uid.to_string());
+        }
+    }
+
+    #[test]
+    fn align_previews_falls_back_to_positional_when_ids_not_uids() {
+        let chunk = vec![5001, 5002];
+        let previews = vec![preview("1"), preview("2")];
+        let aligned = align_previews_to_uids(&chunk, &previews);
+        assert_eq!(aligned.len(), 2);
+        assert_eq!(aligned[0].0, 5001);
+        assert_eq!(aligned[0].1.id, "5001");
+        assert_eq!(aligned[1].0, 5002);
+        assert_eq!(aligned[1].1.id, "5002");
+    }
+
+    #[test]
+    fn bump_max_uid_synced_tracks_processed_uids() {
+        let mut max_uid = 100;
+        max_uid = bump_max_uid_synced(max_uid, 101);
+        max_uid = bump_max_uid_synced(max_uid, 150);
+        // If we stop early (e.g., due to policy), we must not jump ahead.
+        assert_eq!(max_uid, 150);
+    }
+}
+
 async fn cache_mail_preview(
     pool: &SqlitePool,
     mailbox: &str,
     mail: &MailPreview,
 ) -> Result<(), AppError> {
+    let date_ms: i64 = DateTime::parse_from_rfc2822(&mail.date)
+        .map(|dt| dt.timestamp_millis())
+        .unwrap_or(0);
     sqlx::query(
         r#"
-        INSERT INTO local_mail_cache (uid, folder, sender_name, sender_address, subject, seen, date_value, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO local_mail_cache (uid, folder, sender_name, sender_address, subject, seen, date_value, date_ms, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(uid, folder) DO UPDATE SET
             sender_name = excluded.sender_name,
             sender_address = excluded.sender_address,
             subject = excluded.subject,
             seen = excluded.seen,
             date_value = excluded.date_value,
+            date_ms = excluded.date_ms,
             updated_at = CURRENT_TIMESTAMP
         "#,
     )
@@ -1302,6 +1813,7 @@ async fn cache_mail_preview(
     .bind(&mail.subject)
     .bind(mail.seen as i64)
     .bind(&mail.date)
+    .bind(date_ms)
     .execute(pool)
     .await?;
 
@@ -1342,6 +1854,31 @@ async fn cache_mail_preview(
     Ok(())
 }
 
+async fn cache_mail_body_if_missing(
+    pool: &SqlitePool,
+    imap_state: &Arc<ImapState>,
+    account_id: i64,
+    mailbox: &str,
+    uid: &str,
+    cache_raw_rfc822: bool,
+) -> Result<(), AppError> {
+    // Check if we already have the body cached — skip download if so.
+    let already_cached: bool = sqlx::query_scalar(
+        "SELECT (plain_body IS NOT NULL OR html_body IS NOT NULL OR raw_rfc822 IS NOT NULL) FROM local_mail_cache WHERE uid = ? AND folder = ?",
+    )
+    .bind(uid)
+    .bind(mailbox)
+    .fetch_optional(pool)
+    .await?
+    .unwrap_or(false);
+
+    if already_cached {
+        return Ok(());
+    }
+
+    cache_mail_body(pool, imap_state, account_id, mailbox, uid, cache_raw_rfc822).await
+}
+
 async fn cache_mail_body(
     pool: &SqlitePool,
     imap_state: &Arc<ImapState>,
@@ -1364,17 +1901,23 @@ async fn cache_mail_body(
         return Ok(());
     };
     let content = imap_session::parse_mail_content(uid.to_string(), &raw);
+    let url_to_asset = cache_inline_assets_for_html(pool, account_id, &content.html_body).await;
+    let rewritten_html = rewrite_html_inline_image_srcs(&content.html_body, account_id, &url_to_asset);
+    let date_ms: i64 = DateTime::parse_from_rfc2822(&content.date)
+        .map(|dt| dt.timestamp_millis())
+        .unwrap_or(0);
 
     sqlx::query(
         r#"
         UPDATE local_mail_cache
-        SET plain_body = ?, html_body = ?, date_value = ?, raw_rfc822 = ?, updated_at = CURRENT_TIMESTAMP
+        SET plain_body = ?, html_body = ?, date_value = ?, date_ms = ?, raw_rfc822 = ?, updated_at = CURRENT_TIMESTAMP
         WHERE uid = ? AND folder = ?
         "#,
     )
     .bind(&content.plain_body)
-    .bind(&content.html_body)
+    .bind(&rewritten_html)
     .bind(&content.date)
+    .bind(date_ms)
     .bind(if cache_raw_rfc822 { Some(raw) } else { None })
     .bind(uid)
     .bind(mailbox)
@@ -1405,6 +1948,348 @@ async fn cache_mail_body(
     }
 
     Ok(())
+}
+
+fn inline_asset_id(url: &str) -> String {
+    // Lightweight stable hash without extra dependencies (FNV-1a 64-bit).
+    // Collision risk is low for this use-case (best-effort offline cache).
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for &b in url.as_bytes() {
+        hash ^= b as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+}
+
+async fn cache_inline_assets_for_html(
+    pool: &SqlitePool,
+    _account_id: i64,
+    html: &str,
+) -> std::collections::HashMap<String, String> {
+    use std::{collections::HashMap, time::Duration};
+
+    const MAX_INLINE_IMAGES_PER_MAIL: usize = 20;
+    const MAX_INLINE_ASSET_BYTES: usize = 2 * 1024 * 1024; // 2MB
+
+    if html.is_empty() {
+        return HashMap::new();
+    }
+
+    let mut urls = extract_inline_img_urls(html);
+    urls.sort();
+    urls.dedup();
+    urls.truncate(MAX_INLINE_IMAGES_PER_MAIL);
+
+    let mut out: HashMap<String, String> = HashMap::new();
+    for url in urls {
+        let asset_id = inline_asset_id(&url);
+
+        // Already cached?
+        if let Ok(Some(_)) = sqlx::query_scalar::<_, i64>(
+            "SELECT 1 FROM inline_asset_cache WHERE asset_id = ? LIMIT 1",
+        )
+        .bind(&asset_id)
+        .fetch_optional(pool)
+        .await
+        {
+            out.insert(url, asset_id);
+            continue;
+        }
+
+        // Best-effort download; never fail the mail body cache because of images.
+        let url_clone = url.clone();
+        let fetched = tokio::task::spawn_blocking(move || {
+            fetch_inline_asset_http(&url_clone, MAX_INLINE_ASSET_BYTES, Duration::from_secs(8))
+        })
+        .await
+        .ok()
+        .flatten();
+
+        let Some((content_type, body)) = fetched else {
+            continue;
+        };
+
+        if !content_type.to_ascii_lowercase().starts_with("image/") || body.is_empty() {
+            continue;
+        }
+
+        let _ = sqlx::query(
+            r#"
+            INSERT INTO inline_asset_cache (asset_id, url, content_type, body, updated_at)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(asset_id) DO UPDATE SET
+                url = excluded.url,
+                content_type = excluded.content_type,
+                body = excluded.body,
+                updated_at = CURRENT_TIMESTAMP
+            "#,
+        )
+        .bind(&asset_id)
+        .bind(&url)
+        .bind(&content_type)
+        .bind(&body)
+        .execute(pool)
+        .await;
+
+        out.insert(url, asset_id);
+    }
+
+    out
+}
+
+fn rewrite_html_inline_image_srcs(
+    html: &str,
+    account_id: i64,
+    url_to_asset: &std::collections::HashMap<String, String>,
+) -> String {
+    if html.is_empty() || url_to_asset.is_empty() {
+        return html.to_string();
+    }
+
+    // Simple best-effort rewrite: replace exact URL occurrences.
+    // We intentionally keep it dependency-free and tolerant of imperfect HTML.
+    let mut out = html.to_string();
+    for (url, asset_id) in url_to_asset {
+        let local = format!(
+            "http://localhost:5000/api/offline/{}/inline-assets/{}",
+            account_id, asset_id
+        );
+        out = out.replace(url, &local);
+    }
+    out
+}
+
+fn extract_inline_img_urls(html: &str) -> Vec<String> {
+    let lower = html.to_ascii_lowercase();
+    let mut urls = Vec::new();
+    let mut pos = 0usize;
+    while let Some(img_idx) = lower[pos..].find("<img") {
+        let start = pos + img_idx;
+        let tag_end = lower[start..].find('>').map(|i| start + i).unwrap_or(lower.len());
+        let tag_lower = &lower[start..tag_end];
+        if let Some(src_idx) = tag_lower.find("src=") {
+            let mut i = start + src_idx + 4; // after "src="
+            // skip whitespace
+            while i < tag_end && lower.as_bytes()[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            if i >= tag_end {
+                pos = tag_end;
+                continue;
+            }
+            let quote = lower.as_bytes()[i];
+            let (url_start, url_end) = if quote == b'"' || quote == b'\'' {
+                i += 1;
+                let j = lower[i..tag_end]
+                    .find(quote as char)
+                    .map(|k| i + k)
+                    .unwrap_or(tag_end);
+                (i, j)
+            } else {
+                let j = lower[i..tag_end]
+                    .find(|c: char| c.is_whitespace() || c == '>')
+                    .map(|k| i + k)
+                    .unwrap_or(tag_end);
+                (i, j)
+            };
+            if url_end > url_start && url_end <= html.len() {
+                let url = html[url_start..url_end].trim().to_string();
+                if url.starts_with("http://") || url.starts_with("https://") {
+                    urls.push(url);
+                }
+            }
+        }
+        pos = tag_end;
+    }
+    urls
+}
+
+fn fetch_inline_asset_http(
+    url: &str,
+    max_bytes: usize,
+    timeout: std::time::Duration,
+) -> Option<(String, Vec<u8>)> {
+    fetch_inline_asset_http_inner(url, max_bytes, timeout, 1)
+}
+
+fn fetch_inline_asset_http_inner(
+    url: &str,
+    max_bytes: usize,
+    timeout: std::time::Duration,
+    redirects_left: usize,
+) -> Option<(String, Vec<u8>)> {
+    use native_tls::TlsConnector;
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+
+    let (scheme, rest) = if let Some(r) = url.strip_prefix("https://") {
+        ("https", r)
+    } else if let Some(r) = url.strip_prefix("http://") {
+        ("http", r)
+    } else {
+        return None;
+    };
+
+    let (host_port, path) = match rest.find('/') {
+        Some(i) => (&rest[..i], &rest[i..]),
+        None => (rest, "/"),
+    };
+
+    let (host, port) = match host_port.rsplit_once(':') {
+        Some((h, p)) if !h.contains(']') && p.chars().all(|c| c.is_ascii_digit()) => {
+            (h, p.parse::<u16>().ok()?)
+        }
+        _ => (host_port, if scheme == "https" { 443 } else { 80 }),
+    };
+
+    let mut stream = TcpStream::connect((host, port)).ok()?;
+    let _ = stream.set_read_timeout(Some(timeout));
+    let _ = stream.set_write_timeout(Some(timeout));
+
+    let request = format!(
+        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: guvercin\r\nAccept: image/*\r\nConnection: close\r\n\r\n",
+        path, host
+    )
+    .into_bytes();
+
+    if scheme == "https" {
+        let connector = TlsConnector::new().ok()?;
+        let mut tls = connector.connect(host, stream).ok()?;
+        tls.write_all(&request).ok()?;
+        tls.flush().ok()?;
+        let mut buf = Vec::new();
+        tls.read_to_end(&mut buf).ok()?;
+        match parse_http_response(&buf, max_bytes) {
+            HttpFetchResult::Image(ct, body) => Some((ct, body)),
+            HttpFetchResult::Redirect(location) => {
+                if redirects_left == 0 {
+                    None
+                } else if location.starts_with("http://") || location.starts_with("https://") {
+                    fetch_inline_asset_http_inner(&location, max_bytes, timeout, redirects_left - 1)
+                } else {
+                    None
+                }
+            }
+            HttpFetchResult::Other => None,
+        }
+    } else {
+        stream.write_all(&request).ok()?;
+        stream.flush().ok()?;
+        let mut buf = Vec::new();
+        stream.read_to_end(&mut buf).ok()?;
+        match parse_http_response(&buf, max_bytes) {
+            HttpFetchResult::Image(ct, body) => Some((ct, body)),
+            HttpFetchResult::Redirect(location) => {
+                if redirects_left == 0 {
+                    None
+                } else if location.starts_with("http://") || location.starts_with("https://") {
+                    fetch_inline_asset_http_inner(&location, max_bytes, timeout, redirects_left - 1)
+                } else {
+                    None
+                }
+            }
+            HttpFetchResult::Other => None,
+        }
+    }
+}
+
+enum HttpFetchResult {
+    Image(String, Vec<u8>),
+    Redirect(String),
+    Other,
+}
+
+fn parse_http_response(buf: &[u8], max_bytes: usize) -> HttpFetchResult {
+    let Some(header_end) = buf.windows(4).position(|w| w == b"\r\n\r\n") else {
+        return HttpFetchResult::Other;
+    };
+    let headers = &buf[..header_end];
+    let mut body = buf[header_end + 4..].to_vec();
+
+    let header_str = String::from_utf8_lossy(headers);
+    let mut lines = header_str.lines();
+    let Some(status_line) = lines.next().map(|v| v.trim()) else {
+        return HttpFetchResult::Other;
+    };
+    let Some(status) = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|v| v.parse::<u16>().ok())
+    else {
+        return HttpFetchResult::Other;
+    };
+    let is_redirect = matches!(status, 301 | 302 | 303 | 307 | 308);
+
+    let mut content_type = "application/octet-stream".to_string();
+    let mut transfer_chunked = false;
+    let mut location: Option<String> = None;
+    for line in lines {
+        let line = line.trim();
+        if let Some((k, v)) = line.split_once(':') {
+            let key = k.trim().to_ascii_lowercase();
+            let value = v.trim();
+            if key == "content-type" {
+                content_type = value.split(';').next().unwrap_or(value).trim().to_string();
+            } else if key == "transfer-encoding" && value.to_ascii_lowercase().contains("chunked") {
+                transfer_chunked = true;
+            } else if key == "location" {
+                location = Some(value.to_string());
+            } else if key == "content-encoding" {
+                // We don't support decoding; skip.
+                return HttpFetchResult::Other;
+            }
+        }
+    }
+
+    if is_redirect {
+        if let Some(loc) = location {
+            return HttpFetchResult::Redirect(loc);
+        }
+        return HttpFetchResult::Other;
+    }
+
+    if !(200..300).contains(&status) {
+        return HttpFetchResult::Other;
+    }
+
+    if transfer_chunked {
+        body = match decode_chunked_body(&body) {
+            Some(v) => v,
+            None => return HttpFetchResult::Other,
+        };
+    }
+
+    if body.len() > max_bytes {
+        return HttpFetchResult::Other;
+    }
+
+    HttpFetchResult::Image(content_type, body)
+}
+
+fn decode_chunked_body(input: &[u8]) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < input.len() {
+        // read chunk size line
+        let line_end = input[i..].windows(2).position(|w| w == b"\r\n")?;
+        let line = &input[i..i + line_end];
+        let size_str = String::from_utf8_lossy(line);
+        let size = usize::from_str_radix(size_str.trim(), 16).ok()?;
+        i += line_end + 2;
+        if size == 0 {
+            return Some(out);
+        }
+        if i + size > input.len() {
+            return None;
+        }
+        out.extend_from_slice(&input[i..i + size]);
+        i += size;
+        // skip trailing CRLF
+        if i + 2 <= input.len() && &input[i..i + 2] == b"\r\n" {
+            i += 2;
+        }
+    }
+    Some(out)
 }
 
 async fn set_account_sync_status(

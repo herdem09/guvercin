@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { apiUrl } from '../utils/api'
@@ -54,14 +54,30 @@ function attachmentUrl(accountId, uid, attachmentId, mailbox, online) {
     return apiUrl(`${path}?mailbox=${encodeURIComponent(mailbox)}`)
 }
 
+function systemHour12Preference() {
+    try {
+        const resolved = new Intl.DateTimeFormat(undefined, { hour: 'numeric' }).resolvedOptions()
+        if (typeof resolved.hour12 === 'boolean') return resolved.hour12
+        if (typeof resolved.hourCycle === 'string') return resolved.hourCycle === 'h11' || resolved.hourCycle === 'h12'
+        return undefined
+    } catch {
+        return undefined
+    }
+}
+
 function useClock() {
     const [now, setNow] = useState(new Date())
     useEffect(() => {
         const timer = setInterval(() => setNow(new Date()), 1000)
         return () => clearInterval(timer)
     }, [])
-    const timeStr = now.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    const dateStr = now.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+
+    const hour12 = systemHour12Preference()
+    const timeOptions = { hour: '2-digit', minute: '2-digit', second: '2-digit' }
+    if (typeof hour12 === 'boolean') timeOptions.hour12 = hour12
+
+    const timeStr = new Intl.DateTimeFormat(undefined, timeOptions).format(now)
+    const dateStr = new Intl.DateTimeFormat(undefined, { day: '2-digit', month: '2-digit', year: 'numeric' }).format(now)
     return { time: timeStr, date: dateStr }
 }
 
@@ -102,6 +118,8 @@ const DashboardPage = () => {
     const [folders, setFolders] = useState([])
     const [selectedFolder, setSelectedFolder] = useState('INBOX')
     const [mails, setMails] = useState([])
+    const [cacheMailTotal, setCacheMailTotal] = useState(null)
+    const [remoteMailTotal, setRemoteMailTotal] = useState(null)
     const [selectedMail, setSelectedMail] = useState(null)
     const [mailContent, setMailContent] = useState(null)
     const [loadingMails, setLoadingMails] = useState(false)
@@ -119,8 +137,16 @@ const DashboardPage = () => {
     const accountMenuRef = useRef(null)
     const iframeRef = useRef(null)
     const syncAbortRef = useRef(null)
+    const isSyncingRef = useRef(false)
     const nextMailWindowId = useRef(0)
-    const canUseRemoteMail = backendReachable && remoteMailAvailable
+    const prevCanUseRemoteMailRef = useRef(false)
+    const lastConnectAttemptAtRef = useRef(0)
+    const canUseRemoteMail = backendReachable && networkOnline && (remoteMailAvailable || connected)
+    const totalCount = canUseRemoteMail
+        ? (remoteMailTotal ?? cacheMailTotal ?? 0)
+        : (cacheMailTotal ?? 0)
+    const perPageNum = Math.max(1, Number.parseInt(perPage, 10) || 50)
+    const maxPage = Math.max(1, Math.ceil(totalCount / perPageNum))
 
     useEffect(() => {
         const storedId = localStorage.getItem('current_account_id')
@@ -132,10 +158,6 @@ const DashboardPage = () => {
             navigate('/login')
         }
     }, [navigate, refreshStatus])
-
-    useEffect(() => {
-        setConnected(imapReachable)
-    }, [imapReachable])
 
     const fetchAccount = async (id) => {
         try {
@@ -181,6 +203,26 @@ const DashboardPage = () => {
         navigate('/login', { replace: true })
     }
 
+    const ensureImapConnected = useCallback(async () => {
+        if (!backendReachable || !networkOnline || !accountId) return false
+        if (connected) return true
+        if (connecting) return false
+        setConnecting(true)
+        try {
+            const res = await fetch(apiUrl(`/api/mail/${accountId}/connect-stored`), { method: 'POST' })
+            if (res.ok) {
+                setConnected(true)
+                refreshStatus(accountId)
+                return true
+            }
+            return false
+        } catch {
+            return false
+        } finally {
+            setConnecting(false)
+        }
+    }, [accountId, backendReachable, connected, connecting, networkOnline, refreshStatus])
+
     const loadFolders = useCallback(async () => {
         if (!accountId || !backendReachable) return
         try {
@@ -190,9 +232,11 @@ const DashboardPage = () => {
                 const data = await res.json()
                 setFolders(data.mailboxes || [])
             }
-            
+
             // Eğer online'yız, remote'tan da senkronizasyon yap
-            if (canUseRemoteMail) {
+            if (networkOnline) {
+                const ok = canUseRemoteMail || (await ensureImapConnected())
+                if (!ok) return
                 res = await fetch(apiUrl(`/api/mail/${accountId}/mailboxes`), { cache: 'no-store' })
                 if (res.ok) {
                     const data = await res.json()
@@ -202,33 +246,23 @@ const DashboardPage = () => {
         } catch {
             setFolders([])
         }
-    }, [accountId, backendReachable, canUseRemoteMail])
-
-    const autoConnectAttempted = useRef(false)
+    }, [accountId, backendReachable, canUseRemoteMail, ensureImapConnected, networkOnline])
 
     useEffect(() => {
-        const autoConnect = async () => {
-            if (!backendReachable || !networkOnline || !accountId || connected || connecting || autoConnectAttempted.current) return
-            autoConnectAttempted.current = true
-            setConnecting(true)
-            try {
-                const res = await fetch(apiUrl(`/api/mail/${accountId}/connect-stored`), { method: 'POST' })
-                if (res.ok) setConnected(true)
-            } catch {
-                // noop
-            }
-            setConnecting(false)
+        if (!backendReachable || !networkOnline || !accountId || connected) return
+        const attempt = async () => {
+            if (connecting) return
+            const now = Date.now()
+            if (now - lastConnectAttemptAtRef.current < 15_000) return
+            lastConnectAttemptAtRef.current = now
+            await ensureImapConnected()
         }
-        autoConnect()
-    }, [accountId, backendReachable, connected, connecting, networkOnline])
+        attempt()
+        const timer = setInterval(attempt, 15_000)
+        return () => clearInterval(timer)
+    }, [accountId, backendReachable, connected, connecting, ensureImapConnected, networkOnline])
 
-    useEffect(() => {
-        if (backendReachable && networkOnline && !connected) {
-            autoConnectAttempted.current = false
-        }
-    }, [backendReachable, networkOnline, connected])
-
-    const loadMailsFromCache = useCallback(async (folder, page = currentPage, limit = perPage) => {
+    const loadMailsFromCache = useCallback(async (folder, page, limit) => {
         if (!accountId || !backendReachable) return
         try {
             const res = await fetch(
@@ -238,16 +272,19 @@ const DashboardPage = () => {
             if (res.ok) {
                 const data = await res.json()
                 setMails(data.mails || [])
+                setCacheMailTotal(typeof data.total_count === 'number' ? data.total_count : null)
                 return true
             }
         } catch {
             setMails([])
         }
         return false
-    }, [accountId, backendReachable, currentPage, perPage])
+    }, [accountId, backendReachable])
 
-    const syncMailsFromRemote = useCallback(async (folder, page = currentPage, limit = perPage) => {
+    const syncMailsFromRemote = useCallback(async (folder, page, limit) => {
         if (!accountId || !canUseRemoteMail) return
+        if (isSyncingRef.current) return // prevent concurrent syncs
+        isSyncingRef.current = true
         setIsSyncing(true)
         try {
             const abort = new AbortController()
@@ -259,19 +296,21 @@ const DashboardPage = () => {
             if (res.ok && abort.signal.aborted === false) {
                 const data = await res.json()
                 setMails(data.mails || [])
+                setRemoteMailTotal(typeof data.total_count === 'number' ? data.total_count : null)
             }
         } catch (err) {
             if (err.name !== 'AbortError') {
                 console.error('Sync error:', err)
             }
         } finally {
+            isSyncingRef.current = false
             setIsSyncing(false)
             syncAbortRef.current = null
         }
-    }, [accountId, canUseRemoteMail, currentPage, perPage])
+    }, [accountId, canUseRemoteMail])
 
     const loadMails = useCallback(
-        async (folder, page = currentPage, limit = perPage, forceRemote = false) => {
+        async (folder, page, limit, forceRemote = false) => {
             if (!accountId || !backendReachable) return
             setLoadingMails(true)
             try {
@@ -289,21 +328,32 @@ const DashboardPage = () => {
                     if (res.ok) {
                         const data = await res.json()
                         setMails(data.mails || [])
+                        setRemoteMailTotal(typeof data.total_count === 'number' ? data.total_count : null)
                     } else {
-                        setMails([])
+                        const loaded = await loadMailsFromCache(folder, page, limit)
+                        if (!loaded) setMails([])
                     }
                 } else {
                     // Offline: cache'den yükle
                     await loadMailsFromCache(folder, page, limit)
                 }
             } catch {
-                setMails([])
+                const loaded = await loadMailsFromCache(folder, page, limit)
+                if (!loaded) setMails([])
             } finally {
                 setLoadingMails(false)
             }
         },
-        [accountId, backendReachable, canUseRemoteMail, currentPage, perPage, loadMailsFromCache],
+        [accountId, backendReachable, canUseRemoteMail, loadMailsFromCache],
     )
+
+    useEffect(() => {
+        const prev = prevCanUseRemoteMailRef.current
+        prevCanUseRemoteMailRef.current = canUseRemoteMail
+        if (!prev && canUseRemoteMail && activeSection === 'mail' && backendReachable) {
+            loadFolders()
+        }
+    }, [activeSection, backendReachable, canUseRemoteMail, loadFolders])
 
     useEffect(() => {
         if (accountId && activeSection === 'mail' && backendReachable) loadFolders()
@@ -316,18 +366,49 @@ const DashboardPage = () => {
     }, [folders, selectedFolder])
 
     useEffect(() => {
-        if (activeSection === 'mail' && backendReachable) {
-            setCurrentPage(1)
-            const page = 1
-            // Önce cache'den yükle (hızlı)
-            loadMailsFromCache(selectedFolder, page, perPage).then((cacheLoaded) => {
-                // Sonra arka planda senkronizasyon yap (online ise)
-                if (canUseRemoteMail && !isSyncing) {
-                    syncMailsFromRemote(selectedFolder, page, perPage)
-                }
-            })
+        if (activeSection !== 'mail' || !backendReachable) return
+        setCacheMailTotal(null)
+        setRemoteMailTotal(null)
+        setCurrentPage(1)
+    }, [activeSection, backendReachable, selectedFolder, perPage])
+
+    useEffect(() => {
+        if (activeSection !== 'mail' || !backendReachable) return
+
+        let cancelled = false
+        const page = currentPage
+        const limit = perPage
+        const folder = selectedFolder
+
+        loadMailsFromCache(folder, page, limit).then(() => {
+            if (cancelled || !canUseRemoteMail) return
+            loadMails(folder, page, limit, true)
+        })
+
+        return () => {
+            cancelled = true
         }
-    }, [activeSection, backendReachable, canUseRemoteMail, selectedFolder, perPage, loadMailsFromCache, syncMailsFromRemote])
+    }, [activeSection, backendReachable, canUseRemoteMail, currentPage, selectedFolder, perPage, loadMails, loadMailsFromCache])
+
+    const prefetchInlineAssets = useCallback(
+        async (uid, mailbox) => {
+            if (!accountId || !backendReachable || !networkOnline) return null
+            try {
+                const res = await fetch(
+                    apiUrl(
+                        `/api/offline/${accountId}/local-content/${uid}/prefetch-inline?mailbox=${encodeURIComponent(mailbox)}`,
+                    ),
+                    { method: 'POST', cache: 'no-store' },
+                )
+                if (!res.ok) return null
+                const data = await res.json().catch(() => null)
+                return data?.html_body || null
+            } catch {
+                return null
+            }
+        },
+        [accountId, backendReachable, networkOnline],
+    )
 
     const openMail = async (mail) => {
         setIsMailFullscreen(false)
@@ -337,20 +418,26 @@ const DashboardPage = () => {
         try {
             const mailbox = selectedFolder || 'INBOX'
             let endpoint
-            
+
             // Offline endpoint'i dene (cache)
             endpoint = `/api/offline/${accountId}/local-content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
             let res = await fetch(apiUrl(endpoint), { cache: 'no-store' })
-            
+
             // Eğer offline cache'de yoksa ve online'yız, remote'tan çek
             if (!res.ok && canUseRemoteMail) {
                 endpoint = `/api/mail/${accountId}/content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
                 res = await fetch(apiUrl(endpoint), { cache: 'no-store' })
             }
-            
+
             if (res.ok) {
                 const data = await res.json()
                 setMailContent(data)
+
+                // Best-effort: cache and rewrite external inline images for offline use.
+                prefetchInlineAssets(mail.id, mailbox).then((html) => {
+                    if (!html) return
+                    setMailContent((prev) => (prev && prev.id === mail.id ? { ...prev, html_body: html } : prev))
+                })
             }
         } catch {
             // noop
@@ -429,16 +516,13 @@ const DashboardPage = () => {
             // First we need to fetch the content because it's not loaded yet
             const mailbox = selectedFolder || 'INBOX'
             let content = null
-            const endpoint = canUseRemoteMail
-                ? `/api/mail/${accountId}/content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
-                : `/api/offline/${accountId}/local-content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
-            const res = await fetch(
-                apiUrl(endpoint),
-                { cache: 'no-store' },
-            )
-            if (res.ok) {
-                content = await res.json()
+            let endpoint = `/api/offline/${accountId}/local-content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
+            let res = await fetch(apiUrl(endpoint), { cache: 'no-store' })
+            if (!res.ok && canUseRemoteMail) {
+                endpoint = `/api/mail/${accountId}/content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
+                res = await fetch(apiUrl(endpoint), { cache: 'no-store' })
             }
+            if (res.ok) content = await res.json()
 
             const { invoke } = await import('@tauri-apps/api/core')
             nextMailWindowId.current += 1
@@ -486,9 +570,23 @@ const DashboardPage = () => {
         return () => window.removeEventListener('keydown', handleKeyDown)
     }, [isMailFullscreen])
 
-    const getShortTime = () => {
+    const getShortTime = (dateValue) => {
+        if (!dateValue) return ''
+        const dt = new Date(dateValue)
+        if (Number.isNaN(dt.getTime())) return ''
         const now = new Date()
-        return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+        const sameDay = dt.getFullYear() === now.getFullYear()
+            && dt.getMonth() === now.getMonth()
+            && dt.getDate() === now.getDate()
+        const hour12 = systemHour12Preference()
+        const timeOptions = { hour: '2-digit', minute: '2-digit' }
+        if (typeof hour12 === 'boolean') timeOptions.hour12 = hour12
+        const timeStr = new Intl.DateTimeFormat(undefined, timeOptions).format(dt)
+        if (sameDay) {
+            return timeStr
+        }
+        const dateStr = new Intl.DateTimeFormat(undefined, { month: '2-digit', day: '2-digit' }).format(dt)
+        return `${dateStr} ${timeStr}`
     }
 
     const formatTransfer = (p) => {
@@ -598,8 +696,11 @@ const DashboardPage = () => {
 
                     <div className="db-section-area">
                         {activeSection === 'mail' && (
-                            <MailSection
-                                accountId={accountId}
+	                            <MailSection
+	                                accountId={accountId}
+	                                backendReachable={backendReachable}
+	                                networkOnline={networkOnline}
+	                                ensureImapConnected={ensureImapConnected}
                                 folders={folders}
                                 selectedFolder={selectedFolder}
                                 setSelectedFolder={setSelectedFolder}
@@ -612,18 +713,22 @@ const DashboardPage = () => {
                                 loadingContent={loadingContent}
                                 connecting={connecting}
                                 loadMails={loadMails}
+                                loadMailsFromCache={loadMailsFromCache}
+                                syncMailsFromRemote={syncMailsFromRemote}
+                                isSyncing={isSyncing}
                                 openMail={openMail}
                                 detachMailToWindow={detachMailToWindow}
                                 detachMailToWindowFromList={detachMailToWindowFromList}
                                 iframeRef={iframeRef}
                                 getShortTime={getShortTime}
-                                currentPage={currentPage}
-                                setCurrentPage={setCurrentPage}
-                                perPage={perPage}
-                                setPerPage={setPerPage}
-                                isMailFullscreen={isMailFullscreen}
-                                toggleMailFullscreen={toggleMailFullscreen}
-                                removeMailOptimistic={removeMailOptimistic}
+	                                currentPage={currentPage}
+	                                setCurrentPage={setCurrentPage}
+	                                maxPage={maxPage}
+	                                perPage={perPage}
+	                                setPerPage={setPerPage}
+	                                isMailFullscreen={isMailFullscreen}
+	                                toggleMailFullscreen={toggleMailFullscreen}
+	                                removeMailOptimistic={removeMailOptimistic}
                                 moveMail={moveMail}
                                 canUseRemoteMail={canUseRemoteMail}
                                 composeOpen={composeOpen}
@@ -645,10 +750,14 @@ const DashboardPage = () => {
 
 function MailSection({
     accountId,
+    backendReachable,
+    networkOnline,
+    ensureImapConnected,
     folders, selectedFolder, setSelectedFolder, mails,
     selectedMail, setSelectedMail, mailContent, setMailContent, loadingMails, loadingContent,
-    connecting, loadMails, openMail, detachMailToWindow, detachMailToWindowFromList, iframeRef, getShortTime,
-    currentPage, setCurrentPage, perPage, setPerPage,
+    connecting, loadMails, loadMailsFromCache, syncMailsFromRemote, isSyncing,
+    openMail, detachMailToWindow, detachMailToWindowFromList, iframeRef, getShortTime,
+    currentPage, setCurrentPage, maxPage, perPage, setPerPage,
     isMailFullscreen, toggleMailFullscreen,
     removeMailOptimistic, moveMail,
     canUseRemoteMail, composeOpen, setComposeOpen, composeForm, setComposeForm, sendComposedMail,
@@ -669,6 +778,42 @@ function MailSection({
     const [attachmentsExpanded, setAttachmentsExpanded] = useState(true)
     const [layoutCols, setLayoutCols] = useState(1)
     const displayCols = isMailFullscreen ? layoutCols : 1
+
+    const sortedMails = useMemo(() => {
+        const copy = Array.isArray(mails) ? mails.slice() : []
+        const dateMs = (m) => {
+            const t = Date.parse(m?.date || '')
+            return Number.isFinite(t) ? t : 0
+        }
+        const uidNum = (m) => {
+            const n = Number.parseInt(m?.id ?? '', 10)
+            return Number.isFinite(n) ? n : 0
+        }
+        copy.sort((a, b) => {
+            const d = dateMs(b) - dateMs(a)
+            if (d !== 0) return d
+            return uidNum(b) - uidNum(a)
+        })
+        return copy
+    }, [mails])
+
+    const formatMailDateLong = (dateValue) => {
+        if (!dateValue) return ''
+        const dt = new Date(dateValue)
+        if (Number.isNaN(dt.getTime())) return dateValue
+        const hour12 = systemHour12Preference()
+        const options = {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            timeZoneName: 'short',
+        }
+        if (typeof hour12 === 'boolean') options.hour12 = hour12
+        // Uses local timezone, but preserves the correct instant from the RFC2822 date (UTC-aware).
+        return new Intl.DateTimeFormat(undefined, options).format(dt)
+    }
 
     const perPageRef = useRef(null)
     const isResizingFolder = useRef(false)
@@ -714,14 +859,19 @@ function MailSection({
             setLoadingTab(true)
             try {
                 const mailbox = selectedFolder || 'INBOX'
-                const endpoint = canUseRemoteMail
-                    ? `/api/mail/${accountId}/content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
-                    : `/api/offline/${accountId}/local-content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
-                const res = await fetch(
-                    apiUrl(endpoint),
-                    { cache: 'no-store' },
-                )
-                if (res.ok) content = await res.json()
+                let endpoint = `/api/offline/${accountId}/local-content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
+                let res = await fetch(apiUrl(endpoint), { cache: 'no-store' })
+                if (!res.ok && canUseRemoteMail) {
+                    endpoint = `/api/mail/${accountId}/content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
+                    res = await fetch(apiUrl(endpoint), { cache: 'no-store' })
+                }
+                if (res.ok) {
+                    content = await res.json()
+                    const html = await prefetchInlineAssets(mail.id, mailbox)
+                    if (html && content) {
+                        content = { ...content, html_body: html }
+                    }
+                }
             } catch {
                 // noop
             }
@@ -1026,6 +1176,7 @@ function MailSection({
                                 </div>
                             </div>
                             <div className="db-mail-meta"><strong>From:</strong> {activeTabContent?.from_name ? `${activeTabContent.from_name} <${activeTabContent.from_address}>` : activeTab.mail.address}</div>
+                            <div className="db-mail-meta"><strong>Date:</strong> {formatMailDateLong(activeTabContent?.date || activeTab.mail.date)}</div>
                             <hr className="db-mail-divider" />
                             {activeTabContent?.html_body ? (
                                 <div className="db-mail-body-html">
@@ -1143,16 +1294,18 @@ function MailSection({
                                     <button
                                         type="button"
                                         className="db-mail-toolbar-btn"
-                                        onClick={() => {
-                                            // Refresh: önce cache yükle, sonra remote senkronizasyon yap
-                                            loadMailsFromCache(selectedFolder, currentPage, perPage)
-                                                .then(() => {
-                                                    if (canUseRemoteMail && !isSyncing) {
-                                                        syncMailsFromRemote(selectedFolder, currentPage, perPage)
-                                                    }
-                                                })
+                                        onClick={async () => {
+                                            if (!backendReachable) return
+                                            if (networkOnline) {
+                                                const ok = canUseRemoteMail || (await ensureImapConnected())
+                                                if (ok && !isSyncing) {
+                                                    await syncMailsFromRemote(selectedFolder, currentPage, perPage)
+                                                    return
+                                                }
+                                            }
+                                            await loadMailsFromCache(selectedFolder, currentPage, perPage)
                                         }}
-                                        title={isSyncing ? 'Syncing...' : 'Refresh'}
+                                        title={isSyncing ? 'Syncing...' : (canUseRemoteMail ? 'Refresh from server' : 'Load from cache')}
                                         disabled={isSyncing}
                                     >
                                         {isSyncing ? '⟳' : '🔄'}
@@ -1183,19 +1336,17 @@ function MailSection({
                                             onClick={() => {
                                                 const p = currentPage - 1
                                                 setCurrentPage(p)
-                                                loadMails(selectedFolder, p, perPage)
                                             }}
                                         >
                                             ◀
                                         </button>
-                                        <span className="db-page-num">{currentPage}</span>
+                                        <span className="db-page-num">{currentPage}/{maxPage}</span>
                                         <button
                                             className="db-pagination-btn"
-                                            disabled={mails.length < perPage || loadingMails}
+                                            disabled={currentPage >= maxPage || loadingMails}
                                             onClick={() => {
                                                 const p = currentPage + 1
                                                 setCurrentPage(p)
-                                                loadMails(selectedFolder, p, perPage)
                                             }}
                                         >
                                             ▶
@@ -1219,7 +1370,6 @@ function MailSection({
                                                         const val = Math.max(1, parseInt(perPage) || 50)
                                                         setPerPage(val)
                                                         setCurrentPage(1)
-                                                        loadMails(selectedFolder, 1, val)
                                                         setIsPerPageOpen(false)
                                                         e.target.blur()
                                                     }
@@ -1235,7 +1385,6 @@ function MailSection({
                                                             onClick={() => {
                                                                 setPerPage(val)
                                                                 setCurrentPage(1)
-                                                                loadMails(selectedFolder, 1, val)
                                                                 setIsPerPageOpen(false)
                                                             }}
                                                         >
@@ -1304,10 +1453,10 @@ function MailSection({
                                     </div>
                                 ) : (
                                     <ul className="db-mail-list" data-cols={displayCols}>
-                                        {mails.map((mail) => (
+                                        {sortedMails.map((mail) => (
                                             <li
                                                 key={mail.id}
-                                                className={`db-mail-item ${!mail.seen ? 'unread' : ''} ${selectedMail?.id === mail.id ? 'selected' : ''}`}
+                                                className={`db-mail-item ${mail.seen !== true ? 'unread' : ''} ${selectedMail?.id === mail.id ? 'selected' : ''}`}
                                                 onClick={() => openMail(mail)}
                                             >
                                                 {selectMode && (
@@ -1323,7 +1472,7 @@ function MailSection({
                                                 <div className="db-mail-item-content">
                                                     <span className="db-mail-sender">{mail.name || mail.address || 'Unknown'}</span>
                                                     <span className="db-mail-subject">{mail.subject || '(No Subject)'}</span>
-                                                    <span className="db-mail-time">{getShortTime()}</span>
+                                                    <span className="db-mail-time">{getShortTime(mail.date)}</span>
                                                 </div>
                                                 <div className="db-mail-quick-actions">
                                                     <button
@@ -1408,6 +1557,7 @@ function MailSection({
                                             </div>
                                         </div>
                                         <div className="db-mail-meta"><strong>From:</strong> {mailContent?.from_name ? `${mailContent.from_name} <${mailContent.from_address}>` : selectedMail.address}</div>
+                                        <div className="db-mail-meta"><strong>Date:</strong> {formatMailDateLong(mailContent?.date || selectedMail.date)}</div>
                                         <hr className="db-mail-divider" />
                                         {mailContent?.html_body ? (
                                             <div className="db-mail-body-html"><iframe ref={iframeRef} title="mail-content" sandbox="allow-same-origin" /></div>
@@ -1452,8 +1602,8 @@ function MailSection({
                     </div>
                 </div>
             )}
-	            {composeOpen && (
-	                <div className="db-compose-modal">
+            {composeOpen && (
+                <div className="db-compose-modal">
                     <div className="db-compose-card">
                         <h3>{t('Compose Mail')}</h3>
                         <input

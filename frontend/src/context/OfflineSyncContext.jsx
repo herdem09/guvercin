@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { apiUrl } from '../utils/api'
 
 const OfflineSyncContext = createContext(null)
@@ -13,6 +13,9 @@ export function OfflineSyncProvider({ children }) {
   const [lastSyncAt, setLastSyncAt] = useState(null)
   const [lastError, setLastError] = useState(null)
   const [transfer, setTransfer] = useState(null)
+  const lastFlushAtRef = useRef(0)
+  const pollInFlightRef = useRef(false)
+  const lastSyncAttemptAtRef = useRef(0)
 
   useEffect(() => {
     const onOnline = () => setNetworkOnline(true)
@@ -41,6 +44,7 @@ export function OfflineSyncProvider({ children }) {
       setLastSyncAt(data.last_sync_at || null)
       setLastError(data.last_error || null)
       setTransfer(data.transfer || null)
+      return data
     } catch (err) {
       setBackendReachable(false)
       setImapReachable(false)
@@ -48,31 +52,65 @@ export function OfflineSyncProvider({ children }) {
       setSyncState('offline')
       setLastError(err?.message || 'Unable to reach backend')
       setTransfer(null)
+      return null
+    }
+  }, [])
+
+  const runSyncNow = useCallback(async (accountId) => {
+    if (!accountId) return false
+    try {
+      const res = await fetch(apiUrl(`/api/offline/${accountId}/sync-now`), { method: 'POST' })
+      return res.ok
+    } catch {
+      return false
     }
   }, [])
 
   const flushQueue = useCallback(async (accountId) => {
     if (!accountId) return
     try {
-      await fetch(apiUrl(`/api/offline/${accountId}/sync-now`), { method: 'POST' })
+      const ok = await runSyncNow(accountId)
+      if (ok) {
+        lastFlushAtRef.current = Date.now()
+      }
       await refreshStatus(accountId)
     } catch {
       // status refresh will capture eventual failures
     }
-  }, [refreshStatus])
+  }, [refreshStatus, runSyncNow])
 
   useEffect(() => {
     const accountId = localStorage.getItem('current_account_id')
     if (!accountId) return
-    const timer = setInterval(() => {
-      refreshStatus(accountId)
-      if (networkOnline) {
-        flushQueue(accountId)
+    const STATUS_POLL_INTERVAL_MS = 10_000
+    const SYNC_COOLDOWN_MS = 60_000
+    const STALE_FLUSH_MS = 5 * 60_000
+
+    const pollOnce = async () => {
+      if (pollInFlightRef.current) return
+      pollInFlightRef.current = true
+      try {
+        const data = await refreshStatus(accountId)
+        const depth = Number(data?.queue_depth || 0)
+        const lastFlushAt = lastFlushAtRef.current
+        const isStale = lastFlushAt > 0 && Date.now() - lastFlushAt > STALE_FLUSH_MS
+        const cooldownOk = Date.now() - lastSyncAttemptAtRef.current >= SYNC_COOLDOWN_MS
+        const shouldFlush = networkOnline && cooldownOk && (depth > 0 || isStale)
+        if (shouldFlush) {
+          lastSyncAttemptAtRef.current = Date.now()
+          const ok = await runSyncNow(accountId)
+          if (ok) lastFlushAtRef.current = Date.now()
+          await refreshStatus(accountId)
+        }
+      } finally {
+        pollInFlightRef.current = false
       }
-    }, 6000)
-    refreshStatus(accountId)
+    }
+
+    pollOnce()
+    const timer = setInterval(pollOnce, STATUS_POLL_INTERVAL_MS)
     return () => clearInterval(timer)
-  }, [flushQueue, networkOnline, refreshStatus])
+  }, [networkOnline, refreshStatus, runSyncNow])
 
   const remoteMailAvailable = backendReachable && imapReachable
 

@@ -117,8 +117,16 @@ pub async fn run(db_dir: Option<PathBuf>) -> anyhow::Result<()> {
             get(offline_routes::get_local_mail_content),
         )
         .route(
+            "/api/offline/:account_id/local-content/:uid/prefetch-inline",
+            post(offline_routes::prefetch_local_inline_assets),
+        )
+        .route(
             "/api/offline/:account_id/local-content/:uid/attachments/:attachment_index",
             get(offline_routes::download_local_attachment),
+        )
+        .route(
+            "/api/offline/:account_id/inline-assets/:asset_id",
+            get(offline_routes::get_inline_asset),
         )
         .with_state(mail_state);
 
