@@ -127,7 +127,7 @@ const DashboardPage = () => {
     const [currentPage, setCurrentPage] = useState(1)
     const [perPage, setPerPage] = useState(50)
     const [composeOpen, setComposeOpen] = useState(false)
-    const [composeForm, setComposeForm] = useState({ to: '', subject: '', body: '' })
+    const [composeForm, setComposeForm] = useState({ to: '', cc: '', bcc: '', subject: '', body: '' })
 
     const [accountMenuOpen, setAccountMenuOpen] = useState(false)
     const [isMailFullscreen, setIsMailFullscreen] = useState(false)
@@ -478,11 +478,13 @@ const DashboardPage = () => {
         await queueAction('send', null, {
             from: email || accountEmailLabel,
             to: composeForm.to.split(',').map((s) => s.trim()).filter(Boolean),
+            cc: composeForm.cc.split(',').map((s) => s.trim()).filter(Boolean),
+            bcc: composeForm.bcc.split(',').map((s) => s.trim()).filter(Boolean),
             subject: composeForm.subject,
             body: composeForm.body,
         })
         setComposeOpen(false)
-        setComposeForm({ to: '', subject: '', body: '' })
+        setComposeForm({ to: '', cc: '', bcc: '', subject: '', body: '' })
     }
 
     const detachMailToWindow = async () => {
@@ -1176,6 +1178,8 @@ function MailSection({
                                 </div>
                             </div>
                             <div className="db-mail-meta"><strong>From:</strong> {activeTabContent?.from_name ? `${activeTabContent.from_name} <${activeTabContent.from_address}>` : activeTab.mail.address}</div>
+                            {!!(activeTabContent?.cc || '').trim() && <div className="db-mail-meta"><strong>CC:</strong> {activeTabContent.cc}</div>}
+                            {!!(activeTabContent?.bcc || '').trim() && <div className="db-mail-meta"><strong>BCC:</strong> {activeTabContent.bcc}</div>}
                             <div className="db-mail-meta"><strong>Date:</strong> {formatMailDateLong(activeTabContent?.date || activeTab.mail.date)}</div>
                             <hr className="db-mail-divider" />
                             {activeTabContent?.html_body ? (
@@ -1557,6 +1561,8 @@ function MailSection({
                                             </div>
                                         </div>
                                         <div className="db-mail-meta"><strong>From:</strong> {mailContent?.from_name ? `${mailContent.from_name} <${mailContent.from_address}>` : selectedMail.address}</div>
+                                        {!!(mailContent?.cc || '').trim() && <div className="db-mail-meta"><strong>CC:</strong> {mailContent.cc}</div>}
+                                        {!!(mailContent?.bcc || '').trim() && <div className="db-mail-meta"><strong>BCC:</strong> {mailContent.bcc}</div>}
                                         <div className="db-mail-meta"><strong>Date:</strong> {formatMailDateLong(mailContent?.date || selectedMail.date)}</div>
                                         <hr className="db-mail-divider" />
                                         {mailContent?.html_body ? (
@@ -1611,6 +1617,18 @@ function MailSection({
                             placeholder="To"
                             value={composeForm.to}
                             onChange={(e) => setComposeForm((prev) => ({ ...prev, to: e.target.value }))}
+                        />
+                        <input
+                            type="text"
+                            placeholder="CC"
+                            value={composeForm.cc}
+                            onChange={(e) => setComposeForm((prev) => ({ ...prev, cc: e.target.value }))}
+                        />
+                        <input
+                            type="text"
+                            placeholder="BCC"
+                            value={composeForm.bcc}
+                            onChange={(e) => setComposeForm((prev) => ({ ...prev, bcc: e.target.value }))}
                         />
                         <input
                             type="text"

@@ -37,6 +37,8 @@ pub struct MailContent {
     pub subject: String,
     pub from_name: String,
     pub from_address: String,
+    pub cc: String,
+    pub bcc: String,
     pub date: String,
     pub html_body: String,
     pub plain_body: String,

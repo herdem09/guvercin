@@ -583,6 +583,8 @@ fn build_mail_content(uid: String, parsed: &ParsedMail) -> MailContent {
     let subject = headers.get_first_value("Subject").unwrap_or_default();
     let date = headers.get_first_value("Date").unwrap_or_default();
     let (from_name, from_address) = extract_sender(parsed);
+    let cc = headers.get_first_value("Cc").unwrap_or_default();
+    let bcc = headers.get_first_value("Bcc").unwrap_or_default();
 
     let mut plain = None;
     let mut html = None;
@@ -593,6 +595,8 @@ fn build_mail_content(uid: String, parsed: &ParsedMail) -> MailContent {
         subject,
         from_name,
         from_address,
+        cc,
+        bcc,
         date,
         html_body: html.unwrap_or_default(),
         plain_body: plain.unwrap_or_default(),
@@ -762,6 +766,8 @@ fn fallback_parse_rfc822(uid: String, raw: &[u8]) -> MailContent {
     let subject = decode_encoded_word(&parse_header(header_part, "Subject"));
     let from_raw = parse_header(header_part, "From");
     let (from_name, from_address) = split_from(&from_raw);
+    let cc = decode_encoded_word(&parse_header(header_part, "Cc"));
+    let bcc = decode_encoded_word(&parse_header(header_part, "Bcc"));
     let date = parse_header(header_part, "Date");
 
     MailContent {
@@ -769,6 +775,8 @@ fn fallback_parse_rfc822(uid: String, raw: &[u8]) -> MailContent {
         subject,
         from_name,
         from_address,
+        cc,
+        bcc,
         date,
         html_body: String::new(), // simplified – full MIME parsing is separate
         plain_body: body_part.chars().take(10000).collect(),
