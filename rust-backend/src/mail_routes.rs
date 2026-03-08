@@ -330,6 +330,54 @@ pub async fn get_mail_content(
     }
 }
 
+pub async fn get_mail_raw(
+    State(state): State<Arc<MailAppState>>,
+    Path((account_id, uid)): Path<(i64, String)>,
+    Query(q): Query<MailContentQuery>,
+) -> impl IntoResponse {
+    let file_name = if uid.trim().is_empty() {
+        "message.msg".to_string()
+    } else {
+        format!("{uid}.msg")
+    };
+
+    let raw = tokio::task::spawn_blocking({
+        let imap_state = state.imap.clone();
+        let uid = uid.clone();
+        let mailbox = q.mailbox.clone();
+        move || imap_session::fetch_mail_raw_in_mailbox(&imap_state, account_id, &mailbox, &uid)
+    })
+    .await
+    .ok()
+    .flatten();
+
+    if let Some(raw_bytes) = raw {
+        let escaped = file_name.replace('"', "\\\"");
+        let encoded = percent_encode_filename(&file_name);
+        let disposition =
+            format!("attachment; filename=\"{escaped}\"; filename*=UTF-8''{encoded}");
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, "application/vnd.ms-outlook")
+            .header(CONTENT_LENGTH, raw_bytes.len().to_string())
+            .header(CONTENT_DISPOSITION, disposition)
+            .body(Body::from(raw_bytes))
+            .unwrap_or_else(|_| {
+                Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .body(Body::empty())
+                    .unwrap()
+            })
+            .into_response();
+    }
+
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({"error": "Mail not found"})),
+    )
+        .into_response()
+}
+
 pub async fn download_attachment(
     State(state): State<Arc<MailAppState>>,
     Path((account_id, uid, attachment_index)): Path<(i64, String, usize)>,

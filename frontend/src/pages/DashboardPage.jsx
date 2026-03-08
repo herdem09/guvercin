@@ -172,6 +172,493 @@ function stripLabelFolderPrefix(value) {
     return value.replace(/^Labels\//i, '').replace(/^Etiketler\//i, '').trim()
 }
 
+function isLabelMailbox(value) {
+    return /^(Labels|Etiketler)(\/|$)/i.test((value || '').trim())
+}
+
+function isMailboxSectionRoot(value) {
+    return ['Folders', 'Labels', 'Etiketler'].includes((value || '').trim())
+}
+
+function isMoveTargetMailbox(value) {
+    const mailbox = (value || '').trim()
+    if (!mailbox || isMailboxSectionRoot(mailbox)) return false
+    return !isLabelMailbox(mailbox)
+}
+
+function getMailboxNamespacePrefix(mailboxes, namespaceRoots) {
+    const root = namespaceRoots.find((candidate) => (
+        Array.isArray(mailboxes)
+        && mailboxes.some((mailbox) => mailbox === candidate || mailbox.startsWith(`${candidate}/`))
+    ))
+    return root ? `${root}/` : ''
+}
+
+function applyMailboxNamespace(name, prefix) {
+    const trimmed = (name || '').trim().replace(/^\/+|\/+$/g, '')
+    if (!trimmed) return ''
+    if (!prefix || trimmed.startsWith(prefix)) return trimmed
+    return `${prefix}${trimmed}`
+}
+
+function sanitizeFileName(value) {
+    return (value || 'message')
+        .replace(/[<>:"/\\|?*\u0000-\u001F]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 120) || 'message'
+}
+
+function buildExportBaseName(mail, content) {
+    const subject = sanitizeFileName(content?.subject || mail?.subject || 'message')
+    const dateValue = content?.date || mail?.date || ''
+    const parsedDate = Date.parse(dateValue)
+    const datePart = Number.isFinite(parsedDate)
+        ? new Date(parsedDate).toISOString().slice(0, 10)
+        : 'mail'
+    return `${subject}-${datePart}`
+}
+
+function escapeHtml(value) {
+    return (value || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
+}
+
+function getMailSenderLabel(mail, content) {
+    if (content?.from_name && content?.from_address) {
+        return `${content.from_name} <${content.from_address}>`
+    }
+    if (content?.from_address) {
+        return content.from_address
+    }
+    if (mail?.name && mail?.address) {
+        return `${mail.name} <${mail.address}>`
+    }
+    return mail?.address || mail?.name || 'Unknown'
+}
+
+function htmlToPlainText(html) {
+    if (!html) return ''
+    try {
+        const doc = new DOMParser().parseFromString(html, 'text/html')
+        return (doc.body?.textContent || '')
+            .replace(/\u00a0/g, ' ')
+            .replace(/\r/g, '')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim()
+    } catch {
+        return html
+    }
+}
+
+function extractHtmlFragment(html) {
+    if (!html) return ''
+    try {
+        const doc = new DOMParser().parseFromString(html, 'text/html')
+        doc.querySelectorAll('script, iframe, object, embed').forEach((node) => node.remove())
+        doc.querySelectorAll('*').forEach((node) => {
+            Array.from(node.attributes).forEach((attribute) => {
+                if (/^on/i.test(attribute.name)) {
+                    node.removeAttribute(attribute.name)
+                }
+            })
+        })
+        return doc.body?.innerHTML || html
+    } catch {
+        return html
+    }
+}
+
+function buildMailPlainText(mail, content, formatMailDateLong) {
+    const lines = [
+        `Subject: ${content?.subject || mail?.subject || '(No Subject)'}`,
+        `From: ${getMailSenderLabel(mail, content)}`,
+        `To: ${mail?.recipient_to || '-'}`,
+        `CC: ${content?.cc || '-'}`,
+        `BCC: ${content?.bcc || '-'}`,
+        `Date: ${formatMailDateLong(content?.date || mail?.date) || '-'}`,
+        '',
+    ]
+
+    const body = content?.plain_body || htmlToPlainText(content?.html_body) || '(No content)'
+    return `${lines.join('\n')}${body}`.trim()
+}
+
+function buildMailHtmlDocument(mail, content, formatMailDateLong) {
+    const subject = content?.subject || mail?.subject || '(No Subject)'
+    const bodyMarkup = content?.html_body
+        ? extractHtmlFragment(content.html_body)
+        : `<pre>${escapeHtml(content?.plain_body || '(No content)')}</pre>`
+
+    return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${escapeHtml(subject)}</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f4f1ea;
+      --card: #fffdf8;
+      --line: #d6cfc2;
+      --text: #1f1a17;
+      --muted: #6e6259;
+      --accent: #2b5f75;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 32px;
+      background:
+        radial-gradient(circle at top left, rgba(43, 95, 117, 0.10), transparent 28rem),
+        linear-gradient(180deg, #f6f3ec 0%, #efe9de 100%);
+      color: var(--text);
+      font-family: Georgia, "Times New Roman", serif;
+    }
+    .mail-sheet {
+      max-width: 920px;
+      margin: 0 auto;
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      overflow: hidden;
+      box-shadow: 0 20px 60px rgba(31, 26, 23, 0.08);
+    }
+    .mail-header {
+      padding: 28px 32px 22px;
+      border-bottom: 1px solid var(--line);
+      background: linear-gradient(180deg, rgba(255,255,255,0.9) 0%, rgba(250,246,239,0.98) 100%);
+    }
+    .mail-subject {
+      margin: 0 0 18px;
+      font-size: 30px;
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+    }
+    .mail-meta {
+      display: grid;
+      grid-template-columns: 90px 1fr;
+      gap: 8px 14px;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .mail-meta dt {
+      margin: 0;
+      color: var(--muted);
+      font-weight: 700;
+    }
+    .mail-meta dd {
+      margin: 0;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    .mail-body {
+      padding: 28px 32px 36px;
+      font-size: 16px;
+      line-height: 1.6;
+    }
+    .mail-body pre {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 14px;
+      line-height: 1.55;
+    }
+    img {
+      max-width: 100%;
+      height: auto;
+    }
+    @media print {
+      body {
+        padding: 0;
+        background: #fff;
+      }
+      .mail-sheet {
+        max-width: none;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+      }
+      .mail-header,
+      .mail-body {
+        padding-left: 0;
+        padding-right: 0;
+      }
+    }
+  </style>
+</head>
+<body>
+  <article class="mail-sheet">
+    <header class="mail-header">
+      <h1 class="mail-subject">${escapeHtml(subject)}</h1>
+      <dl class="mail-meta">
+        <dt>From</dt><dd>${escapeHtml(getMailSenderLabel(mail, content))}</dd>
+        <dt>To</dt><dd>${escapeHtml(mail?.recipient_to || '-')}</dd>
+        <dt>CC</dt><dd>${escapeHtml(content?.cc || '-')}</dd>
+        <dt>BCC</dt><dd>${escapeHtml(content?.bcc || '-')}</dd>
+        <dt>Date</dt><dd>${escapeHtml(formatMailDateLong(content?.date || mail?.date) || '-')}</dd>
+      </dl>
+    </header>
+    <section class="mail-body">${bodyMarkup}</section>
+  </article>
+</body>
+</html>`
+}
+
+function normalizeCrlf(value) {
+    return (value || '').replace(/\r?\n/g, '\r\n')
+}
+
+function buildFallbackMsgContent(mail, content, formatMailDateLong) {
+    const subject = content?.subject || mail?.subject || '(No Subject)'
+    const plainBody = content?.plain_body || htmlToPlainText(content?.html_body) || '(No content)'
+
+    return normalizeCrlf([
+        `Subject: ${subject}`,
+        `From: ${getMailSenderLabel(mail, content)}`,
+        `To: ${mail?.recipient_to || ''}`,
+        `CC: ${content?.cc || ''}`,
+        `BCC: ${content?.bcc || ''}`,
+        `Date: ${formatMailDateLong(content?.date || mail?.date) || ''}`,
+        'MIME-Version: 1.0',
+        'Content-Type: text/plain; charset=UTF-8',
+        'Content-Transfer-Encoding: 8bit',
+        '',
+        plainBody,
+    ].join('\n'))
+}
+
+function buildFallbackEmlContent(mail, content, formatMailDateLong) {
+    const subject = content?.subject || mail?.subject || '(No Subject)'
+    const plainBody = content?.plain_body || htmlToPlainText(content?.html_body) || '(No content)'
+
+    return normalizeCrlf([
+        `Subject: ${subject}`,
+        `From: ${getMailSenderLabel(mail, content)}`,
+        `To: ${mail?.recipient_to || ''}`,
+        `CC: ${content?.cc || ''}`,
+        `BCC: ${content?.bcc || ''}`,
+        `Date: ${formatMailDateLong(content?.date || mail?.date) || ''}`,
+        'MIME-Version: 1.0',
+        'Content-Type: text/plain; charset=UTF-8',
+        'Content-Transfer-Encoding: 8bit',
+        '',
+        plainBody,
+    ].join('\n'))
+}
+
+function wrapPdfLine(line, maxLength) {
+    const chunks = []
+    let remaining = line.trimEnd()
+
+    if (!remaining) return ['']
+
+    while (remaining.length > maxLength) {
+        let splitAt = remaining.lastIndexOf(' ', maxLength)
+        if (splitAt <= 0) splitAt = maxLength
+        chunks.push(remaining.slice(0, splitAt).trimEnd())
+        remaining = remaining.slice(splitAt).trimStart()
+    }
+
+    chunks.push(remaining)
+    return chunks
+}
+
+function escapePdfText(value) {
+    const normalized = (value || '')
+        .normalize('NFKD')
+        .replace(/[^\x20-\x7E]/g, '?')
+    return normalized
+        .replace(/\\/g, '\\\\')
+        .replace(/\(/g, '\\(')
+        .replace(/\)/g, '\\)')
+}
+
+function buildSimplePdfBytes(text) {
+    const encoder = new TextEncoder()
+    const wrappedLines = normalizeCrlf(text)
+        .split('\r\n')
+        .flatMap((line) => wrapPdfLine(line, 92))
+
+    const pageHeight = 842
+    const topY = 792
+    const lineHeight = 16
+    const bottomMargin = 48
+    const linesPerPage = Math.max(1, Math.floor((topY - bottomMargin) / lineHeight))
+    const pages = []
+
+    for (let index = 0; index < wrappedLines.length; index += linesPerPage) {
+        pages.push(wrappedLines.slice(index, index + linesPerPage))
+    }
+    if (pages.length === 0) pages.push([''])
+
+    const fontObjectId = 3 + (pages.length * 2)
+    const objects = [
+        '1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj',
+        `2 0 obj << /Type /Pages /Count ${pages.length} /Kids [${pages.map((_, pageIndex) => `${3 + (pageIndex * 2)} 0 R`).join(' ')}] >> endobj`,
+    ]
+
+    pages.forEach((pageLines, pageIndex) => {
+        const pageObjectId = 3 + (pageIndex * 2)
+        const contentObjectId = pageObjectId + 1
+        const streamLines = ['BT', '/F1 11 Tf', `48 ${topY} Td`]
+
+        pageLines.forEach((line, lineIndex) => {
+            if (lineIndex > 0) streamLines.push(`0 -${lineHeight} Td`)
+            streamLines.push(`(${escapePdfText(line)}) Tj`)
+        })
+        streamLines.push('ET')
+
+        const stream = `${streamLines.join('\n')}\n`
+        const streamBytes = encoder.encode(stream)
+
+        objects.push(
+            `${pageObjectId} 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 ${pageHeight}] /Resources << /Font << /F1 ${fontObjectId} 0 R >> >> /Contents ${contentObjectId} 0 R >> endobj`,
+        )
+        objects.push(
+            `${contentObjectId} 0 obj << /Length ${streamBytes.length} >> stream\n${stream}endstream\nendobj`,
+        )
+    })
+
+    objects.push(`${fontObjectId} 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj`)
+
+    let pdf = '%PDF-1.4\n'
+    const offsets = [0]
+
+    objects.forEach((object) => {
+        offsets.push(pdf.length)
+        pdf += `${object}\n`
+    })
+
+    const xrefOffset = pdf.length
+    pdf += `xref\n0 ${objects.length + 1}\n`
+    pdf += '0000000000 65535 f \n'
+    offsets.slice(1).forEach((offset) => {
+        pdf += `${offset.toString().padStart(10, '0')} 00000 n \n`
+    })
+    pdf += `trailer << /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`
+
+    return encoder.encode(pdf)
+}
+
+async function saveBlobWithPicker(blob, options) {
+    const { suggestedName, types } = options
+
+    try {
+        const [{ save }, { invoke }] = await Promise.all([
+            import('@tauri-apps/plugin-dialog'),
+            import('@tauri-apps/api/core'),
+        ])
+        const filters = Array.isArray(types)
+            ? types.map((entry) => ({
+                name: entry.description || 'File',
+                extensions: Object.values(entry.accept || {})
+                    .flat()
+                    .map((extension) => extension.replace(/^\./, '')),
+            })).filter((entry) => entry.extensions.length > 0)
+            : []
+        const selectedPath = await save({
+            title: 'Save File',
+            defaultPath: suggestedName,
+            filters,
+        })
+        if (!selectedPath) {
+            throw new DOMException('Save cancelled', 'AbortError')
+        }
+        const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()))
+        await invoke('save_export_file_to_path', {
+            path: selectedPath,
+            bytes,
+        })
+        return
+    } catch (error) {
+        if (error?.name === 'AbortError') throw error
+        console.error('Native save dialog failed, falling back to browser download:', error)
+        // Fall back to browser-specific save flows.
+    }
+
+    if (typeof window.showSaveFilePicker === 'function') {
+        try {
+            const handle = await window.showSaveFilePicker({ suggestedName, types })
+            const writable = await handle.createWritable()
+            await writable.write(blob)
+            await writable.close()
+            return
+        } catch (error) {
+            if (error?.name === 'AbortError') throw error
+        }
+    }
+
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = suggestedName
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+function printMailHtml(html) {
+    return new Promise((resolve, reject) => {
+        const frame = document.createElement('iframe')
+        frame.style.position = 'fixed'
+        frame.style.right = '0'
+        frame.style.bottom = '0'
+        frame.style.width = '0'
+        frame.style.height = '0'
+        frame.style.border = '0'
+
+        const cleanup = () => {
+            window.setTimeout(() => frame.remove(), 1000)
+        }
+
+        frame.onload = () => {
+            const targetWindow = frame.contentWindow
+            if (!targetWindow) {
+                cleanup()
+                reject(new Error('Print view could not be created.'))
+                return
+            }
+
+            let settled = false
+            const settle = () => {
+                if (settled) return
+                settled = true
+                cleanup()
+                resolve()
+            }
+
+            const handleAfterPrint = () => {
+                targetWindow.removeEventListener('afterprint', handleAfterPrint)
+                settle()
+            }
+
+            targetWindow.addEventListener('afterprint', handleAfterPrint)
+            window.setTimeout(() => {
+                try {
+                    targetWindow.focus()
+                    targetWindow.print()
+                    window.setTimeout(settle, 1500)
+                } catch (error) {
+                    targetWindow.removeEventListener('afterprint', handleAfterPrint)
+                    cleanup()
+                    reject(error)
+                }
+            }, 120)
+        }
+
+        document.body.appendChild(frame)
+        frame.srcdoc = html
+    })
+}
+
 const DashboardPage = () => {
     const { t } = useTranslation()
     const navigate = useNavigate()
@@ -678,13 +1165,14 @@ const DashboardPage = () => {
         const ids = Array.from(new Set((mailIds || []).filter(Boolean)))
         if (ids.length === 0 || !destination) return
         const sourceFolder = selectedFolder || 'INBOX'
+        const destinationLabel = folderInfo(destination).label
         const affectedMails = mails.filter((mail) => ids.includes(mail.id))
         const selectionSnapshot = selectedMail && ids.includes(selectedMail.id)
             ? { mail: selectedMail, content: mailContent }
             : null
 
         enqueueUndoableAction({
-            label: ids.length === 1 ? `Mail moved to ${destination}` : `${ids.length} mails moved to ${destination}`,
+            label: ids.length === 1 ? `Mail moved to ${destinationLabel}` : `${ids.length} mails moved to ${destinationLabel}`,
             apply: () => {
                 setMails((prev) => prev.filter((mail) => !ids.includes(mail.id)))
                 if (selectionSnapshot) {
@@ -1057,6 +1545,7 @@ const DashboardPage = () => {
                                 loadMails={loadMails}
                                 loadMailsFromCache={loadMailsFromCache}
                                 syncMailsFromRemote={syncMailsFromRemote}
+                                prefetchInlineAssets={prefetchInlineAssets}
                                 isSyncing={isSyncing}
                                 openMail={openMail}
                                 detachMailToWindow={detachMailToWindow}
@@ -1136,7 +1625,7 @@ function MailSection({
     ensureImapConnected,
     folders, selectedFolder, setSelectedFolder, mails,
     selectedMail, setSelectedMail, mailContent, setMailContent, loadingMails, loadingContent,
-    connecting, loadMails, loadMailsFromCache, syncMailsFromRemote, isSyncing,
+    connecting, loadMails, loadMailsFromCache, syncMailsFromRemote, prefetchInlineAssets, isSyncing,
     openMail, detachMailToWindow, detachMailToWindowFromList, iframeRef, getShortTime,
     currentPage, setCurrentPage, maxPage, perPage, setPerPage,
     isMailFullscreen, toggleMailFullscreen,
@@ -1167,7 +1656,10 @@ function MailSection({
     const [customFlagLabels, setCustomFlagLabels] = useState([])
     const [isPerPageOpen, setIsPerPageOpen] = useState(false)
     const [attachmentsExpanded, setAttachmentsExpanded] = useState(true)
+    const [fileActionLoading, setFileActionLoading] = useState('')
     const [layoutCols, setLayoutCols] = useState(1)
+    const [movePopoverStyle, setMovePopoverStyle] = useState(null)
+    const [flagPopoverStyle, setFlagPopoverStyle] = useState(null)
     const displayCols = isMailFullscreen ? layoutCols : 1
     const perPageValue = Math.max(1, Number.parseInt(perPage, 10) || 50)
 
@@ -1248,19 +1740,25 @@ function MailSection({
     const homeForwardLabel = hasMultipleActionMails ? 'Forward All' : 'Forward'
     const readToggleLabel = allActionMailsSeen ? 'Unread' : 'Read'
     const flagToggleLabel = allActionMailsFlagged ? 'Unflag' : 'Flag'
-    const moveFolderOptions = useMemo(
-        () => folders.filter((folder) => !['Folders', 'Labels', 'Etiketler'].includes(folder)),
-        [folders],
-    )
+    const moveFolderOptions = useMemo(() => folders.filter(isMoveTargetMailbox), [folders])
     const availableFlagLabels = useMemo(() => {
         const builtInLabels = folders
-            .filter((folder) => folder.startsWith('Labels/') || folder.startsWith('Etiketler/'))
+            .filter(isLabelMailbox)
             .map(stripLabelFolderPrefix)
             .filter(Boolean)
+        const existingMailLabels = mails
+            .map((mail) => (mail?.category || '').trim())
+            .filter(Boolean)
 
-        return Array.from(new Set([...builtInLabels, ...customFlagLabels]))
+        return Array.from(new Set([...builtInLabels, ...existingMailLabels, ...customFlagLabels]))
             .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }))
-    }, [customFlagLabels, folders])
+    }, [customFlagLabels, folders, mails])
+    const ensureLabelExists = async (label) => {
+        const mailboxName = applyMailboxNamespace(label, getMailboxNamespacePrefix(folders, ['Labels', 'Etiketler']))
+        if (!mailboxName || mailboxName === label) return true
+        return createMailbox(mailboxName)
+    }
+    const selectionRequiredTitle = hasAnyActionMail ? undefined : 'Select a mail first'
 
     const formatMailDateLong = (dateValue) => {
         if (!dateValue) return ''
@@ -1320,6 +1818,33 @@ function MailSection({
         return null
     }, [accountId, canUseRemoteMail, mailContent, selectedFolder, selectedMail])
 
+    const fetchMailRawBytes = useCallback(async (mail) => {
+        if (!mail || !accountId) return null
+
+        const mailbox = selectedFolder || 'INBOX'
+        const candidates = canUseRemoteMail
+            ? [
+                `/api/mail/${accountId}/raw/${encodeURIComponent(mail.id)}?mailbox=${encodeURIComponent(mailbox)}`,
+                `/api/offline/${accountId}/local-raw/${encodeURIComponent(mail.id)}?mailbox=${encodeURIComponent(mailbox)}`,
+            ]
+            : [
+                `/api/offline/${accountId}/local-raw/${encodeURIComponent(mail.id)}?mailbox=${encodeURIComponent(mailbox)}`,
+                `/api/mail/${accountId}/raw/${encodeURIComponent(mail.id)}?mailbox=${encodeURIComponent(mailbox)}`,
+            ]
+
+        for (const endpoint of candidates) {
+            try {
+                const response = await fetch(apiUrl(endpoint), { cache: 'no-store' })
+                if (!response.ok) continue
+                return new Uint8Array(await response.arrayBuffer())
+            } catch {
+                // Try next source.
+            }
+        }
+
+        return null
+    }, [accountId, canUseRemoteMail, selectedFolder])
+
     const dedupeEmails = (values) => {
         const seen = new Set()
         return values.filter((value) => {
@@ -1352,6 +1877,90 @@ function MailSection({
         ].join('\n')
     }
 
+    const runFileAction = useCallback(async (actionKey, action) => {
+        if (!selectedMail || fileActionLoading) return
+        setFileActionLoading(actionKey)
+        try {
+            const content = await loadMailContentForDraft(selectedMail)
+            await action(selectedMail, content)
+        } catch (error) {
+            if (error?.name !== 'AbortError') {
+                console.error(`File action "${actionKey}" failed:`, error)
+                window.alert(error?.message || 'The file action failed.')
+            }
+        } finally {
+            setFileActionLoading('')
+        }
+    }, [fileActionLoading, loadMailContentForDraft, selectedMail])
+
+    const handleDownloadHtml = useCallback(() => {
+        runFileAction('html', async (mail, content) => {
+            const html = buildMailHtmlDocument(mail, content, formatMailDateLong)
+            const fileName = `${buildExportBaseName(mail, content)}.html`
+            await saveBlobWithPicker(
+                new Blob([html], { type: 'text/html;charset=utf-8' }),
+                {
+                    suggestedName: fileName,
+                    types: [{ description: 'HTML file', accept: { 'text/html': ['.html'] } }],
+                },
+            )
+        })
+    }, [formatMailDateLong, runFileAction])
+
+    const handleDownloadMsg = useCallback(() => {
+        runFileAction('msg', async (mail, content) => {
+            const rawBytes = await fetchMailRawBytes(mail)
+            const fileName = `${buildExportBaseName(mail, content)}.msg`
+            const blob = rawBytes
+                ? new Blob([rawBytes], { type: 'application/vnd.ms-outlook' })
+                : new Blob(
+                    [buildFallbackMsgContent(mail, content, formatMailDateLong)],
+                    { type: 'application/vnd.ms-outlook;charset=utf-8' },
+                )
+
+            await saveBlobWithPicker(blob, {
+                suggestedName: fileName,
+                types: [{ description: 'MSG file', accept: { 'application/vnd.ms-outlook': ['.msg'] } }],
+            })
+        })
+    }, [fetchMailRawBytes, formatMailDateLong, runFileAction])
+
+    const handleDownloadEml = useCallback(() => {
+        runFileAction('eml', async (mail, content) => {
+            const rawBytes = await fetchMailRawBytes(mail)
+            const fileName = `${buildExportBaseName(mail, content)}.eml`
+            const blob = rawBytes
+                ? new Blob([rawBytes], { type: 'message/rfc822' })
+                : new Blob(
+                    [buildFallbackEmlContent(mail, content, formatMailDateLong)],
+                    { type: 'message/rfc822;charset=utf-8' },
+                )
+
+            await saveBlobWithPicker(blob, {
+                suggestedName: fileName,
+                types: [{ description: 'EML file', accept: { 'message/rfc822': ['.eml'] } }],
+            })
+        })
+    }, [fetchMailRawBytes, formatMailDateLong, runFileAction])
+
+    const handleDownloadPdf = useCallback(() => {
+        runFileAction('pdf', async (mail, content) => {
+            const pdfBytes = buildSimplePdfBytes(buildMailPlainText(mail, content, formatMailDateLong))
+            const fileName = `${buildExportBaseName(mail, content)}.pdf`
+            await saveBlobWithPicker(new Blob([pdfBytes], { type: 'application/pdf' }), {
+                suggestedName: fileName,
+                types: [{ description: 'PDF file', accept: { 'application/pdf': ['.pdf'] } }],
+            })
+        })
+    }, [formatMailDateLong, runFileAction])
+
+    const handlePrintMail = useCallback(() => {
+        runFileAction('print', async (mail, content) => {
+            const html = buildMailHtmlDocument(mail, content, formatMailDateLong)
+            await printMailHtml(html)
+        })
+    }, [formatMailDateLong, runFileAction])
+
     const buildMultiMailSummary = (mailList) => (
         mailList.map((mail) => {
             const sender = mail.name || mail.address || 'Unknown'
@@ -1380,11 +1989,32 @@ function MailSection({
     const selectionMenuRef = useRef(null)
     const filterMenuRef = useRef(null)
     const sortMenuRef = useRef(null)
+    const submenuScrollRef = useRef(null)
     const moveMenuRef = useRef(null)
     const flagMenuRef = useRef(null)
     const isResizingFolder = useRef(false)
     const isResizingList = useRef(false)
     const mailToolbarRef = useRef(null)
+
+    const syncPopoverPosition = useCallback((menuRef, setStyle) => {
+        const node = menuRef.current
+        if (!node) {
+            setStyle(null)
+            return
+        }
+
+        const rect = node.getBoundingClientRect()
+        const estimatedWidth = 220
+        const left = Math.min(
+            Math.max(12, rect.left),
+            Math.max(12, window.innerWidth - estimatedWidth - 12),
+        )
+
+        setStyle({
+            left: `${left}px`,
+            top: `${rect.bottom + 6}px`,
+        })
+    }, [])
 
     const recomputeMinListWidth = useCallback(() => {
         const el = mailToolbarRef.current
@@ -1513,6 +2143,37 @@ function MailSection({
         document.addEventListener('mousedown', handleClickOutside)
         return () => document.removeEventListener('mousedown', handleClickOutside)
     }, [])
+
+    useEffect(() => {
+        if (!isMoveMenuOpen && !isFlagMenuOpen) {
+            setMovePopoverStyle(null)
+            setFlagPopoverStyle(null)
+            return
+        }
+
+        const sync = () => {
+            if (isMoveMenuOpen) {
+                syncPopoverPosition(moveMenuRef, setMovePopoverStyle)
+            }
+            if (isFlagMenuOpen) {
+                syncPopoverPosition(flagMenuRef, setFlagPopoverStyle)
+            }
+        }
+
+        const frameId = window.requestAnimationFrame(sync)
+        const scrollNode = submenuScrollRef.current
+
+        window.addEventListener('resize', sync)
+        window.addEventListener('scroll', sync, true)
+        scrollNode?.addEventListener('scroll', sync)
+
+        return () => {
+            window.cancelAnimationFrame(frameId)
+            window.removeEventListener('resize', sync)
+            window.removeEventListener('scroll', sync, true)
+            scrollNode?.removeEventListener('scroll', sync)
+        }
+    }, [activeRibbonTab, activeTabId, isFlagMenuOpen, isMoveMenuOpen, syncPopoverPosition])
 
     useEffect(() => {
         const handleKeyDown = (e) => {
@@ -1787,9 +2448,10 @@ function MailSection({
         if (!hasAnyActionMail) return
         const name = window.prompt('New folder name')
         if (!name) return
-        const created = await createMailbox(name)
+        const mailboxName = applyMailboxNamespace(name, getMailboxNamespacePrefix(folders, ['Folders']))
+        const created = await createMailbox(mailboxName)
         if (created) {
-            await handleMoveAction(name.trim())
+            await handleMoveAction(mailboxName)
         }
     }
 
@@ -1801,6 +2463,7 @@ function MailSection({
         setCustomFlagLabels((prev) => (
             prev.includes(trimmed) ? prev : [...prev, trimmed]
         ))
+        await ensureLabelExists(trimmed)
         await handleFlagLabelAction(trimmed)
     }
 
@@ -1853,6 +2516,7 @@ function MailSection({
     const activeTabMail = activeTab ? (mails.find((mail) => mail.id === activeTab.mail.id) || activeTab.mail) : null
     const activeTabReadLabel = activeTabMail?.seen === true ? 'Unread' : 'Read'
     const activeTabFlagLabel = activeTabMail?.flagged === true ? 'Unflag' : 'Flag'
+    const fileActionsDisabled = !selectedMail || loadingContent || fileActionLoading !== ''
 
     const closeTabsForMailIds = (mailIds) => {
         const ids = new Set(mailIds)
@@ -1951,9 +2615,10 @@ function MailSection({
         if (!activeTabMail) return
         const name = window.prompt('New folder name')
         if (!name) return
-        const created = await createMailbox(name)
+        const mailboxName = applyMailboxNamespace(name, getMailboxNamespacePrefix(folders, ['Folders']))
+        const created = await createMailbox(mailboxName)
         if (created) {
-            await handleActiveTabMoveAction(name.trim())
+            await handleActiveTabMoveAction(mailboxName)
         }
     }
 
@@ -1965,6 +2630,7 @@ function MailSection({
         setCustomFlagLabels((prev) => (
             prev.includes(trimmed) ? prev : [...prev, trimmed]
         ))
+        await ensureLabelExists(trimmed)
         await handleActiveTabFlagLabelAction(trimmed)
     }
 
@@ -2012,6 +2678,7 @@ function MailSection({
                 </div>
             )}
             <div className="db-submenu">
+                <div className="db-submenu-scroll" ref={submenuScrollRef}>
                 {activeTabId ? (
                     <ul>
                         <li><button disabled={!activeTabMail} onClick={handleActiveTabDeleteAction}>🗑️ {t('Delete')}</button></li>
@@ -2022,6 +2689,7 @@ function MailSection({
                         <li className="db-submenu-menu-wrap" ref={moveMenuRef}>
                             <button
                                 disabled={!activeTabMail}
+                                title={activeTabMail ? undefined : 'Open a mail first'}
                                 className={isMoveMenuOpen ? 'submenu-open' : ''}
                                 onClick={() => {
                                     setIsFlagMenuOpen(false)
@@ -2031,7 +2699,7 @@ function MailSection({
                                 📁 {t('Move')}
                             </button>
                             {isMoveMenuOpen && (
-                                <div className="db-submenu-popover">
+                                <div className="db-submenu-popover" style={movePopoverStyle || undefined}>
                                     {moveFolderOptions.map((folder) => (
                                         <button
                                             key={folder}
@@ -2053,6 +2721,7 @@ function MailSection({
                         <li className="db-submenu-menu-wrap" ref={flagMenuRef}>
                             <button
                                 disabled={!activeTabMail}
+                                title={activeTabMail ? undefined : 'Open a mail first'}
                                 className={isFlagMenuOpen ? 'submenu-open' : ''}
                                 onClick={() => {
                                     setIsMoveMenuOpen(false)
@@ -2062,7 +2731,7 @@ function MailSection({
                                 ⚑ {activeTabFlagLabel}
                             </button>
                             {isFlagMenuOpen && (
-                                <div className="db-submenu-popover">
+                                <div className="db-submenu-popover" style={flagPopoverStyle || undefined}>
                                     <button type="button" className="db-submenu-popover__item" onClick={handleActiveTabFlagToggleAction}>
                                         {activeTabFlagLabel}
                                     </button>
@@ -2096,6 +2765,7 @@ function MailSection({
                         <li className="db-submenu-menu-wrap" ref={moveMenuRef}>
                             <button
                                 disabled={!hasAnyActionMail}
+                                title={selectionRequiredTitle}
                                 className={isMoveMenuOpen ? 'submenu-open' : ''}
                                 onClick={() => {
                                     setIsFlagMenuOpen(false)
@@ -2105,7 +2775,7 @@ function MailSection({
                                 📁 {t('Move')}
                             </button>
                             {isMoveMenuOpen && (
-                                <div className="db-submenu-popover">
+                                <div className="db-submenu-popover" style={movePopoverStyle || undefined}>
                                     {moveFolderOptions.map((folder) => (
                                         <button
                                             key={folder}
@@ -2127,6 +2797,7 @@ function MailSection({
                         <li className="db-submenu-menu-wrap" ref={flagMenuRef}>
                             <button
                                 disabled={!hasAnyActionMail}
+                                title={selectionRequiredTitle}
                                 className={isFlagMenuOpen ? 'submenu-open' : ''}
                                 onClick={() => {
                                     setIsMoveMenuOpen(false)
@@ -2136,7 +2807,7 @@ function MailSection({
                                 ⚑ {flagToggleLabel}
                             </button>
                             {isFlagMenuOpen && (
-                                <div className="db-submenu-popover">
+                                <div className="db-submenu-popover" style={flagPopoverStyle || undefined}>
                                     <button type="button" className="db-submenu-popover__item" onClick={handleFlagToggleAction}>
                                         {flagToggleLabel}
                                     </button>
@@ -2162,9 +2833,31 @@ function MailSection({
                 )}
                 {!activeTabId && activeRibbonTab === 'file' && (
                     <ul>
-                        <li><button onClick={() => { }}>💾 {t('Save')}</button></li>
-                        <li><button onClick={() => { }}>🖨️ {t('Print')}</button></li>
-                        <li><button onClick={() => { }}>📤 {t('Export')}</button></li>
+                        <li>
+                            <button disabled={fileActionsDisabled} onClick={handleDownloadHtml}>
+                                💾 {fileActionLoading === 'html' ? 'Saving HTML...' : 'Download as HTML'}
+                            </button>
+                        </li>
+                        <li>
+                            <button disabled={fileActionsDisabled} onClick={handleDownloadMsg}>
+                                ✉️ {fileActionLoading === 'msg' ? 'Saving MSG...' : 'Download as MSG'}
+                            </button>
+                        </li>
+                        <li>
+                            <button disabled={fileActionsDisabled} onClick={handleDownloadEml}>
+                                📩 {fileActionLoading === 'eml' ? 'Saving EML...' : 'Download as EML'}
+                            </button>
+                        </li>
+                        <li>
+                            <button disabled={fileActionsDisabled} onClick={handleDownloadPdf}>
+                                📄 {fileActionLoading === 'pdf' ? 'Saving PDF...' : 'Download as PDF'}
+                            </button>
+                        </li>
+                        <li>
+                            <button disabled={fileActionsDisabled} onClick={handlePrintMail}>
+                                🖨️ {fileActionLoading === 'print' ? 'Preparing print...' : 'Print'}
+                            </button>
+                        </li>
                     </ul>
                 )}
                 {!activeTabId && activeRibbonTab === 'send-receive' && (
@@ -2192,6 +2885,7 @@ function MailSection({
                         <li><button onClick={() => { }}>📏 {t('Layout')}</button></li>
                     </ul>
                 )}
+                </div>
             </div>
 
             {/* ── Tab content or normal inbox view ───── */}

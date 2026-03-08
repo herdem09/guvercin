@@ -165,10 +165,23 @@ impl ImapSession {
     }
 
     fn uid_store_keyword(&mut self, uid: &str, keyword: &str, add: bool) -> Result<(), String> {
+        let keyword = keyword.trim();
+        if keyword.is_empty() {
+            return Err("Label keyword cannot be empty".to_string());
+        }
+
+        if keyword.chars().any(|ch| {
+            ch.is_whitespace() || matches!(ch, '(' | ')' | '{' | '%' | '*' | '"' | '\\' | ']')
+        }) {
+            return Err(format!(
+                "Label \"{keyword}\" contains characters not supported by IMAP keywords"
+            ));
+        }
+
         let op = if add {
-            format!(r#"+FLAGS ("{keyword}")"#)
+            format!("+FLAGS ({keyword})")
         } else {
-            format!(r#"-FLAGS ("{keyword}")"#)
+            format!("-FLAGS ({keyword})")
         };
         let res = match self {
             ImapSession::Plain(s) => s.uid_store(uid, &op),
@@ -548,6 +561,7 @@ pub fn is_connected(state: &Arc<ImapState>, account_id: i64) -> bool {
 pub fn mark_seen(
     state: &Arc<ImapState>,
     account_id: i64,
+    mailbox: &str,
     uid: &str,
     seen: bool,
 ) -> Result<(), String> {
@@ -555,12 +569,14 @@ pub fn mark_seen(
     let session = sessions
         .get_mut(&account_id)
         .ok_or_else(|| format!("No IMAP session for account {account_id}"))?;
+    session.select_mailbox(mailbox)?;
     session.uid_store_flag(uid, "\\Seen", seen)
 }
 
 pub fn mark_flagged(
     state: &Arc<ImapState>,
     account_id: i64,
+    mailbox: &str,
     uid: &str,
     flagged: bool,
 ) -> Result<(), String> {
@@ -568,12 +584,14 @@ pub fn mark_flagged(
     let session = sessions
         .get_mut(&account_id)
         .ok_or_else(|| format!("No IMAP session for account {account_id}"))?;
+    session.select_mailbox(mailbox)?;
     session.uid_store_flag(uid, "\\Flagged", flagged)
 }
 
 pub fn set_label(
     state: &Arc<ImapState>,
     account_id: i64,
+    mailbox: &str,
     uid: &str,
     label: &str,
     add: bool,
@@ -582,12 +600,14 @@ pub fn set_label(
     let session = sessions
         .get_mut(&account_id)
         .ok_or_else(|| format!("No IMAP session for account {account_id}"))?;
+    session.select_mailbox(mailbox)?;
     session.uid_store_keyword(uid, label, add)
 }
 
 pub fn move_mail(
     state: &Arc<ImapState>,
     account_id: i64,
+    source_mailbox: &str,
     uid: &str,
     destination: &str,
 ) -> Result<(), String> {
@@ -595,6 +615,7 @@ pub fn move_mail(
     let session = sessions
         .get_mut(&account_id)
         .ok_or_else(|| format!("No IMAP session for account {account_id}"))?;
+    session.select_mailbox(source_mailbox)?;
     session.uid_move_to(uid, destination)
 }
 
@@ -614,11 +635,17 @@ pub fn create_mailbox(
     result.map(|_| ()).map_err(|e| format!("{e}"))
 }
 
-pub fn delete_mail(state: &Arc<ImapState>, account_id: i64, uid: &str) -> Result<(), String> {
+pub fn delete_mail(
+    state: &Arc<ImapState>,
+    account_id: i64,
+    mailbox: &str,
+    uid: &str,
+) -> Result<(), String> {
     let mut sessions = state.sessions.lock().unwrap();
     let session = sessions
         .get_mut(&account_id)
         .ok_or_else(|| format!("No IMAP session for account {account_id}"))?;
+    session.select_mailbox(mailbox)?;
     session.uid_delete(uid)
 }
 

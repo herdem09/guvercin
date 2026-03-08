@@ -473,6 +473,78 @@ pub async fn download_local_attachment(
         .into_response()
 }
 
+pub async fn get_local_mail_raw(
+    State(state): State<Arc<MailAppState>>,
+    Path((account_id, uid)): Path<(i64, String)>,
+    Query(q): Query<LocalMailListQuery>,
+) -> impl IntoResponse {
+    let pool = match db::get_user_db_pool(&state._db, account_id).await {
+        Ok(p) => p,
+        Err(e) => return e.into_response(),
+    };
+
+    let row =
+        match sqlx::query("SELECT raw_rfc822 FROM local_mail_cache WHERE uid = ? AND folder = ?")
+            .bind(&uid)
+            .bind(&q.mailbox)
+            .fetch_optional(&pool)
+            .await
+        {
+            Ok(row) => row,
+            Err(e) => {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({"error": format!("DB error: {e}")})),
+                )
+                    .into_response()
+            }
+        };
+
+    let Some(row) = row else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error":"Mail not found in offline cache"})),
+        )
+            .into_response();
+    };
+
+    let raw = row
+        .try_get::<Option<Vec<u8>>, _>("raw_rfc822")
+        .ok()
+        .flatten();
+
+    let Some(raw_bytes) = raw else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error":"Raw mail not cached offline"})),
+        )
+            .into_response();
+    };
+
+    let file_name = if uid.trim().is_empty() {
+        "message.msg".to_string()
+    } else {
+        format!("{uid}.msg")
+    };
+    let escaped = file_name.replace('"', "\\\"");
+    let encoded = percent_encode_filename(&file_name);
+    let disposition = format!("attachment; filename=\"{escaped}\"; filename*=UTF-8''{encoded}");
+
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, "application/vnd.ms-outlook")
+        .header(CONTENT_LENGTH, raw_bytes.len().to_string())
+        .header(CONTENT_DISPOSITION, disposition)
+        .body(Body::from(raw_bytes))
+        .unwrap_or_else(|_| {
+            Response::builder()
+                .status(StatusCode::INTERNAL_SERVER_ERROR)
+                .body(Body::empty())
+                .unwrap()
+        })
+        .into_response()
+}
+
 pub async fn get_inline_asset(
     State(state): State<Arc<MailAppState>>,
     Path((account_id, asset_id)): Path<(i64, String)>,
@@ -928,31 +1000,39 @@ pub async fn process_queue_once(
             serde_json::from_str(&payload_json).unwrap_or_else(|_| json!({}));
 
         let result = match action_type.as_str() {
-            "mark_read" => imap_session::mark_seen(&state.imap, account_id, &target_uid, true),
-            "mark_unread" => imap_session::mark_seen(&state.imap, account_id, &target_uid, false),
-            "flag" => imap_session::mark_flagged(&state.imap, account_id, &target_uid, true),
-            "unflag" => imap_session::mark_flagged(&state.imap, account_id, &target_uid, false),
-            "delete" => imap_session::delete_mail(&state.imap, account_id, &target_uid),
+            "mark_read" => {
+                imap_session::mark_seen(&state.imap, account_id, &target_folder, &target_uid, true)
+            }
+            "mark_unread" => {
+                imap_session::mark_seen(&state.imap, account_id, &target_folder, &target_uid, false)
+            }
+            "flag" => {
+                imap_session::mark_flagged(&state.imap, account_id, &target_folder, &target_uid, true)
+            }
+            "unflag" => {
+                imap_session::mark_flagged(&state.imap, account_id, &target_folder, &target_uid, false)
+            }
+            "delete" => imap_session::delete_mail(&state.imap, account_id, &target_folder, &target_uid),
             "move" => {
                 let destination = parsed
                     .get("destination")
                     .and_then(|v| v.as_str())
                     .unwrap_or(target_folder.as_str());
-                imap_session::move_mail(&state.imap, account_id, &target_uid, destination)
+                imap_session::move_mail(&state.imap, account_id, &target_folder, &target_uid, destination)
             }
             "label_add" => {
                 let label = parsed
                     .get("label")
                     .and_then(|v| v.as_str())
                     .unwrap_or_default();
-                imap_session::set_label(&state.imap, account_id, &target_uid, label, true)
+                imap_session::set_label(&state.imap, account_id, &target_folder, &target_uid, label, true)
             }
             "label_remove" => {
                 let label = parsed
                     .get("label")
                     .and_then(|v| v.as_str())
                     .unwrap_or_default();
-                imap_session::set_label(&state.imap, account_id, &target_uid, label, false)
+                imap_session::set_label(&state.imap, account_id, &target_folder, &target_uid, label, false)
             }
             "send" => Err("Queued send is not implemented on the backend yet".to_string()),
             _ => Err(format!("Unsupported action type: {action_type}")),
@@ -1505,6 +1585,24 @@ async fn apply_local_action_side_effects(
             .execute(pool)
             .await?;
         }
+        "flag" => {
+            sqlx::query(
+                "UPDATE local_mail_cache SET flagged = 1, updated_at = CURRENT_TIMESTAMP WHERE uid = ? AND folder = ?",
+            )
+            .bind(uid)
+            .bind(folder)
+            .execute(pool)
+            .await?;
+        }
+        "unflag" => {
+            sqlx::query(
+                "UPDATE local_mail_cache SET flagged = 0, updated_at = CURRENT_TIMESTAMP WHERE uid = ? AND folder = ?",
+            )
+            .bind(uid)
+            .bind(folder)
+            .execute(pool)
+            .await?;
+        }
         "delete" => {
             sqlx::query("DELETE FROM local_mail_cache WHERE uid = ? AND folder = ?")
                 .bind(uid)
@@ -1526,6 +1624,45 @@ async fn apply_local_action_side_effects(
             .bind(folder)
             .execute(pool)
             .await?;
+        }
+        "label_add" => {
+            let label = payload
+                .get("label")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if let Some(label) = label {
+                sqlx::query(
+                    "UPDATE local_mail_cache SET category = ?, updated_at = CURRENT_TIMESTAMP WHERE uid = ? AND folder = ?",
+                )
+                .bind(label)
+                .bind(uid)
+                .bind(folder)
+                .execute(pool)
+                .await?;
+            }
+        }
+        "label_remove" => {
+            let label = payload
+                .get("label")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            if let Some(label) = label {
+                sqlx::query(
+                    r#"
+                    UPDATE local_mail_cache
+                    SET category = CASE WHEN category = ? THEN NULL ELSE category END,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE uid = ? AND folder = ?
+                    "#,
+                )
+                .bind(label)
+                .bind(uid)
+                .bind(folder)
+                .execute(pool)
+                .await?;
+            }
         }
         _ => {}
     }

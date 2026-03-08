@@ -83,6 +83,7 @@ pub async fn run(db_dir: Option<PathBuf>) -> anyhow::Result<()> {
             "/api/mail/:account_id/content/:uid",
             get(mail_routes::get_mail_content),
         )
+        .route("/api/mail/:account_id/raw/:uid", get(mail_routes::get_mail_raw))
         .route(
             "/api/mail/:account_id/content/:uid/attachments/:attachment_index",
             get(mail_routes::download_attachment),
@@ -118,6 +119,10 @@ pub async fn run(db_dir: Option<PathBuf>) -> anyhow::Result<()> {
         .route(
             "/api/offline/:account_id/local-content/:uid",
             get(offline_routes::get_local_mail_content),
+        )
+        .route(
+            "/api/offline/:account_id/local-raw/:uid",
+            get(offline_routes::get_local_mail_raw),
         )
         .route(
             "/api/offline/:account_id/local-content/:uid/prefetch-inline",

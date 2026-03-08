@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -73,11 +74,23 @@ fn close_mail_window(handle: tauri::AppHandle, label: String) -> Result<(), Stri
   Ok(())
 }
 
+#[tauri::command]
+fn save_export_file_to_path(path: String, bytes: Vec<u8>) -> Result<(), String> {
+  let path = PathBuf::from(path);
+  if let Some(parent) = path.parent() {
+    fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+  }
+
+  fs::write(&path, bytes).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_log::Builder::default().build())
+    .plugin(tauri_plugin_dialog::init())
     .setup(|app| {
       let _app_handle = app.handle().clone();
       
@@ -100,7 +113,12 @@ pub fn run() {
 
       Ok(())
     })
-    .invoke_handler(tauri::generate_handler![open_mail_window, get_mail_window_data, close_mail_window])
+    .invoke_handler(tauri::generate_handler![
+      open_mail_window,
+      get_mail_window_data,
+      close_mail_window,
+      save_export_file_to_path
+    ])
     .manage(MailWindowStore::default())
     .run(tauri::generate_context!())
     .expect("error while running tauri application");

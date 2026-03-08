@@ -425,7 +425,15 @@ body.resizing * {
   display: flex;
   align-items: center;
   flex-shrink: 0;
+  position: relative;
+  overflow: visible;
+  z-index: 220;
+}
+
+.db-submenu-scroll {
+  width: 100%;
   overflow-x: auto;
+  overflow-y: hidden;
 }
 
 .db-submenu ul {
@@ -434,6 +442,7 @@ body.resizing * {
   gap: 2px;
   align-items: center;
   padding: 0 10px;
+  min-width: max-content;
 }
 
 .db-submenu li button {
@@ -460,8 +469,8 @@ body.resizing * {
 }
 
 .db-submenu li button:disabled {
-  opacity: 0.45;
-  cursor: default;
+  opacity: 0.38;
+  cursor: not-allowed;
 }
 
 .db-submenu li button:disabled:hover {
@@ -477,10 +486,11 @@ body.resizing * {
 }
 
 .db-submenu-popover {
-  position: absolute;
-  top: calc(100% + 6px);
+  position: fixed;
+  top: 0;
   left: 0;
   min-width: 180px;
+  max-width: min(280px, calc(100vw - 24px));
   max-height: 280px;
   overflow-y: auto;
   background: #fff;
@@ -488,7 +498,7 @@ body.resizing * {
   border-radius: 8px;
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.16);
   padding: 6px 0;
-  z-index: 5100;
+  z-index: 5200;
 }
 
 .db-submenu-popover__item {
