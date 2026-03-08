@@ -122,6 +122,32 @@ async fn init_general_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .execute(pool)
         .await;
 
+    // avatar cache (shared across all accounts – lives in general DB)
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS avatar_cache (
+            email_hash   TEXT PRIMARY KEY,
+            email        TEXT NOT NULL,
+            file_path    TEXT NOT NULL DEFAULT '',
+            content_type TEXT NOT NULL DEFAULT '',
+            source       TEXT NOT NULL DEFAULT 'none',
+            not_found    BOOLEAN NOT NULL DEFAULT 0,
+            last_checked DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_avatar_cache_checked
+        ON avatar_cache(last_checked)
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
     Ok(())
 }
 
@@ -217,6 +243,11 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
+
+    // Migration: add avatar_data column so contacts can have a locally assigned photo.
+    let _ = sqlx::query("ALTER TABLE contacts ADD COLUMN avatar_data BLOB")
+        .execute(pool)
+        .await;
 
     // ai configuration table
     sqlx::query(

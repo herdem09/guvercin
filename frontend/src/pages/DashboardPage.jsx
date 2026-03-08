@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { apiUrl } from '../utils/api'
 import { useOfflineSync } from '../context/OfflineSyncContext.jsx'
+import Avatar from '../components/Avatar.jsx'
 import './DashboardPage.css'
 
 // ── Folder mappings ────────────────────
@@ -52,6 +53,33 @@ function attachmentUrl(accountId, uid, attachmentId, mailbox, online) {
         ? `/api/mail/${accountId}/content/${encodeURIComponent(uid)}/attachments/${attachmentId}`
         : `/api/offline/${accountId}/local-content/${encodeURIComponent(uid)}/attachments/${attachmentId}`
     return apiUrl(`${path}?mailbox=${encodeURIComponent(mailbox)}`)
+}
+
+// ── Avatar utilities ────────────────────
+function getAvatarInitials(name, email) {
+    if (name) {
+        const words = name.trim().split(' ')
+        if (words.length >= 2) {
+            return (words[0][0] + words[words.length - 1][0]).toUpperCase()
+        }
+        return name.substring(0, 2).toUpperCase()
+    }
+    if (email) return email.substring(0, 2).toUpperCase()
+    return '??'
+}
+
+function getAvatarColor(name, email) {
+    const colors = [
+        '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7',
+        '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2',
+        '#F8B739', '#52B788', '#E76F51', '#8E44AD', '#3498DB'
+    ]
+    let seed = name || email || 'unknown'
+    let hash = 0
+    for (let i = 0; i < seed.length; i++) {
+        hash = seed.charCodeAt(i) + ((hash << 5) - hash)
+    }
+    return colors[Math.abs(hash) % colors.length]
 }
 
 function systemHour12Preference() {
@@ -657,11 +685,23 @@ const DashboardPage = () => {
                     <button className="db-icon-btn" title="Settings">⚙️</button>
                     <div className="db-account-wrapper">
                         <button className="db-account-btn" ref={accountButtonRef} onClick={handleAccountButtonClick}>
-                            <span className="db-account-btn__icon">👤</span>
+                            <Avatar
+                                email={accountEmailLabel}
+                                name={accountLabel}
+                                accountId={accountId}
+                                size={32}
+                            />
                         </button>
                         {accountMenuOpen && (
                             <div className="account-popover" ref={accountMenuRef}>
-                                <div className="account-popover__avatar">👤</div>
+                                <div className="account-popover__avatar">
+                                    <Avatar
+                                        email={accountEmailLabel}
+                                        name={accountLabel}
+                                        accountId={accountId}
+                                        size={64}
+                                    />
+                                </div>
                                 <div className="account-popover__name">{accountLabel}</div>
                                 <div className="account-popover__email">{accountEmailLabel}</div>
                                 <div className="account-popover__actions">
@@ -698,11 +738,11 @@ const DashboardPage = () => {
 
                     <div className="db-section-area">
                         {activeSection === 'mail' && (
-	                            <MailSection
-	                                accountId={accountId}
-	                                backendReachable={backendReachable}
-	                                networkOnline={networkOnline}
-	                                ensureImapConnected={ensureImapConnected}
+                            <MailSection
+                                accountId={accountId}
+                                backendReachable={backendReachable}
+                                networkOnline={networkOnline}
+                                ensureImapConnected={ensureImapConnected}
                                 folders={folders}
                                 selectedFolder={selectedFolder}
                                 setSelectedFolder={setSelectedFolder}
@@ -723,14 +763,14 @@ const DashboardPage = () => {
                                 detachMailToWindowFromList={detachMailToWindowFromList}
                                 iframeRef={iframeRef}
                                 getShortTime={getShortTime}
-	                                currentPage={currentPage}
-	                                setCurrentPage={setCurrentPage}
-	                                maxPage={maxPage}
-	                                perPage={perPage}
-	                                setPerPage={setPerPage}
-	                                isMailFullscreen={isMailFullscreen}
-	                                toggleMailFullscreen={toggleMailFullscreen}
-	                                removeMailOptimistic={removeMailOptimistic}
+                                currentPage={currentPage}
+                                setCurrentPage={setCurrentPage}
+                                maxPage={maxPage}
+                                perPage={perPage}
+                                setPerPage={setPerPage}
+                                isMailFullscreen={isMailFullscreen}
+                                toggleMailFullscreen={toggleMailFullscreen}
+                                removeMailOptimistic={removeMailOptimistic}
                                 moveMail={moveMail}
                                 canUseRemoteMail={canUseRemoteMail}
                                 composeOpen={composeOpen}
@@ -1473,6 +1513,13 @@ function MailSection({
                                                         />
                                                     </div>
                                                 )}
+                                                <Avatar
+                                                    email={mail.address}
+                                                    name={mail.name}
+                                                    accountId={accountId}
+                                                    size={32}
+                                                    className="db-mail-avatar"
+                                                />
                                                 <div className="db-mail-item-content">
                                                     <span className="db-mail-sender">{mail.name || mail.address || 'Unknown'}</span>
                                                     <span className="db-mail-subject">{mail.subject || '(No Subject)'}</span>

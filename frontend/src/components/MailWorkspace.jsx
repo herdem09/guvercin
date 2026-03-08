@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import Avatar from './Avatar.jsx'
 
 const FOLDER_MAP = {
   INBOX: { icon: '✉️', href: '#inbox' },
@@ -23,6 +24,35 @@ function folderIcon(name) {
 function getShortTime() {
   const now = new Date()
   return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+}
+
+function getAvatarInitials(name, email) {
+  if (name) {
+    const words = name.trim().split(' ')
+    if (words.length >= 2) {
+      return (words[0][0] + words[words.length - 1][0]).toUpperCase()
+    } else {
+      return name.substring(0, 2).toUpperCase()
+    }
+  } else if (email) {
+    return email.substring(0, 2).toUpperCase()
+  }
+  return '??'
+}
+
+function getAvatarColor(name, email) {
+  const colors = [
+    '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7',
+    '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2',
+    '#F8B739', '#52B788', '#E76F51', '#8E44AD', '#3498DB'
+  ]
+
+  let seed = name || email || 'unknown'
+  let hash = 0
+  for (let i = 0; i < seed.length; i++) {
+    hash = seed.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  return colors[Math.abs(hash) % colors.length]
 }
 
 export default function MailWorkspace({ accountId, email, accountForm }) {
@@ -183,9 +213,22 @@ export default function MailWorkspace({ accountId, email, accountForm }) {
                 className={`db-mail-item${!mail.seen ? ' unread' : ''}${selectedMail?.id === mail.id ? ' selected' : ''}`}
                 onClick={() => openMail(mail)}
               >
-                <span className="db-mail-sender">{mail.name || mail.address || 'Unknown'}</span>
-                <span className="db-mail-subject">{mail.subject || '(No Subject)'}</span>
-                <span className="db-mail-time">{getShortTime()}</span>
+                <div
+                  className="db-mail-avatar"
+                  title={mail.name || mail.address || 'Unknown'}
+                >
+                  <Avatar
+                    email={mail.address}
+                    name={mail.name}
+                    accountId={accountId}
+                    size={36}
+                  />
+                </div>
+                <div className="db-mail-item-content">
+                  <span className="db-mail-sender">{mail.name || mail.address || 'Unknown'}</span>
+                  <span className="db-mail-subject">{mail.subject || '(No Subject)'}</span>
+                  <span className="db-mail-time">{getShortTime()}</span>
+                </div>
               </li>
             ))}
           </ul>

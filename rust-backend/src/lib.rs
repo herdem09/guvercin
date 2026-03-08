@@ -1,3 +1,5 @@
+mod avatar;
+mod avatar_routes;
 mod db;
 mod error;
 mod i18n;
@@ -59,6 +61,7 @@ pub async fn run(db_dir: Option<PathBuf>) -> anyhow::Result<()> {
             post(routes::preview_mailboxes),
         )
         .route("/api/account/finalize", post(routes::finalize_account))
+        .route("/api/avatar/:account_id", get(avatar_routes::get_avatar))
         .with_state(db_state);
 
     // ── Mail / IMAP routes (use Arc<MailAppState>) ─────────────────
