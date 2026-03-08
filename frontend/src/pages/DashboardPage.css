@@ -44,6 +44,14 @@
   line-height: 1.35;
 }
 
+.db-action-notice__actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.db-action-notice__commit,
 .db-action-notice__undo {
   border: none;
   background: transparent;
@@ -55,6 +63,7 @@
   flex-shrink: 0;
 }
 
+.db-action-notice__commit:hover,
 .db-action-notice__undo:hover {
   color: #ffe067;
 }
@@ -520,6 +529,22 @@ body.resizing * {
   height: 1px;
   margin: 6px 0;
   background: rgba(0, 0, 0, 0.1);
+}
+
+.db-mail-item-menu {
+  z-index: 5300;
+}
+
+.db-mail-item-menu__submenu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.db-mail-item-menu__chevron {
+  font-size: 14px;
+  color: #888;
 }
 
 /* ── Main body (sidebar + panels) ────────────────── */

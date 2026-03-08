@@ -1126,6 +1126,18 @@ const DashboardPage = () => {
         dismissActionNotice(noticeId)
     }, [dismissActionNotice])
 
+    const commitActionNotice = useCallback(async (noticeId) => {
+        const pending = pendingNoticeActionsRef.current.get(noticeId)
+        if (!pending) return
+        window.clearTimeout(pending.timeoutId)
+        pendingNoticeActionsRef.current.delete(noticeId)
+        try {
+            await pending.commit?.()
+        } finally {
+            dismissActionNotice(noticeId)
+        }
+    }, [dismissActionNotice])
+
     const restoreMailSelection = useCallback((selectionSnapshot) => {
         if (!selectionSnapshot) return
         setSelectedMail((prev) => prev || selectionSnapshot.mail)
@@ -1597,13 +1609,24 @@ const DashboardPage = () => {
                             <div key={notice.id} className="db-action-notice">
                                 <div className="db-action-notice__body">
                                     <span className="db-action-notice__text">{notice.label}</span>
-                                    <button
-                                        type="button"
-                                        className="db-action-notice__undo"
-                                        onClick={() => undoActionNotice(notice.id)}
-                                    >
-                                        Undo
-                                    </button>
+                                    <div className="db-action-notice__actions">
+                                        <button
+                                            type="button"
+                                            className="db-action-notice__commit"
+                                            onClick={() => commitActionNotice(notice.id)}
+                                            aria-label="Apply now"
+                                            title="Apply now"
+                                        >
+                                            ✓
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="db-action-notice__undo"
+                                            onClick={() => undoActionNotice(notice.id)}
+                                        >
+                                            Undo
+                                        </button>
+                                    </div>
                                 </div>
                                 <div className="db-action-notice__progress">
                                     <span className="db-action-notice__progress-bar" style={{ width: `${progress}%` }} />
@@ -1660,6 +1683,8 @@ function MailSection({
     const [layoutCols, setLayoutCols] = useState(1)
     const [movePopoverStyle, setMovePopoverStyle] = useState(null)
     const [flagPopoverStyle, setFlagPopoverStyle] = useState(null)
+    const [mailItemMenu, setMailItemMenu] = useState(null)
+    const [mailItemMoveMenuStyle, setMailItemMoveMenuStyle] = useState(null)
     const displayCols = isMailFullscreen ? layoutCols : 1
     const perPageValue = Math.max(1, Number.parseInt(perPage, 10) || 50)
 
@@ -1969,9 +1994,15 @@ function MailSection({
         }).join('\n')
     )
 
+    const closeMailItemMenu = useCallback(() => {
+        setMailItemMenu(null)
+        setMailItemMoveMenuStyle(null)
+    }, [])
+
     const closeActionMenus = () => {
         setIsMoveMenuOpen(false)
         setIsFlagMenuOpen(false)
+        closeMailItemMenu()
     }
 
     const resetBulkSelection = () => {
@@ -1992,6 +2023,7 @@ function MailSection({
     const submenuScrollRef = useRef(null)
     const moveMenuRef = useRef(null)
     const flagMenuRef = useRef(null)
+    const mailItemMenuRef = useRef(null)
     const isResizingFolder = useRef(false)
     const isResizingList = useRef(false)
     const mailToolbarRef = useRef(null)
@@ -2015,6 +2047,48 @@ function MailSection({
             top: `${rect.bottom + 6}px`,
         })
     }, [])
+
+    const clampFloatingMenuPosition = useCallback((left, top, estimatedWidth = 220, estimatedHeight = 320) => ({
+        left: `${Math.min(
+            Math.max(12, left),
+            Math.max(12, window.innerWidth - estimatedWidth - 12),
+        )}px`,
+        top: `${Math.min(
+            Math.max(12, top),
+            Math.max(12, window.innerHeight - estimatedHeight - 12),
+        )}px`,
+    }), [])
+
+    const openMailItemMenuAt = useCallback((mail, left, top) => {
+        setMailItemMoveMenuStyle(null)
+        setMailItemMenu({
+            mail,
+            moveMenuOpen: false,
+            style: clampFloatingMenuPosition(left, top),
+        })
+    }, [clampFloatingMenuPosition])
+
+    const openMailItemMenuFromButton = useCallback((event, mail) => {
+        event.stopPropagation()
+        const rect = event.currentTarget.getBoundingClientRect()
+        openMailItemMenuAt(mail, rect.right - 220, rect.top)
+    }, [openMailItemMenuAt])
+
+    const openMailItemMenuFromContext = useCallback((event, mail) => {
+        event.preventDefault()
+        event.stopPropagation()
+        openMailItemMenuAt(mail, event.clientX, event.clientY)
+    }, [openMailItemMenuAt])
+
+    const toggleMailItemMoveMenu = useCallback((event) => {
+        event.stopPropagation()
+        const rect = event.currentTarget.getBoundingClientRect()
+        setMailItemMoveMenuStyle(clampFloatingMenuPosition(rect.right + 6, rect.top, 240, 320))
+        setMailItemMenu((prev) => {
+            if (!prev) return prev
+            return { ...prev, moveMenuOpen: !prev.moveMenuOpen }
+        })
+    }, [clampFloatingMenuPosition])
 
     const recomputeMinListWidth = useCallback(() => {
         const el = mailToolbarRef.current
@@ -2139,10 +2213,13 @@ function MailSection({
             if (flagMenuRef.current && !flagMenuRef.current.contains(e.target)) {
                 setIsFlagMenuOpen(false)
             }
+            if (mailItemMenuRef.current && !mailItemMenuRef.current.contains(e.target)) {
+                closeMailItemMenu()
+            }
         }
         document.addEventListener('mousedown', handleClickOutside)
         return () => document.removeEventListener('mousedown', handleClickOutside)
-    }, [])
+    }, [closeMailItemMenu])
 
     useEffect(() => {
         if (!isMoveMenuOpen && !isFlagMenuOpen) {
@@ -2178,6 +2255,10 @@ function MailSection({
     useEffect(() => {
         const handleKeyDown = (e) => {
             if (e.key === 'Escape') {
+                if (mailItemMenu) {
+                    closeMailItemMenu()
+                    return
+                }
                 if (isFlagMenuOpen) {
                     setIsFlagMenuOpen(false)
                     return
@@ -2209,7 +2290,18 @@ function MailSection({
         }
         window.addEventListener('keydown', handleKeyDown)
         return () => window.removeEventListener('keydown', handleKeyDown)
-    }, [isFilterMenuOpen, isFlagMenuOpen, isMoveMenuOpen, isSelectionMenuOpen, isSortMenuOpen, selectMode, selectedMail, setMailContent, setSelectedMail])
+    }, [closeMailItemMenu, isFilterMenuOpen, isFlagMenuOpen, isMoveMenuOpen, isSelectionMenuOpen, isSortMenuOpen, mailItemMenu, selectMode, selectedMail, setMailContent, setSelectedMail])
+
+    useEffect(() => {
+        if (!mailItemMenu) return
+        const closeOnViewportChange = () => closeMailItemMenu()
+        window.addEventListener('resize', closeOnViewportChange)
+        window.addEventListener('scroll', closeOnViewportChange, true)
+        return () => {
+            window.removeEventListener('resize', closeOnViewportChange)
+            window.removeEventListener('scroll', closeOnViewportChange, true)
+        }
+    }, [closeMailItemMenu, mailItemMenu])
 
     useEffect(() => {
         if (sortBy === 'importance') {
@@ -2467,20 +2559,21 @@ function MailSection({
         await handleFlagLabelAction(trimmed)
     }
 
-    const handleReplyAction = async () => {
-        if (!hasAnyActionMail) return
+    const composeReplyDraft = async (mailList) => {
+        const replyMails = Array.from(new Set((mailList || []).filter(Boolean)))
+        if (replyMails.length === 0) return
 
-        if (hasMultipleActionMails) {
-            const recipients = dedupeEmails(actionableMails.map((mail) => mail.address || ''))
+        if (replyMails.length > 1) {
+            const recipients = dedupeEmails(replyMails.map((mail) => mail.address || ''))
             composeDraft({
                 to: recipients.join(', '),
                 subject: 'Re: Selected mails',
-                body: `\n\n${buildMultiMailSummary(actionableMails)}`,
+                body: `\n\n${buildMultiMailSummary(replyMails)}`,
             })
             return
         }
 
-        const mail = actionableMails[0]
+        const mail = replyMails[0]
         const content = await loadMailContentForDraft(mail)
         composeDraft({
             to: mail.address || '',
@@ -2490,19 +2583,20 @@ function MailSection({
         })
     }
 
-    const handleForwardAction = async () => {
-        if (!hasAnyActionMail) return
+    const composeForwardDraft = async (mailList) => {
+        const forwardMails = Array.from(new Set((mailList || []).filter(Boolean)))
+        if (forwardMails.length === 0) return
 
-        if (hasMultipleActionMails) {
+        if (forwardMails.length > 1) {
             composeDraft({
                 to: '',
-                subject: `Fwd: ${actionableMails.length} mails`,
-                body: buildMultiMailSummary(actionableMails),
+                subject: `Fwd: ${forwardMails.length} mails`,
+                body: buildMultiMailSummary(forwardMails),
             })
             return
         }
 
-        const mail = actionableMails[0]
+        const mail = forwardMails[0]
         const content = await loadMailContentForDraft(mail)
         composeDraft({
             to: '',
@@ -2511,12 +2605,73 @@ function MailSection({
         })
     }
 
+    const handleReplyAction = async () => {
+        if (!hasAnyActionMail) return
+        await composeReplyDraft(actionableMails)
+    }
+
+    const handleForwardAction = async () => {
+        if (!hasAnyActionMail) return
+        await composeForwardDraft(actionableMails)
+    }
+
+    const handleMailItemMenuDelete = async () => {
+        if (!mailItemMenu?.mail) return
+        await deleteMailsOptimistic([mailItemMenu.mail.id])
+        closeMailItemMenu()
+    }
+
+    const handleMailItemMenuMove = async (destination) => {
+        if (!mailItemMenu?.mail || !destination) return
+        await moveMailsOptimistic([mailItemMenu.mail.id], destination)
+        closeMailItemMenu()
+    }
+
+    const handleMailItemMenuMoveToTrash = async () => {
+        if (!mailItemMenu?.mail) return
+        await handleMailItemMenuMove(resolveFolderDestination('Trash'))
+    }
+
+    const handleMailItemMenuArchive = async () => {
+        if (!mailItemMenu?.mail) return
+        await handleMailItemMenuMove(resolveFolderDestination('Archive'))
+    }
+
+    const handleMailItemMenuReply = async () => {
+        if (!mailItemMenu?.mail) return
+        await composeReplyDraft([mailItemMenu.mail])
+        closeMailItemMenu()
+    }
+
+    const handleMailItemMenuForward = async () => {
+        if (!mailItemMenu?.mail) return
+        await composeForwardDraft([mailItemMenu.mail])
+        closeMailItemMenu()
+    }
+
+    const handleMailItemMenuReadToggle = async () => {
+        if (!mailItemMenu?.mail) return
+        await setMailsSeenState([mailItemMenu.mail.id], mailItemMenu.mail.seen !== true)
+        closeMailItemMenu()
+    }
+
+    const handleMailItemMenuFlagToggle = async () => {
+        if (!mailItemMenu?.mail) return
+        await setMailsFlaggedState([mailItemMenu.mail.id], mailItemMenu.mail.flagged !== true)
+        closeMailItemMenu()
+    }
+
     const activeTab = tabs.find(t => t.id === activeTabId)
     const activeTabContent = activeTabId ? tabContents[activeTabId] : null
     const activeTabMail = activeTab ? (mails.find((mail) => mail.id === activeTab.mail.id) || activeTab.mail) : null
     const activeTabReadLabel = activeTabMail?.seen === true ? 'Unread' : 'Read'
     const activeTabFlagLabel = activeTabMail?.flagged === true ? 'Unflag' : 'Flag'
     const fileActionsDisabled = !selectedMail || loadingContent || fileActionLoading !== ''
+    const mailItemMenuMail = mailItemMenu?.mail
+        ? (mails.find((mail) => mail.id === mailItemMenu.mail.id) || mailItemMenu.mail)
+        : null
+    const mailItemReadLabel = mailItemMenuMail?.seen === true ? 'Mark as unread' : 'Mark as read'
+    const mailItemFlagLabel = mailItemMenuMail?.flagged === true ? 'Unflag' : 'Flag'
 
     const closeTabsForMailIds = (mailIds) => {
         const ids = new Set(mailIds)
@@ -3300,63 +3455,139 @@ function MailSection({
                                         <div className="db-empty-text">No mails match the current filter.</div>
                                     </div>
                                 ) : (
-                                    <ul className="db-mail-list" data-cols={displayCols}>
-                                        {pagedVisibleMails.map((mail) => {
-                                            const isChecked = selectedMailIds.has(mail.id)
+                                    <>
+                                        <ul className="db-mail-list" data-cols={displayCols}>
+                                            {pagedVisibleMails.map((mail) => {
+                                                const isChecked = selectedMailIds.has(mail.id)
 
-                                            return (
-                                                <li
-                                                    key={mail.id}
-                                                    className={`db-mail-item ${mail.seen !== true ? 'unread' : ''} ${selectedMail?.id === mail.id ? 'selected' : ''} ${selectMode ? 'select-mode' : ''} ${isChecked ? 'checked' : ''}`}
-                                                    onClick={() => openMail(mail)}
-                                                >
-                                                    <div className="db-mail-avatar-wrap">
-                                                        <Avatar
-                                                            email={mail.address}
-                                                            name={mail.name}
-                                                            accountId={accountId}
-                                                            size={32}
-                                                            className="db-mail-avatar"
-                                                        />
+                                                return (
+                                                    <li
+                                                        key={mail.id}
+                                                        className={`db-mail-item ${mail.seen !== true ? 'unread' : ''} ${selectedMail?.id === mail.id ? 'selected' : ''} ${selectMode ? 'select-mode' : ''} ${isChecked ? 'checked' : ''}`}
+                                                        onClick={() => openMail(mail)}
+                                                        onContextMenu={(event) => openMailItemMenuFromContext(event, mail)}
+                                                    >
+                                                        <div className="db-mail-avatar-wrap">
+                                                            <Avatar
+                                                                email={mail.address}
+                                                                name={mail.name}
+                                                                accountId={accountId}
+                                                                size={32}
+                                                                className="db-mail-avatar"
+                                                            />
+                                                            <button
+                                                                type="button"
+                                                                className={`db-mail-avatar-toggle ${selectMode ? 'visible' : ''} ${isChecked ? 'checked' : ''}`}
+                                                                onClick={(event) => handleMailSelectionToggle(event, mail.id)}
+                                                                aria-pressed={isChecked}
+                                                                aria-label={isChecked ? 'Unselect mail' : 'Select mail'}
+                                                                title={selectMode ? 'Select mail' : 'Enter selection mode'}
+                                                            >
+                                                                <span className="db-mail-avatar-toggle__icon">✓</span>
+                                                            </button>
+                                                        </div>
+                                                        <div className="db-mail-item-content">
+                                                            <span className="db-mail-sender">{mail.name || mail.address || 'Unknown'}</span>
+                                                            <span className="db-mail-subject">{mail.subject || '(No Subject)'}</span>
+                                                            <span className="db-mail-time">{getShortTime(mail.date)}</span>
+                                                        </div>
+                                                        <div className="db-mail-quick-actions">
+                                                            <button
+                                                                className="db-mail-qa-btn"
+                                                                title="More actions"
+                                                                onClick={(event) => openMailItemMenuFromButton(event, mail)}
+                                                            >
+                                                                ⋮
+                                                            </button>
+                                                            <button
+                                                                className="db-mail-qa-btn"
+                                                                title="Open in new tab"
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation()
+                                                                    openMailInTab(mail)
+                                                                }}
+                                                            >
+                                                                🗂️
+                                                            </button>
+                                                            <button
+                                                                className="db-mail-qa-btn"
+                                                                title="Open in new window"
+                                                                onClick={(e) => detachMailToWindowFromList(e, mail)}
+                                                            >
+                                                                🪟
+                                                            </button>
+                                                        </div>
+                                                    </li>
+                                                )
+                                            })}
+                                        </ul>
+                                        {mailItemMenuMail && (
+                                            <div ref={mailItemMenuRef}>
+                                                <div className="db-submenu-popover db-mail-item-menu" style={mailItemMenu.style}>
+                                                    <button type="button" className="db-submenu-popover__item" onClick={handleMailItemMenuDelete}>
+                                                        🗑️ Delete
+                                                    </button>
+                                                    <button type="button" className="db-submenu-popover__item" onClick={handleMailItemMenuMoveToTrash}>
+                                                        🗃️ Move to Trash
+                                                    </button>
+                                                    <button type="button" className="db-submenu-popover__item" onClick={handleMailItemMenuArchive}>
+                                                        📦 Archive
+                                                    </button>
+                                                    <button type="button" className="db-submenu-popover__item" onClick={handleMailItemMenuReply}>
+                                                        ↩️ Reply
+                                                    </button>
+                                                    <button type="button" className="db-submenu-popover__item" onClick={handleMailItemMenuForward}>
+                                                        ➡️ Forward
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="db-submenu-popover__item db-mail-item-menu__submenu-trigger"
+                                                        onClick={toggleMailItemMoveMenu}
+                                                    >
+                                                        <span>📁 Move</span>
+                                                        <span className="db-mail-item-menu__chevron">›</span>
+                                                    </button>
+                                                    <button type="button" className="db-submenu-popover__item" onClick={handleMailItemMenuReadToggle}>
+                                                        👁️ {mailItemReadLabel}
+                                                    </button>
+                                                    <button type="button" className="db-submenu-popover__item" onClick={handleMailItemMenuFlagToggle}>
+                                                        ⚑ {mailItemFlagLabel}
+                                                    </button>
+                                                </div>
+                                                {mailItemMenu.moveMenuOpen && (
+                                                    <div className="db-submenu-popover db-mail-item-menu" style={mailItemMoveMenuStyle || undefined}>
+                                                        {moveFolderOptions.map((folder) => (
+                                                            <button
+                                                                key={folder}
+                                                                type="button"
+                                                                className="db-submenu-popover__item"
+                                                                onClick={() => handleMailItemMenuMove(folder)}
+                                                            >
+                                                                {folderInfo(folder).label}
+                                                            </button>
+                                                        ))}
+                                                        <div className="db-submenu-popover__divider" />
                                                         <button
                                                             type="button"
-                                                            className={`db-mail-avatar-toggle ${selectMode ? 'visible' : ''} ${isChecked ? 'checked' : ''}`}
-                                                            onClick={(event) => handleMailSelectionToggle(event, mail.id)}
-                                                            aria-pressed={isChecked}
-                                                            aria-label={isChecked ? 'Unselect mail' : 'Select mail'}
-                                                            title={selectMode ? 'Select mail' : 'Enter selection mode'}
-                                                        >
-                                                            <span className="db-mail-avatar-toggle__icon">✓</span>
-                                                        </button>
-                                                    </div>
-                                                    <div className="db-mail-item-content">
-                                                        <span className="db-mail-sender">{mail.name || mail.address || 'Unknown'}</span>
-                                                        <span className="db-mail-subject">{mail.subject || '(No Subject)'}</span>
-                                                        <span className="db-mail-time">{getShortTime(mail.date)}</span>
-                                                    </div>
-                                                    <div className="db-mail-quick-actions">
-                                                        <button
-                                                            className="db-mail-qa-btn"
-                                                            title="Open in new tab"
-                                                            onClick={(e) => {
-                                                                e.stopPropagation()
-                                                                openMailInTab(mail)
+                                                            className="db-submenu-popover__item"
+                                                            onClick={async () => {
+                                                                if (!mailItemMenuMail) return
+                                                                const name = window.prompt('New folder name')
+                                                                if (!name) return
+                                                                const mailboxName = applyMailboxNamespace(name, getMailboxNamespacePrefix(folders, ['Folders']))
+                                                                const created = await createMailbox(mailboxName)
+                                                                if (created) {
+                                                                    await handleMailItemMenuMove(mailboxName)
+                                                                }
                                                             }}
                                                         >
-                                                            🗂️
-                                                        </button>
-                                                        <button
-                                                            className="db-mail-qa-btn"
-                                                            title="Open in new window"
-                                                            onClick={(e) => detachMailToWindowFromList(e, mail)}
-                                                        >
-                                                            🪟
+                                                            + New Folder
                                                         </button>
                                                     </div>
-                                                </li>
-                                            )
-                                        })}
-                                    </ul>
+                                                )}
+                                            </div>
+                                        )}
+                                    </>
                                 )}
                             </div>
                         )}
