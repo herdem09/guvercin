@@ -1089,27 +1089,36 @@ body.resizing * {
 
 .db-mail-item {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   padding: 12px;
   border-bottom: 1px solid #eee;
   cursor: pointer;
-  transition: background 0.1s;
+  transition: background 0.12s ease, box-shadow 0.12s ease;
   background: #fff;
+  position: relative;
+}
+
+.db-mail-avatar-wrap {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  margin-right: 12px;
+  flex: 0 0 auto;
 }
 
 .db-mail-avatar {
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  margin-right: 12px;
   /* background/color/text are controlled by the inner .gv-avatar component */
   background: transparent;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
   overflow: hidden;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 .db-mail-item-content {
@@ -1128,19 +1137,61 @@ body.resizing * {
   box-shadow: 0 0 0 2px rgba(255, 203, 8, 0.3);
 }
 
-.db-mail-select {
-  flex: 0 0 auto;
-  width: 18px;
-  margin-right: 8px;
-  padding-top: 2px;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
+.db-mail-item.checked .db-mail-avatar {
+  box-shadow: 0 0 0 2px rgba(255, 203, 8, 0.45);
 }
 
-.db-mail-select input {
-  width: 14px;
-  height: 14px;
+.db-mail-avatar-toggle {
+  position: absolute;
+  inset: 0;
+  border: 1.5px solid rgba(196, 154, 0, 0.28);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.74);
+  color: rgba(120, 92, 0, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.86);
+  transition: opacity 0.14s ease, transform 0.14s ease, background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
+  backdrop-filter: blur(1.5px);
+}
+
+.db-mail-avatar-toggle.visible,
+.db-mail-item:hover .db-mail-avatar-toggle,
+.db-mail-avatar-toggle:focus-visible {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.db-mail-avatar-toggle.checked {
+  opacity: 1;
+  transform: scale(1);
+  background: rgba(255, 203, 8, 0.88);
+  border-color: rgba(194, 146, 0, 0.92);
+  color: #5c4700;
+  box-shadow: 0 6px 14px rgba(255, 203, 8, 0.28);
+}
+
+.db-mail-avatar-toggle:hover {
+  background: rgba(255, 250, 228, 0.92);
+  border-color: rgba(194, 146, 0, 0.44);
+}
+
+.db-mail-avatar-toggle.checked:hover {
+  background: rgba(255, 203, 8, 0.96);
+}
+
+.db-mail-avatar-toggle:focus-visible {
+  outline: 2px solid rgba(194, 146, 0, 0.72);
+  outline-offset: 2px;
+}
+
+.db-mail-avatar-toggle__icon {
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .db-mail-item-content {
@@ -1190,12 +1241,26 @@ body.resizing * {
 }
 
 .db-mail-item.selected {
-  background: #FFF7CC;
+  background: #fff3b2;
+  box-shadow: inset 3px 0 0 #e7bb00, inset -3px 0 0 #e7bb00;
+}
+
+.db-mail-item.checked {
+  background: #ffef98;
+  box-shadow: inset 3px 0 0 #d8ac00, inset -3px 0 0 #d8ac00;
 }
 
 .db-mail-item.unread {
   font-weight: 600;
-  background: #FFF2A8;
+  background: #fff9d4;
+}
+
+.db-mail-item.unread.selected {
+  background: #fff3b2;
+}
+
+.db-mail-item.unread.checked {
+  background: #ffef98;
 }
 
 .db-mail-item.unread .db-mail-sender::before {

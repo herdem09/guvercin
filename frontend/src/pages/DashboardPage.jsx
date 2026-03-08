@@ -1017,6 +1017,12 @@ function MailSection({
         })
     }
 
+    const handleMailSelectionToggle = (event, mailId) => {
+        event.stopPropagation()
+        setSelectMode(true)
+        toggleMailSelected(mailId)
+    }
+
     const buildTree = (list) => {
         const tree = []
         list.forEach(path => {
@@ -1497,55 +1503,61 @@ function MailSection({
                                     </div>
                                 ) : (
                                     <ul className="db-mail-list" data-cols={displayCols}>
-                                        {sortedMails.map((mail) => (
-                                            <li
-                                                key={mail.id}
-                                                className={`db-mail-item ${mail.seen !== true ? 'unread' : ''} ${selectedMail?.id === mail.id ? 'selected' : ''}`}
-                                                onClick={() => openMail(mail)}
-                                            >
-                                                {selectMode && (
-                                                    <div className="db-mail-select" onClick={(e) => e.stopPropagation()}>
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={selectedMailIds.has(mail.id)}
-                                                            onChange={() => toggleMailSelected(mail.id)}
-                                                            aria-label="Select mail"
+                                        {sortedMails.map((mail) => {
+                                            const isChecked = selectedMailIds.has(mail.id)
+
+                                            return (
+                                                <li
+                                                    key={mail.id}
+                                                    className={`db-mail-item ${mail.seen !== true ? 'unread' : ''} ${selectedMail?.id === mail.id ? 'selected' : ''} ${selectMode ? 'select-mode' : ''} ${isChecked ? 'checked' : ''}`}
+                                                    onClick={() => openMail(mail)}
+                                                >
+                                                    <div className="db-mail-avatar-wrap">
+                                                        <Avatar
+                                                            email={mail.address}
+                                                            name={mail.name}
+                                                            accountId={accountId}
+                                                            size={32}
+                                                            className="db-mail-avatar"
                                                         />
+                                                        <button
+                                                            type="button"
+                                                            className={`db-mail-avatar-toggle ${selectMode ? 'visible' : ''} ${isChecked ? 'checked' : ''}`}
+                                                            onClick={(event) => handleMailSelectionToggle(event, mail.id)}
+                                                            aria-pressed={isChecked}
+                                                            aria-label={isChecked ? 'Unselect mail' : 'Select mail'}
+                                                            title={selectMode ? 'Select mail' : 'Enter selection mode'}
+                                                        >
+                                                            <span className="db-mail-avatar-toggle__icon">✓</span>
+                                                        </button>
                                                     </div>
-                                                )}
-                                                <Avatar
-                                                    email={mail.address}
-                                                    name={mail.name}
-                                                    accountId={accountId}
-                                                    size={32}
-                                                    className="db-mail-avatar"
-                                                />
-                                                <div className="db-mail-item-content">
-                                                    <span className="db-mail-sender">{mail.name || mail.address || 'Unknown'}</span>
-                                                    <span className="db-mail-subject">{mail.subject || '(No Subject)'}</span>
-                                                    <span className="db-mail-time">{getShortTime(mail.date)}</span>
-                                                </div>
-                                                <div className="db-mail-quick-actions">
-                                                    <button
-                                                        className="db-mail-qa-btn"
-                                                        title="Open in new tab"
-                                                        onClick={(e) => {
-                                                            e.stopPropagation()
-                                                            openMailInTab(mail)
-                                                        }}
-                                                    >
-                                                        🗂️
-                                                    </button>
-                                                    <button
-                                                        className="db-mail-qa-btn"
-                                                        title="Open in new window"
-                                                        onClick={(e) => detachMailToWindowFromList(e, mail)}
-                                                    >
-                                                        🪟
-                                                    </button>
-                                                </div>
-                                            </li>
-                                        ))}
+                                                    <div className="db-mail-item-content">
+                                                        <span className="db-mail-sender">{mail.name || mail.address || 'Unknown'}</span>
+                                                        <span className="db-mail-subject">{mail.subject || '(No Subject)'}</span>
+                                                        <span className="db-mail-time">{getShortTime(mail.date)}</span>
+                                                    </div>
+                                                    <div className="db-mail-quick-actions">
+                                                        <button
+                                                            className="db-mail-qa-btn"
+                                                            title="Open in new tab"
+                                                            onClick={(e) => {
+                                                                e.stopPropagation()
+                                                                openMailInTab(mail)
+                                                            }}
+                                                        >
+                                                            🗂️
+                                                        </button>
+                                                        <button
+                                                            className="db-mail-qa-btn"
+                                                            title="Open in new window"
+                                                            onClick={(e) => detachMailToWindowFromList(e, mail)}
+                                                        >
+                                                            🪟
+                                                        </button>
+                                                    </div>
+                                                </li>
+                                            )
+                                        })}
                                     </ul>
                                 )}
                             </div>
