@@ -598,6 +598,22 @@ pub fn move_mail(
     session.uid_move_to(uid, destination)
 }
 
+pub fn create_mailbox(
+    state: &Arc<ImapState>,
+    account_id: i64,
+    mailbox: &str,
+) -> Result<(), String> {
+    let mut sessions = state.sessions.lock().unwrap();
+    let session = sessions
+        .get_mut(&account_id)
+        .ok_or_else(|| format!("No IMAP session for account {account_id}"))?;
+    let result = match session {
+        ImapSession::Plain(s) => s.create(mailbox),
+        ImapSession::Tls(s) => s.create(mailbox),
+    };
+    result.map(|_| ()).map_err(|e| format!("{e}"))
+}
+
 pub fn delete_mail(state: &Arc<ImapState>, account_id: i64, uid: &str) -> Result<(), String> {
     let mut sessions = state.sessions.lock().unwrap();
     let session = sessions

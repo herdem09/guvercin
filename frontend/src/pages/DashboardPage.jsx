@@ -168,6 +168,10 @@ function getSortDirectionLabel(sortBy, direction) {
     return MAIL_SORT_DIRECTION_LABELS[sortBy]?.[direction] || 'Newest on top'
 }
 
+function stripLabelFolderPrefix(value) {
+    return value.replace(/^Labels\//i, '').replace(/^Etiketler\//i, '').trim()
+}
+
 const DashboardPage = () => {
     const { t } = useTranslation()
     const navigate = useNavigate()
@@ -207,10 +211,16 @@ const DashboardPage = () => {
     const [perPage, setPerPage] = useState(50)
     const [composeOpen, setComposeOpen] = useState(false)
     const [composeForm, setComposeForm] = useState({ to: '', cc: '', bcc: '', subject: '', body: '' })
+    const [tabs, setTabs] = useState([])
+    const [activeTabId, setActiveTabId] = useState(null)
+    const [tabContents, setTabContents] = useState({})
+    const [loadingTab, setLoadingTab] = useState(false)
 
     const [accountMenuOpen, setAccountMenuOpen] = useState(false)
     const [isMailFullscreen, setIsMailFullscreen] = useState(false)
     const [isSyncing, setIsSyncing] = useState(false)
+    const [actionNotices, setActionNotices] = useState([])
+    const [noticeNow, setNoticeNow] = useState(Date.now())
 
     const accountButtonRef = useRef(null)
     const accountMenuRef = useRef(null)
@@ -218,6 +228,9 @@ const DashboardPage = () => {
     const syncAbortRef = useRef(null)
     const isSyncingRef = useRef(false)
     const nextMailWindowId = useRef(0)
+    const nextTabId = useRef(0)
+    const nextNoticeIdRef = useRef(0)
+    const pendingNoticeActionsRef = useRef(new Map())
     const prevCanUseRemoteMailRef = useRef(false)
     const lastConnectAttemptAtRef = useRef(0)
     const canUseRemoteMail = backendReachable && networkOnline && (remoteMailAvailable || connected)
@@ -256,6 +269,17 @@ const DashboardPage = () => {
 
     const handleAccountButtonClick = () => setAccountMenuOpen(!accountMenuOpen)
     const closeAccountMenu = () => setAccountMenuOpen(false)
+
+    useEffect(() => {
+        if (actionNotices.length === 0) return undefined
+        const timer = window.setInterval(() => setNoticeNow(Date.now()), 100)
+        return () => window.clearInterval(timer)
+    }, [actionNotices.length])
+
+    useEffect(() => () => {
+        pendingNoticeActionsRef.current.forEach((entry) => window.clearTimeout(entry.timeoutId))
+        pendingNoticeActionsRef.current.clear()
+    }, [])
 
     useEffect(() => {
         const handleClickOutside = (event) => {
@@ -545,6 +569,9 @@ const DashboardPage = () => {
             if (res.ok) {
                 const data = await res.json()
                 setMailContent(data)
+                if (mail.seen !== true) {
+                    setMailsSeenState([mail.id], true)
+                }
 
                 // Best-effort: cache and rewrite external inline images for offline use.
                 prefetchInlineAssets(mail.id, mailbox).then((html) => {
@@ -558,7 +585,7 @@ const DashboardPage = () => {
         setLoadingContent(false)
     }
 
-    const queueAction = async (actionType, targetUid, payload = {}) => {
+    const queueAction = async (actionType, targetUid, payload = {}, targetFolderOverride = null) => {
         if (!accountId || !backendReachable) return
         await fetch(apiUrl(`/api/offline/${accountId}/actions`), {
             method: 'POST',
@@ -566,7 +593,7 @@ const DashboardPage = () => {
             body: JSON.stringify({
                 action_type: actionType,
                 target_uid: targetUid || null,
-                target_folder: selectedFolder || 'INBOX',
+                target_folder: targetFolderOverride || selectedFolder || 'INBOX',
                 payload,
             }),
         })
@@ -576,14 +603,201 @@ const DashboardPage = () => {
         }
     }
 
-    const removeMailOptimistic = async (mail) => {
-        setMails((prev) => prev.filter((m) => m.id !== mail.id))
-        await queueAction('delete', mail.id)
+    const dismissActionNotice = useCallback((noticeId) => {
+        setActionNotices((prev) => prev.filter((notice) => notice.id !== noticeId))
+    }, [])
+
+    const enqueueUndoableAction = useCallback(({ label, apply, undo, commit }) => {
+        nextNoticeIdRef.current += 1
+        const id = nextNoticeIdRef.current
+        const durationMs = 10_000
+        const expiresAt = Date.now() + durationMs
+
+        apply()
+        setActionNotices((prev) => [...prev, { id, label, durationMs, expiresAt }])
+
+        const timeoutId = window.setTimeout(async () => {
+            const pending = pendingNoticeActionsRef.current.get(id)
+            if (!pending) return
+            pendingNoticeActionsRef.current.delete(id)
+            try {
+                await pending.commit()
+            } finally {
+                dismissActionNotice(id)
+            }
+        }, durationMs)
+
+        pendingNoticeActionsRef.current.set(id, { timeoutId, undo, commit })
+    }, [dismissActionNotice])
+
+    const undoActionNotice = useCallback((noticeId) => {
+        const pending = pendingNoticeActionsRef.current.get(noticeId)
+        if (!pending) return
+        window.clearTimeout(pending.timeoutId)
+        pendingNoticeActionsRef.current.delete(noticeId)
+        pending.undo?.()
+        dismissActionNotice(noticeId)
+    }, [dismissActionNotice])
+
+    const restoreMailSelection = useCallback((selectionSnapshot) => {
+        if (!selectionSnapshot) return
+        setSelectedMail((prev) => prev || selectionSnapshot.mail)
+        setMailContent((prev) => prev || selectionSnapshot.content)
+    }, [])
+
+    const deleteMailsOptimistic = async (mailIds) => {
+        const ids = Array.from(new Set((mailIds || []).filter(Boolean)))
+        if (ids.length === 0) return
+        const sourceFolder = selectedFolder || 'INBOX'
+        const affectedMails = mails.filter((mail) => ids.includes(mail.id))
+        const selectionSnapshot = selectedMail && ids.includes(selectedMail.id)
+            ? { mail: selectedMail, content: mailContent }
+            : null
+
+        enqueueUndoableAction({
+            label: ids.length === 1 ? 'Mail deleted' : `${ids.length} mails deleted`,
+            apply: () => {
+                setMails((prev) => prev.filter((mail) => !ids.includes(mail.id)))
+                if (selectionSnapshot) {
+                    setSelectedMail(null)
+                    setMailContent(null)
+                }
+            },
+            undo: () => {
+                setMails((prev) => {
+                    const existing = new Set(prev.map((mail) => mail.id))
+                    return [...prev, ...affectedMails.filter((mail) => !existing.has(mail.id))]
+                })
+                restoreMailSelection(selectionSnapshot)
+            },
+            commit: () => Promise.all(ids.map((id) => queueAction('delete', id, {}, sourceFolder))),
+        })
     }
 
-    const moveMail = async (mail, destination) => {
-        setMails((prev) => prev.filter((m) => m.id !== mail.id))
-        await queueAction('move', mail.id, { destination })
+    const moveMailsOptimistic = async (mailIds, destination) => {
+        const ids = Array.from(new Set((mailIds || []).filter(Boolean)))
+        if (ids.length === 0 || !destination) return
+        const sourceFolder = selectedFolder || 'INBOX'
+        const affectedMails = mails.filter((mail) => ids.includes(mail.id))
+        const selectionSnapshot = selectedMail && ids.includes(selectedMail.id)
+            ? { mail: selectedMail, content: mailContent }
+            : null
+
+        enqueueUndoableAction({
+            label: ids.length === 1 ? `Mail moved to ${destination}` : `${ids.length} mails moved to ${destination}`,
+            apply: () => {
+                setMails((prev) => prev.filter((mail) => !ids.includes(mail.id)))
+                if (selectionSnapshot) {
+                    setSelectedMail(null)
+                    setMailContent(null)
+                }
+            },
+            undo: () => {
+                setMails((prev) => {
+                    const existing = new Set(prev.map((mail) => mail.id))
+                    return [...prev, ...affectedMails.filter((mail) => !existing.has(mail.id))]
+                })
+                restoreMailSelection(selectionSnapshot)
+            },
+            commit: () => Promise.all(ids.map((id) => queueAction('move', id, { destination }, sourceFolder))),
+        })
+    }
+
+    const setMailsSeenState = async (mailIds, seen) => {
+        const ids = Array.from(new Set((mailIds || []).filter(Boolean)))
+        if (ids.length === 0) return
+        setMails((prev) => prev.map((mail) => (
+            ids.includes(mail.id) ? { ...mail, seen } : mail
+        )))
+        setSelectedMail((prev) => (prev && ids.includes(prev.id) ? { ...prev, seen } : prev))
+        const sourceFolder = selectedFolder || 'INBOX'
+        await Promise.all(ids.map((id) => queueAction(seen ? 'mark_read' : 'mark_unread', id, {}, sourceFolder)))
+    }
+
+    const setMailsFlaggedState = async (mailIds, flagged) => {
+        const ids = Array.from(new Set((mailIds || []).filter(Boolean)))
+        if (ids.length === 0) return
+        const sourceFolder = selectedFolder || 'INBOX'
+        const previousStates = mails
+            .filter((mail) => ids.includes(mail.id))
+            .map((mail) => ({ id: mail.id, flagged: mail.flagged }))
+        const previousSelectedMail = selectedMail && ids.includes(selectedMail.id)
+            ? { ...selectedMail }
+            : null
+
+        enqueueUndoableAction({
+            label: flagged
+                ? (ids.length === 1 ? 'Mail flagged' : `${ids.length} mails flagged`)
+                : (ids.length === 1 ? 'Mail unflagged' : `${ids.length} mails unflagged`),
+            apply: () => {
+                setMails((prev) => prev.map((mail) => (
+                    ids.includes(mail.id) ? { ...mail, flagged } : mail
+                )))
+                setSelectedMail((prev) => (prev && ids.includes(prev.id) ? { ...prev, flagged } : prev))
+            },
+            undo: () => {
+                const previousMap = new Map(previousStates.map((item) => [item.id, item.flagged]))
+                setMails((prev) => prev.map((mail) => (
+                    previousMap.has(mail.id) ? { ...mail, flagged: previousMap.get(mail.id) } : mail
+                )))
+                if (previousSelectedMail) {
+                    setSelectedMail((prev) => (prev && prev.id === previousSelectedMail.id ? previousSelectedMail : prev))
+                }
+            },
+            commit: () => Promise.all(ids.map((id) => queueAction(flagged ? 'flag' : 'unflag', id, {}, sourceFolder))),
+        })
+    }
+
+    const addMailLabel = async (mailIds, label) => {
+        const ids = Array.from(new Set((mailIds || []).filter(Boolean)))
+        const trimmedLabel = label.trim()
+        if (ids.length === 0 || !trimmedLabel) return
+        const sourceFolder = selectedFolder || 'INBOX'
+        const previousStates = mails
+            .filter((mail) => ids.includes(mail.id))
+            .map((mail) => ({ id: mail.id, category: mail.category }))
+
+        enqueueUndoableAction({
+            label: ids.length === 1 ? `Flag "${trimmedLabel}" applied` : `Flag "${trimmedLabel}" applied to ${ids.length} mails`,
+            apply: () => {
+                setMails((prev) => prev.map((mail) => (
+                    ids.includes(mail.id) ? { ...mail, category: trimmedLabel } : mail
+                )))
+            },
+            undo: () => {
+                const previousMap = new Map(previousStates.map((item) => [item.id, item.category]))
+                setMails((prev) => prev.map((mail) => (
+                    previousMap.has(mail.id) ? { ...mail, category: previousMap.get(mail.id) } : mail
+                )))
+            },
+            commit: () => Promise.all(ids.map((id) => queueAction('label_add', id, { label: trimmedLabel }, sourceFolder))),
+        })
+    }
+
+    const createMailbox = async (name) => {
+        const mailboxName = name.trim()
+        if (!mailboxName || !accountId || !backendReachable) return false
+        if (folders.includes(mailboxName)) return true
+
+        try {
+            if (networkOnline) {
+                const ok = canUseRemoteMail || (await ensureImapConnected())
+                if (ok) {
+                    const res = await fetch(apiUrl(`/api/mail/${accountId}/mailboxes`), {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ name: mailboxName }),
+                    })
+                    if (!res.ok) return false
+                }
+            }
+
+            setFolders((prev) => (prev.includes(mailboxName) ? prev : [...prev, mailboxName]))
+            await loadFolders()
+            return true
+        } catch {
+            return false
+        }
     }
 
     const sendComposedMail = async () => {
@@ -856,14 +1070,27 @@ const DashboardPage = () => {
                                 setPerPage={setPerPage}
                                 isMailFullscreen={isMailFullscreen}
                                 toggleMailFullscreen={toggleMailFullscreen}
-                                removeMailOptimistic={removeMailOptimistic}
-                                moveMail={moveMail}
+                                deleteMailsOptimistic={deleteMailsOptimistic}
+                                moveMailsOptimistic={moveMailsOptimistic}
+                                setMailsSeenState={setMailsSeenState}
+                                setMailsFlaggedState={setMailsFlaggedState}
+                                addMailLabel={addMailLabel}
+                                createMailbox={createMailbox}
                                 canUseRemoteMail={canUseRemoteMail}
                                 composeOpen={composeOpen}
                                 setComposeOpen={setComposeOpen}
                                 composeForm={composeForm}
                                 setComposeForm={setComposeForm}
                                 sendComposedMail={sendComposedMail}
+                                tabs={tabs}
+                                setTabs={setTabs}
+                                activeTabId={activeTabId}
+                                setActiveTabId={setActiveTabId}
+                                tabContents={tabContents}
+                                setTabContents={setTabContents}
+                                loadingTab={loadingTab}
+                                setLoadingTab={setLoadingTab}
+                                nextTabId={nextTabId}
                             />
                         )}
                         {activeSection === 'calendar' && <CalendarSection />}
@@ -872,6 +1099,31 @@ const DashboardPage = () => {
                     </div>
                 </div>
             </div>
+            {actionNotices.length > 0 && (
+                <div className="db-action-notices" aria-live="polite">
+                    {actionNotices.map((notice) => {
+                        const remaining = Math.max(0, notice.expiresAt - noticeNow)
+                        const progress = notice.durationMs > 0 ? (remaining / notice.durationMs) * 100 : 0
+                        return (
+                            <div key={notice.id} className="db-action-notice">
+                                <div className="db-action-notice__body">
+                                    <span className="db-action-notice__text">{notice.label}</span>
+                                    <button
+                                        type="button"
+                                        className="db-action-notice__undo"
+                                        onClick={() => undoActionNotice(notice.id)}
+                                    >
+                                        Undo
+                                    </button>
+                                </div>
+                                <div className="db-action-notice__progress">
+                                    <span className="db-action-notice__progress-bar" style={{ width: `${progress}%` }} />
+                                </div>
+                            </div>
+                        )
+                    })}
+                </div>
+            )}
         </div>
     )
 }
@@ -888,8 +1140,9 @@ function MailSection({
     openMail, detachMailToWindow, detachMailToWindowFromList, iframeRef, getShortTime,
     currentPage, setCurrentPage, maxPage, perPage, setPerPage,
     isMailFullscreen, toggleMailFullscreen,
-    removeMailOptimistic, moveMail,
+    deleteMailsOptimistic, moveMailsOptimistic, setMailsSeenState, setMailsFlaggedState, addMailLabel, createMailbox,
     canUseRemoteMail, composeOpen, setComposeOpen, composeForm, setComposeForm, sendComposedMail,
+    tabs, setTabs, activeTabId, setActiveTabId, tabContents, setTabContents, loadingTab, setLoadingTab, nextTabId,
 }) {
     const { t } = useTranslation()
     const hasFolderAccess = folders.length > 0
@@ -906,9 +1159,12 @@ function MailSection({
     const [isSelectionMenuOpen, setIsSelectionMenuOpen] = useState(false)
     const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false)
     const [isSortMenuOpen, setIsSortMenuOpen] = useState(false)
+    const [isMoveMenuOpen, setIsMoveMenuOpen] = useState(false)
+    const [isFlagMenuOpen, setIsFlagMenuOpen] = useState(false)
     const [activeFilter, setActiveFilter] = useState('all')
     const [sortBy, setSortBy] = useState('date')
     const [sortDirection, setSortDirection] = useState('desc')
+    const [customFlagLabels, setCustomFlagLabels] = useState([])
     const [isPerPageOpen, setIsPerPageOpen] = useState(false)
     const [attachmentsExpanded, setAttachmentsExpanded] = useState(true)
     const [layoutCols, setLayoutCols] = useState(1)
@@ -975,6 +1231,36 @@ function MailSection({
     const displayPage = Math.min(currentPage, filteredMaxPage)
     const pageStart = (displayPage - 1) * perPageValue
     const pagedVisibleMails = visibleMails.slice(pageStart, pageStart + perPageValue)
+    const selectedIdSet = selectedMailIds
+    const actionableMails = useMemo(() => {
+        if (selectedIdSet.size > 0) {
+            return mails.filter((mail) => selectedIdSet.has(mail.id))
+        }
+        if (selectedMail) return [selectedMail]
+        return []
+    }, [mails, selectedIdSet, selectedMail])
+    const actionableMailIds = actionableMails.map((mail) => mail.id)
+    const hasAnyActionMail = actionableMails.length > 0
+    const hasMultipleActionMails = actionableMails.length > 1
+    const allActionMailsSeen = hasAnyActionMail && actionableMails.every((mail) => mail.seen === true)
+    const allActionMailsFlagged = hasAnyActionMail && actionableMails.every((mail) => mail.flagged === true)
+    const homeReplyLabel = hasMultipleActionMails ? 'Reply All' : 'Reply'
+    const homeForwardLabel = hasMultipleActionMails ? 'Forward All' : 'Forward'
+    const readToggleLabel = allActionMailsSeen ? 'Unread' : 'Read'
+    const flagToggleLabel = allActionMailsFlagged ? 'Unflag' : 'Flag'
+    const moveFolderOptions = useMemo(
+        () => folders.filter((folder) => !['Folders', 'Labels', 'Etiketler'].includes(folder)),
+        [folders],
+    )
+    const availableFlagLabels = useMemo(() => {
+        const builtInLabels = folders
+            .filter((folder) => folder.startsWith('Labels/') || folder.startsWith('Etiketler/'))
+            .map(stripLabelFolderPrefix)
+            .filter(Boolean)
+
+        return Array.from(new Set([...builtInLabels, ...customFlagLabels]))
+            .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }))
+    }, [customFlagLabels, folders])
 
     const formatMailDateLong = (dateValue) => {
         if (!dateValue) return ''
@@ -994,10 +1280,108 @@ function MailSection({
         return new Intl.DateTimeFormat(undefined, options).format(dt)
     }
 
+    const composeDraft = useCallback((draft) => {
+        setComposeForm({
+            to: draft.to || '',
+            cc: draft.cc || '',
+            bcc: draft.bcc || '',
+            subject: draft.subject || '',
+            body: draft.body || '',
+        })
+        setComposeOpen(true)
+    }, [setComposeForm, setComposeOpen])
+
+    const prefixSubject = (prefix, subject) => {
+        const baseSubject = (subject || '(No Subject)').trim()
+        return baseSubject.toLowerCase().startsWith(`${prefix.toLowerCase()} `)
+            ? baseSubject
+            : `${prefix} ${baseSubject}`
+    }
+
+    const loadMailContentForDraft = useCallback(async (mail) => {
+        if (!mail) return null
+        if (selectedMail?.id === mail.id && mailContent) return mailContent
+
+        try {
+            const mailbox = selectedFolder || 'INBOX'
+            let endpoint = `/api/offline/${accountId}/local-content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
+            let res = await fetch(apiUrl(endpoint), { cache: 'no-store' })
+            if (!res.ok && canUseRemoteMail) {
+                endpoint = `/api/mail/${accountId}/content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
+                res = await fetch(apiUrl(endpoint), { cache: 'no-store' })
+            }
+            if (res.ok) {
+                return await res.json()
+            }
+        } catch {
+            return null
+        }
+
+        return null
+    }, [accountId, canUseRemoteMail, mailContent, selectedFolder, selectedMail])
+
+    const dedupeEmails = (values) => {
+        const seen = new Set()
+        return values.filter((value) => {
+            const email = value.trim()
+            const key = email.toLowerCase()
+            if (!email || seen.has(key)) return false
+            seen.add(key)
+            return true
+        })
+    }
+
+    const parseEmailList = (value) => value
+        .split(',')
+        .map((item) => item.trim())
+        .filter(Boolean)
+
+    const buildQuotedMailBlock = (mail, content) => {
+        const fromLabel = content?.from_name
+            ? `${content.from_name} <${content.from_address}>`
+            : (mail.name ? `${mail.name} <${mail.address}>` : mail.address)
+        const subject = content?.subject || mail.subject || '(No Subject)'
+        const date = content?.date || mail.date
+        const body = content?.plain_body || '(No content)'
+        return [
+            `From: ${fromLabel || 'Unknown'}`,
+            `Date: ${formatMailDateLong(date)}`,
+            `Subject: ${subject}`,
+            '',
+            body,
+        ].join('\n')
+    }
+
+    const buildMultiMailSummary = (mailList) => (
+        mailList.map((mail) => {
+            const sender = mail.name || mail.address || 'Unknown'
+            const subject = mail.subject || '(No Subject)'
+            return `- ${sender}: ${subject}`
+        }).join('\n')
+    )
+
+    const closeActionMenus = () => {
+        setIsMoveMenuOpen(false)
+        setIsFlagMenuOpen(false)
+    }
+
+    const resetBulkSelection = () => {
+        setSelectedMailIds(new Set())
+        setSelectMode(false)
+    }
+
+    const resolveFolderDestination = (kind) => {
+        const match = folders.find((folder) => folderInfo(folder).label === kind)
+        if (match) return match
+        return kind
+    }
+
     const perPageRef = useRef(null)
     const selectionMenuRef = useRef(null)
     const filterMenuRef = useRef(null)
     const sortMenuRef = useRef(null)
+    const moveMenuRef = useRef(null)
+    const flagMenuRef = useRef(null)
     const isResizingFolder = useRef(false)
     const isResizingList = useRef(false)
     const mailToolbarRef = useRef(null)
@@ -1026,12 +1410,7 @@ function MailSection({
     }, [])
 
     // ── Tab system ──────────────────────────────────
-    const [tabs, setTabs] = useState([])
-    const [activeTabId, setActiveTabId] = useState(null) // null = inbox view
-    const [tabContents, setTabContents] = useState({}) // tabId -> mailContent
-    const [loadingTab, setLoadingTab] = useState(false)
     const tabIframeRefs = useRef({})
-    const nextTabId = useRef(0)
 
     const openMailInTab = async (mail, existingContent) => {
         nextTabId.current += 1
@@ -1058,6 +1437,9 @@ function MailSection({
                 // noop
             }
             setLoadingTab(false)
+        }
+        if (mail.seen !== true) {
+            setMailsSeenState([mail.id], true)
         }
         setTabs(prev => [...prev, { id: tabId, mail, mailbox: selectedFolder || 'INBOX' }])
         setTabContents(prev => ({ ...prev, [tabId]: content }))
@@ -1092,6 +1474,22 @@ function MailSection({
     }, [activeTabId, tabContents])
 
     useEffect(() => {
+        if (!accountId) return
+        try {
+            const raw = localStorage.getItem(`gv-custom-flags-${accountId}`)
+            const next = JSON.parse(raw || '[]')
+            setCustomFlagLabels(Array.isArray(next) ? next.filter(Boolean) : [])
+        } catch {
+            setCustomFlagLabels([])
+        }
+    }, [accountId])
+
+    useEffect(() => {
+        if (!accountId) return
+        localStorage.setItem(`gv-custom-flags-${accountId}`, JSON.stringify(customFlagLabels))
+    }, [accountId, customFlagLabels])
+
+    useEffect(() => {
         const handleClickOutside = (e) => {
             if (perPageRef.current && !perPageRef.current.contains(e.target)) {
                 setIsPerPageOpen(false)
@@ -1105,6 +1503,12 @@ function MailSection({
             if (sortMenuRef.current && !sortMenuRef.current.contains(e.target)) {
                 setIsSortMenuOpen(false)
             }
+            if (moveMenuRef.current && !moveMenuRef.current.contains(e.target)) {
+                setIsMoveMenuOpen(false)
+            }
+            if (flagMenuRef.current && !flagMenuRef.current.contains(e.target)) {
+                setIsFlagMenuOpen(false)
+            }
         }
         document.addEventListener('mousedown', handleClickOutside)
         return () => document.removeEventListener('mousedown', handleClickOutside)
@@ -1113,6 +1517,14 @@ function MailSection({
     useEffect(() => {
         const handleKeyDown = (e) => {
             if (e.key === 'Escape') {
+                if (isFlagMenuOpen) {
+                    setIsFlagMenuOpen(false)
+                    return
+                }
+                if (isMoveMenuOpen) {
+                    setIsMoveMenuOpen(false)
+                    return
+                }
                 if (isSortMenuOpen) {
                     setIsSortMenuOpen(false)
                     return
@@ -1136,7 +1548,7 @@ function MailSection({
         }
         window.addEventListener('keydown', handleKeyDown)
         return () => window.removeEventListener('keydown', handleKeyDown)
-    }, [isFilterMenuOpen, isSelectionMenuOpen, isSortMenuOpen, selectMode, selectedMail, setMailContent, setSelectedMail])
+    }, [isFilterMenuOpen, isFlagMenuOpen, isMoveMenuOpen, isSelectionMenuOpen, isSortMenuOpen, selectMode, selectedMail, setMailContent, setSelectedMail])
 
     useEffect(() => {
         if (sortBy === 'importance') {
@@ -1326,8 +1738,235 @@ function MailSection({
         )
     }
 
+    const handleNewMail = () => {
+        composeDraft({ to: '', cc: '', bcc: '', subject: '', body: '' })
+    }
+
+    const handleDeleteAction = async () => {
+        if (!hasAnyActionMail) return
+        await deleteMailsOptimistic(actionableMailIds)
+        closeActionMenus()
+        resetBulkSelection()
+    }
+
+    const handleMoveAction = async (destination) => {
+        if (!hasAnyActionMail || !destination) return
+        await moveMailsOptimistic(actionableMailIds, destination)
+        closeActionMenus()
+        resetBulkSelection()
+    }
+
+    const handleArchiveAction = async () => {
+        if (!hasAnyActionMail) return
+        await handleMoveAction(resolveFolderDestination('Archive'))
+    }
+
+    const handleMoveToTrashAction = async () => {
+        if (!hasAnyActionMail) return
+        await handleMoveAction(resolveFolderDestination('Trash'))
+    }
+
+    const handleReadToggleAction = async () => {
+        if (!hasAnyActionMail) return
+        await setMailsSeenState(actionableMailIds, !allActionMailsSeen)
+    }
+
+    const handleFlagToggleAction = async () => {
+        if (!hasAnyActionMail) return
+        await setMailsFlaggedState(actionableMailIds, !allActionMailsFlagged)
+        closeActionMenus()
+    }
+
+    const handleFlagLabelAction = async (label) => {
+        if (!hasAnyActionMail || !label) return
+        await addMailLabel(actionableMailIds, label)
+        closeActionMenus()
+    }
+
+    const handleCreateFolderAndMove = async () => {
+        if (!hasAnyActionMail) return
+        const name = window.prompt('New folder name')
+        if (!name) return
+        const created = await createMailbox(name)
+        if (created) {
+            await handleMoveAction(name.trim())
+        }
+    }
+
+    const handleCreateFlagLabel = async () => {
+        if (!hasAnyActionMail) return
+        const name = window.prompt('New flag name')
+        const trimmed = (name || '').trim()
+        if (!trimmed) return
+        setCustomFlagLabels((prev) => (
+            prev.includes(trimmed) ? prev : [...prev, trimmed]
+        ))
+        await handleFlagLabelAction(trimmed)
+    }
+
+    const handleReplyAction = async () => {
+        if (!hasAnyActionMail) return
+
+        if (hasMultipleActionMails) {
+            const recipients = dedupeEmails(actionableMails.map((mail) => mail.address || ''))
+            composeDraft({
+                to: recipients.join(', '),
+                subject: 'Re: Selected mails',
+                body: `\n\n${buildMultiMailSummary(actionableMails)}`,
+            })
+            return
+        }
+
+        const mail = actionableMails[0]
+        const content = await loadMailContentForDraft(mail)
+        composeDraft({
+            to: mail.address || '',
+            cc: dedupeEmails(parseEmailList(content?.cc || '')).join(', '),
+            subject: prefixSubject('Re:', content?.subject || mail.subject),
+            body: `\n\n${buildQuotedMailBlock(mail, content)}`,
+        })
+    }
+
+    const handleForwardAction = async () => {
+        if (!hasAnyActionMail) return
+
+        if (hasMultipleActionMails) {
+            composeDraft({
+                to: '',
+                subject: `Fwd: ${actionableMails.length} mails`,
+                body: buildMultiMailSummary(actionableMails),
+            })
+            return
+        }
+
+        const mail = actionableMails[0]
+        const content = await loadMailContentForDraft(mail)
+        composeDraft({
+            to: '',
+            subject: prefixSubject('Fwd:', content?.subject || mail.subject),
+            body: buildQuotedMailBlock(mail, content),
+        })
+    }
+
     const activeTab = tabs.find(t => t.id === activeTabId)
     const activeTabContent = activeTabId ? tabContents[activeTabId] : null
+    const activeTabMail = activeTab ? (mails.find((mail) => mail.id === activeTab.mail.id) || activeTab.mail) : null
+    const activeTabReadLabel = activeTabMail?.seen === true ? 'Unread' : 'Read'
+    const activeTabFlagLabel = activeTabMail?.flagged === true ? 'Unflag' : 'Flag'
+
+    const closeTabsForMailIds = (mailIds) => {
+        const ids = new Set(mailIds)
+        const affectedTabIds = tabs
+            .filter((tab) => ids.has(tab.mail.id))
+            .map((tab) => tab.id)
+        setTabs((prev) => prev.filter((tab) => !ids.has(tab.mail.id)))
+        setTabContents((prev) => {
+            const next = { ...prev }
+            affectedTabIds.forEach((tabId) => {
+                if (tabId in next) {
+                    delete next[tabId]
+                }
+            })
+            return next
+        })
+        if (activeTabId && ids.has(activeTab?.mail.id)) {
+            setActiveTabId(null)
+        }
+    }
+
+    const patchOpenTabsForMail = (mailId, patch) => {
+        setTabs((prev) => prev.map((tab) => (
+            tab.mail.id === mailId ? { ...tab, mail: { ...tab.mail, ...patch } } : tab
+        )))
+    }
+
+    const handleActiveTabDeleteAction = async () => {
+        if (!activeTabMail) return
+        await deleteMailsOptimistic([activeTabMail.id])
+        closeTabsForMailIds([activeTabMail.id])
+        closeActionMenus()
+    }
+
+    const handleActiveTabMoveAction = async (destination) => {
+        if (!activeTabMail || !destination) return
+        await moveMailsOptimistic([activeTabMail.id], destination)
+        closeTabsForMailIds([activeTabMail.id])
+        closeActionMenus()
+    }
+
+    const handleActiveTabArchiveAction = async () => {
+        if (!activeTabMail) return
+        await handleActiveTabMoveAction(resolveFolderDestination('Archive'))
+    }
+
+    const handleActiveTabMoveToTrashAction = async () => {
+        if (!activeTabMail) return
+        await handleActiveTabMoveAction(resolveFolderDestination('Trash'))
+    }
+
+    const handleActiveTabReplyAction = async () => {
+        if (!activeTabMail) return
+        const content = await loadMailContentForDraft(activeTabMail)
+        composeDraft({
+            to: activeTabMail.address || '',
+            cc: dedupeEmails(parseEmailList(content?.cc || '')).join(', '),
+            subject: prefixSubject('Re:', content?.subject || activeTabMail.subject),
+            body: `\n\n${buildQuotedMailBlock(activeTabMail, content)}`,
+        })
+    }
+
+    const handleActiveTabForwardAction = async () => {
+        if (!activeTabMail) return
+        const content = await loadMailContentForDraft(activeTabMail)
+        composeDraft({
+            to: '',
+            subject: prefixSubject('Fwd:', content?.subject || activeTabMail.subject),
+            body: buildQuotedMailBlock(activeTabMail, content),
+        })
+    }
+
+    const handleActiveTabReadToggleAction = async () => {
+        if (!activeTabMail) return
+        const nextSeen = activeTabMail.seen !== true
+        await setMailsSeenState([activeTabMail.id], nextSeen)
+        patchOpenTabsForMail(activeTabMail.id, { seen: nextSeen })
+    }
+
+    const handleActiveTabFlagToggleAction = async () => {
+        if (!activeTabMail) return
+        const nextFlagged = activeTabMail.flagged !== true
+        await setMailsFlaggedState([activeTabMail.id], nextFlagged)
+        patchOpenTabsForMail(activeTabMail.id, { flagged: nextFlagged })
+        closeActionMenus()
+    }
+
+    const handleActiveTabFlagLabelAction = async (label) => {
+        if (!activeTabMail || !label) return
+        await addMailLabel([activeTabMail.id], label)
+        patchOpenTabsForMail(activeTabMail.id, { category: label })
+        closeActionMenus()
+    }
+
+    const handleCreateFolderAndMoveFromTab = async () => {
+        if (!activeTabMail) return
+        const name = window.prompt('New folder name')
+        if (!name) return
+        const created = await createMailbox(name)
+        if (created) {
+            await handleActiveTabMoveAction(name.trim())
+        }
+    }
+
+    const handleCreateFlagLabelFromTab = async () => {
+        if (!activeTabMail) return
+        const name = window.prompt('New flag name')
+        const trimmed = (name || '').trim()
+        if (!trimmed) return
+        setCustomFlagLabels((prev) => (
+            prev.includes(trimmed) ? prev : [...prev, trimmed]
+        ))
+        await handleActiveTabFlagLabelAction(trimmed)
+    }
 
     return (
         <div className="mail-section-wrapper">
@@ -1351,45 +1990,184 @@ function MailSection({
                 ))}
             </div>
 
-            <div className="db-main-menu">
-                <ul>
-                    <li className={activeRibbonTab === 'file' ? 'active' : ''}>
-                        <button onClick={() => setActiveRibbonTab('file')}>{t('Files')}</button>
-                    </li>
-                    <li className={activeRibbonTab === 'home' ? 'active' : ''}>
-                        <button onClick={() => setActiveRibbonTab('home')}>{t('Home')}</button>
-                    </li>
-                    <li className={activeRibbonTab === 'send-receive' ? 'active' : ''}>
-                        <button onClick={() => setActiveRibbonTab('send-receive')}>{t('Send/Receive')}</button>
-                    </li>
-                    <li className={activeRibbonTab === 'folder' ? 'active' : ''}>
-                        <button onClick={() => setActiveRibbonTab('folder')}>{t('Folders')}</button>
-                    </li>
-                    <li className={activeRibbonTab === 'view' ? 'active' : ''}>
-                        <button onClick={() => setActiveRibbonTab('view')}>{t('View')}</button>
-                    </li>
-                </ul>
-            </div>
-            <div className="db-submenu">
-                {activeRibbonTab === 'home' && (
+            {!activeTabId && (
+                <div className="db-main-menu">
                     <ul>
-                        <li><button onClick={() => setComposeOpen(true)}>🆕 {t('New Mail')}</button></li>
-                        <li><button onClick={() => selectedMail && removeMailOptimistic(selectedMail)}>🗑️ {t('Delete')}</button></li>
-                        <li><button onClick={() => selectedMail && moveMail(selectedMail, 'Archive')}>📦 {t('Archive')}</button></li>
-                        <li><button onClick={() => { }}>↩️ {t('Reply')}</button></li>
-                        <li><button onClick={() => { }}>🔃 {t('Reply All')}</button></li>
-                        <li><button onClick={() => { }}>➡️ {t('Forward')}</button></li>
-                        <li><button onClick={() => selectedMail && moveMail(selectedMail, 'Spam')}>🚫 {t('Junk')}</button></li>
+                        <li className={activeRibbonTab === 'file' ? 'active' : ''}>
+                            <button onClick={() => setActiveRibbonTab('file')}>{t('Files')}</button>
+                        </li>
+                        <li className={activeRibbonTab === 'home' ? 'active' : ''}>
+                            <button onClick={() => setActiveRibbonTab('home')}>{t('Home')}</button>
+                        </li>
+                        <li className={activeRibbonTab === 'send-receive' ? 'active' : ''}>
+                            <button onClick={() => setActiveRibbonTab('send-receive')}>{t('Send/Receive')}</button>
+                        </li>
+                        <li className={activeRibbonTab === 'folder' ? 'active' : ''}>
+                            <button onClick={() => setActiveRibbonTab('folder')}>{t('Folders')}</button>
+                        </li>
+                        <li className={activeRibbonTab === 'view' ? 'active' : ''}>
+                            <button onClick={() => setActiveRibbonTab('view')}>{t('View')}</button>
+                        </li>
+                    </ul>
+                </div>
+            )}
+            <div className="db-submenu">
+                {activeTabId ? (
+                    <ul>
+                        <li><button disabled={!activeTabMail} onClick={handleActiveTabDeleteAction}>🗑️ {t('Delete')}</button></li>
+                        <li><button disabled={!activeTabMail} onClick={handleActiveTabMoveToTrashAction}>🗃️ {t('Move to Trash')}</button></li>
+                        <li><button disabled={!activeTabMail} onClick={handleActiveTabArchiveAction}>📦 {t('Archive')}</button></li>
+                        <li><button disabled={!activeTabMail} onClick={handleActiveTabReplyAction}>↩️ Reply</button></li>
+                        <li><button disabled={!activeTabMail} onClick={handleActiveTabForwardAction}>➡️ Forward</button></li>
+                        <li className="db-submenu-menu-wrap" ref={moveMenuRef}>
+                            <button
+                                disabled={!activeTabMail}
+                                className={isMoveMenuOpen ? 'submenu-open' : ''}
+                                onClick={() => {
+                                    setIsFlagMenuOpen(false)
+                                    setIsMoveMenuOpen((prev) => !prev)
+                                }}
+                            >
+                                📁 {t('Move')}
+                            </button>
+                            {isMoveMenuOpen && (
+                                <div className="db-submenu-popover">
+                                    {moveFolderOptions.map((folder) => (
+                                        <button
+                                            key={folder}
+                                            type="button"
+                                            className="db-submenu-popover__item"
+                                            onClick={() => handleActiveTabMoveAction(folder)}
+                                        >
+                                            {folderInfo(folder).label}
+                                        </button>
+                                    ))}
+                                    <div className="db-submenu-popover__divider" />
+                                    <button type="button" className="db-submenu-popover__item" onClick={handleCreateFolderAndMoveFromTab}>
+                                        + New Folder
+                                    </button>
+                                </div>
+                            )}
+                        </li>
+                        <li><button disabled={!activeTabMail} onClick={handleActiveTabReadToggleAction}>👁️ {activeTabReadLabel}</button></li>
+                        <li className="db-submenu-menu-wrap" ref={flagMenuRef}>
+                            <button
+                                disabled={!activeTabMail}
+                                className={isFlagMenuOpen ? 'submenu-open' : ''}
+                                onClick={() => {
+                                    setIsMoveMenuOpen(false)
+                                    setIsFlagMenuOpen((prev) => !prev)
+                                }}
+                            >
+                                ⚑ {activeTabFlagLabel}
+                            </button>
+                            {isFlagMenuOpen && (
+                                <div className="db-submenu-popover">
+                                    <button type="button" className="db-submenu-popover__item" onClick={handleActiveTabFlagToggleAction}>
+                                        {activeTabFlagLabel}
+                                    </button>
+                                    {availableFlagLabels.length > 0 && <div className="db-submenu-popover__divider" />}
+                                    {availableFlagLabels.map((label) => (
+                                        <button
+                                            key={label}
+                                            type="button"
+                                            className="db-submenu-popover__item"
+                                            onClick={() => handleActiveTabFlagLabelAction(label)}
+                                        >
+                                            {label}
+                                        </button>
+                                    ))}
+                                    <div className="db-submenu-popover__divider" />
+                                    <button type="button" className="db-submenu-popover__item" onClick={handleCreateFlagLabelFromTab}>
+                                        + New Flag
+                                    </button>
+                                </div>
+                            )}
+                        </li>
+                    </ul>
+                ) : activeRibbonTab === 'home' && (
+                    <ul>
+                        <li><button onClick={handleNewMail}>🆕 {t('New Mail')}</button></li>
+                        <li><button disabled={!hasAnyActionMail} onClick={handleDeleteAction}>🗑️ {t('Delete')}</button></li>
+                        <li><button disabled={!hasAnyActionMail} onClick={handleMoveToTrashAction}>🗃️ {t('Move to Trash')}</button></li>
+                        <li><button disabled={!hasAnyActionMail} onClick={handleArchiveAction}>📦 {t('Archive')}</button></li>
+                        <li><button disabled={!hasAnyActionMail} onClick={handleReplyAction}>↩️ {homeReplyLabel}</button></li>
+                        <li><button disabled={!hasAnyActionMail} onClick={handleForwardAction}>➡️ {homeForwardLabel}</button></li>
+                        <li className="db-submenu-menu-wrap" ref={moveMenuRef}>
+                            <button
+                                disabled={!hasAnyActionMail}
+                                className={isMoveMenuOpen ? 'submenu-open' : ''}
+                                onClick={() => {
+                                    setIsFlagMenuOpen(false)
+                                    setIsMoveMenuOpen((prev) => !prev)
+                                }}
+                            >
+                                📁 {t('Move')}
+                            </button>
+                            {isMoveMenuOpen && (
+                                <div className="db-submenu-popover">
+                                    {moveFolderOptions.map((folder) => (
+                                        <button
+                                            key={folder}
+                                            type="button"
+                                            className="db-submenu-popover__item"
+                                            onClick={() => handleMoveAction(folder)}
+                                        >
+                                            {folderInfo(folder).label}
+                                        </button>
+                                    ))}
+                                    <div className="db-submenu-popover__divider" />
+                                    <button type="button" className="db-submenu-popover__item" onClick={handleCreateFolderAndMove}>
+                                        + New Folder
+                                    </button>
+                                </div>
+                            )}
+                        </li>
+                        <li><button disabled={!hasAnyActionMail} onClick={handleReadToggleAction}>👁️ {readToggleLabel}</button></li>
+                        <li className="db-submenu-menu-wrap" ref={flagMenuRef}>
+                            <button
+                                disabled={!hasAnyActionMail}
+                                className={isFlagMenuOpen ? 'submenu-open' : ''}
+                                onClick={() => {
+                                    setIsMoveMenuOpen(false)
+                                    setIsFlagMenuOpen((prev) => !prev)
+                                }}
+                            >
+                                ⚑ {flagToggleLabel}
+                            </button>
+                            {isFlagMenuOpen && (
+                                <div className="db-submenu-popover">
+                                    <button type="button" className="db-submenu-popover__item" onClick={handleFlagToggleAction}>
+                                        {flagToggleLabel}
+                                    </button>
+                                    {availableFlagLabels.length > 0 && <div className="db-submenu-popover__divider" />}
+                                    {availableFlagLabels.map((label) => (
+                                        <button
+                                            key={label}
+                                            type="button"
+                                            className="db-submenu-popover__item"
+                                            onClick={() => handleFlagLabelAction(label)}
+                                        >
+                                            {label}
+                                        </button>
+                                    ))}
+                                    <div className="db-submenu-popover__divider" />
+                                    <button type="button" className="db-submenu-popover__item" onClick={handleCreateFlagLabel}>
+                                        + New Flag
+                                    </button>
+                                </div>
+                            )}
+                        </li>
                     </ul>
                 )}
-                {activeRibbonTab === 'file' && (
+                {!activeTabId && activeRibbonTab === 'file' && (
                     <ul>
                         <li><button onClick={() => { }}>💾 {t('Save')}</button></li>
                         <li><button onClick={() => { }}>🖨️ {t('Print')}</button></li>
                         <li><button onClick={() => { }}>📤 {t('Export')}</button></li>
                     </ul>
                 )}
-                {activeRibbonTab === 'send-receive' && (
+                {!activeTabId && activeRibbonTab === 'send-receive' && (
                     <ul>
                         <li><button onClick={() => {
                             loadMailsFromCache(selectedFolder, currentPage, perPage)
@@ -1402,13 +2180,13 @@ function MailSection({
                         <li><button onClick={() => { }}>📡 {t('Send All')}</button></li>
                     </ul>
                 )}
-                {activeRibbonTab === 'folder' && (
+                {!activeTabId && activeRibbonTab === 'folder' && (
                     <ul>
                         <li><button onClick={() => { }}>📁 {t('New Folder')}</button></li>
                         <li><button onClick={() => { }}>🏷️ {t('Rename')}</button></li>
                     </ul>
                 )}
-                {activeRibbonTab === 'view' && (
+                {!activeTabId && activeRibbonTab === 'view' && (
                     <ul>
                         <li><button onClick={() => { }}>📖 {t('Reading Pane')}</button></li>
                         <li><button onClick={() => { }}>📏 {t('Layout')}</button></li>

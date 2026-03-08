@@ -73,7 +73,7 @@ pub async fn run(db_dir: Option<PathBuf>) -> anyhow::Result<()> {
         )
         .route(
             "/api/mail/:account_id/mailboxes",
-            get(mail_routes::get_mailboxes),
+            get(mail_routes::get_mailboxes).post(mail_routes::create_mailbox),
         )
         .route(
             "/api/mail/:account_id/list",

@@ -174,6 +174,11 @@ pub struct MailContentQuery {
     pub mailbox: String,
 }
 
+#[derive(Deserialize)]
+pub struct MailboxCreateBody {
+    pub name: String,
+}
+
 pub async fn get_mail_list(
     State(state): State<Arc<MailAppState>>,
     Path(account_id): Path<i64>,
@@ -238,6 +243,37 @@ pub async fn get_mail_list(
         total_count: total,
         mails,
     })
+}
+
+pub async fn create_mailbox(
+    State(state): State<Arc<MailAppState>>,
+    Path(account_id): Path<i64>,
+    Json(body): Json<MailboxCreateBody>,
+) -> impl IntoResponse {
+    let mailbox = body.name.trim().to_string();
+    if mailbox.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "Mailbox name is required" })),
+        )
+            .into_response();
+    }
+
+    let result = tokio::task::spawn_blocking({
+        let imap_state = state.imap.clone();
+        move || imap_session::create_mailbox(&imap_state, account_id, &mailbox)
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("Task panic: {e}")));
+
+    match result {
+        Ok(()) => (StatusCode::OK, Json(json!({ "status": "created" }))).into_response(),
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": error })),
+        )
+            .into_response(),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────
