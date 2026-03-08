@@ -117,6 +117,57 @@ function CollapsedTab({ label, title, onClick }) {
     )
 }
 
+const MAIL_FILTER_OPTIONS = [
+    { key: 'all', label: 'All', icon: '✉' },
+    { key: 'unread', label: 'Unread', icon: '⌁' },
+    { key: 'flagged', label: 'Flagged', icon: '⚑' },
+    { key: 'toMe', label: 'To me', icon: '➤' },
+]
+
+const MAIL_SORT_OPTIONS = [
+    { key: 'date', label: 'Date' },
+    { key: 'from', label: 'From' },
+    { key: 'category', label: 'Category' },
+    { key: 'flagStatus', label: 'Flag Status' },
+    { key: 'size', label: 'Size' },
+    { key: 'subject', label: 'Subject' },
+    { key: 'type', label: 'Type' },
+]
+
+const MAIL_SORT_DIRECTION_LABELS = {
+    date: { asc: 'Oldest on top', desc: 'Newest on top' },
+    from: { asc: 'A to Z', desc: 'Z to A' },
+    category: { asc: 'A to Z', desc: 'Z to A' },
+    flagStatus: { asc: 'Unflagged on top', desc: 'Flagged on top' },
+    size: { asc: 'Smallest on top', desc: 'Largest on top' },
+    subject: { asc: 'A to Z', desc: 'Z to A' },
+    type: { asc: 'A to Z', desc: 'Z to A' },
+}
+
+function normalizeMailText(value) {
+    return (value || '').toString().trim().toLocaleLowerCase()
+}
+
+function getMailType(mail) {
+    return normalizeMailText(mail?.content_type) || 'unknown'
+}
+
+function getMailCategory(mail) {
+    const explicitCategory = normalizeMailText(mail?.category)
+    if (explicitCategory) return explicitCategory
+
+    const mailType = getMailType(mail)
+    if (mailType.startsWith('multipart/')) return 'multipart'
+    if (mailType.startsWith('text/')) return 'text'
+    if (mailType.startsWith('image/')) return 'image'
+    if (mailType.startsWith('application/')) return 'application'
+    return mailType
+}
+
+function getSortDirectionLabel(sortBy, direction) {
+    return MAIL_SORT_DIRECTION_LABELS[sortBy]?.[direction] || 'Newest on top'
+}
+
 const DashboardPage = () => {
     const { t } = useTranslation()
     const navigate = useNavigate()
@@ -170,9 +221,7 @@ const DashboardPage = () => {
     const prevCanUseRemoteMailRef = useRef(false)
     const lastConnectAttemptAtRef = useRef(0)
     const canUseRemoteMail = backendReachable && networkOnline && (remoteMailAvailable || connected)
-    const totalCount = canUseRemoteMail
-        ? (remoteMailTotal ?? cacheMailTotal ?? 0)
-        : (cacheMailTotal ?? 0)
+    const totalCount = Array.isArray(mails) ? mails.length : 0
     const perPageNum = Math.max(1, Number.parseInt(perPage, 10) || 50)
     const maxPage = Math.max(1, Math.ceil(totalCount / perPageNum))
 
@@ -293,16 +342,34 @@ const DashboardPage = () => {
     const loadMailsFromCache = useCallback(async (folder, page, limit) => {
         if (!accountId || !backendReachable) return
         try {
-            const res = await fetch(
-                apiUrl(`/api/offline/${accountId}/local-list?mailbox=${encodeURIComponent(folder)}&page=${page}&per_page=${limit}`),
-                { cache: 'no-store' },
-            )
-            if (res.ok) {
+            const pageSize = 250
+            const allMails = []
+            let totalCount = null
+            let nextPage = 1
+
+            while (true) {
+                const res = await fetch(
+                    apiUrl(`/api/offline/${accountId}/local-list?mailbox=${encodeURIComponent(folder)}&page=${nextPage}&per_page=${pageSize}`),
+                    { cache: 'no-store' },
+                )
+                if (!res.ok) break
+
                 const data = await res.json()
-                setMails(data.mails || [])
-                setCacheMailTotal(typeof data.total_count === 'number' ? data.total_count : null)
-                return true
+                const chunk = Array.isArray(data.mails) ? data.mails : []
+                if (typeof data.total_count === 'number') {
+                    totalCount = data.total_count
+                }
+                allMails.push(...chunk)
+
+                if (chunk.length === 0) break
+                if (typeof totalCount === 'number' && allMails.length >= totalCount) break
+                if (chunk.length < pageSize) break
+                nextPage += 1
             }
+
+            setMails(allMails)
+            setCacheMailTotal(typeof totalCount === 'number' ? totalCount : allMails.length)
+            return true
         } catch {
             setMails([])
         }
@@ -317,14 +384,34 @@ const DashboardPage = () => {
         try {
             const abort = new AbortController()
             syncAbortRef.current = abort
-            const res = await fetch(
-                apiUrl(`/api/mail/${accountId}/list?mailbox=${encodeURIComponent(folder)}&page=${page}&per_page=${limit}`),
-                { cache: 'no-store', signal: abort.signal },
-            )
-            if (res.ok && abort.signal.aborted === false) {
+            const pageSize = 250
+            const allMails = []
+            let totalCount = null
+            let nextPage = 1
+
+            while (!abort.signal.aborted) {
+                const res = await fetch(
+                    apiUrl(`/api/mail/${accountId}/list?mailbox=${encodeURIComponent(folder)}&page=${nextPage}&per_page=${pageSize}`),
+                    { cache: 'no-store', signal: abort.signal },
+                )
+                if (!res.ok) break
+
                 const data = await res.json()
-                setMails(data.mails || [])
-                setRemoteMailTotal(typeof data.total_count === 'number' ? data.total_count : null)
+                const chunk = Array.isArray(data.mails) ? data.mails : []
+                if (typeof data.total_count === 'number') {
+                    totalCount = data.total_count
+                }
+                allMails.push(...chunk)
+
+                if (chunk.length === 0) break
+                if (typeof totalCount === 'number' && allMails.length >= totalCount) break
+                if (chunk.length < pageSize) break
+                nextPage += 1
+            }
+
+            if (abort.signal.aborted === false) {
+                setMails(allMails)
+                setRemoteMailTotal(typeof totalCount === 'number' ? totalCount : allMails.length)
             }
         } catch (err) {
             if (err.name !== 'AbortError') {
@@ -398,25 +485,23 @@ const DashboardPage = () => {
         setCacheMailTotal(null)
         setRemoteMailTotal(null)
         setCurrentPage(1)
-    }, [activeSection, backendReachable, selectedFolder, perPage])
+    }, [activeSection, backendReachable, selectedFolder])
 
     useEffect(() => {
         if (activeSection !== 'mail' || !backendReachable) return
 
         let cancelled = false
-        const page = currentPage
-        const limit = perPage
         const folder = selectedFolder
 
-        loadMailsFromCache(folder, page, limit).then(() => {
+        loadMailsFromCache(folder, 1, 250).then(() => {
             if (cancelled || !canUseRemoteMail) return
-            loadMails(folder, page, limit, true)
+            syncMailsFromRemote(folder, 1, 250)
         })
 
         return () => {
             cancelled = true
         }
-    }, [activeSection, backendReachable, canUseRemoteMail, currentPage, selectedFolder, perPage, loadMails, loadMailsFromCache])
+    }, [activeSection, backendReachable, canUseRemoteMail, selectedFolder, loadMailsFromCache, syncMailsFromRemote])
 
     const prefetchInlineAssets = useCallback(
         async (uid, mailbox) => {
@@ -740,6 +825,7 @@ const DashboardPage = () => {
                         {activeSection === 'mail' && (
                             <MailSection
                                 accountId={accountId}
+                                accountEmail={accountEmailLabel}
                                 backendReachable={backendReachable}
                                 networkOnline={networkOnline}
                                 ensureImapConnected={ensureImapConnected}
@@ -792,6 +878,7 @@ const DashboardPage = () => {
 
 function MailSection({
     accountId,
+    accountEmail,
     backendReachable,
     networkOnline,
     ensureImapConnected,
@@ -816,13 +903,21 @@ function MailSection({
     const [mailsHidden, setMailsHidden] = useState(false)
     const [selectMode, setSelectMode] = useState(false)
     const [selectedMailIds, setSelectedMailIds] = useState(() => new Set())
+    const [isSelectionMenuOpen, setIsSelectionMenuOpen] = useState(false)
+    const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false)
+    const [isSortMenuOpen, setIsSortMenuOpen] = useState(false)
+    const [activeFilter, setActiveFilter] = useState('all')
+    const [sortBy, setSortBy] = useState('date')
+    const [sortDirection, setSortDirection] = useState('desc')
     const [isPerPageOpen, setIsPerPageOpen] = useState(false)
     const [attachmentsExpanded, setAttachmentsExpanded] = useState(true)
     const [layoutCols, setLayoutCols] = useState(1)
     const displayCols = isMailFullscreen ? layoutCols : 1
+    const perPageValue = Math.max(1, Number.parseInt(perPage, 10) || 50)
 
-    const sortedMails = useMemo(() => {
+    const visibleMails = useMemo(() => {
         const copy = Array.isArray(mails) ? mails.slice() : []
+        const accountEmailNormalized = normalizeMailText(accountEmail)
         const dateMs = (m) => {
             const t = Date.parse(m?.date || '')
             return Number.isFinite(t) ? t : 0
@@ -831,13 +926,55 @@ function MailSection({
             const n = Number.parseInt(m?.id ?? '', 10)
             return Number.isFinite(n) ? n : 0
         }
-        copy.sort((a, b) => {
-            const d = dateMs(b) - dateMs(a)
-            if (d !== 0) return d
+        const cmpText = (left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' })
+        const applyDirection = (value) => (sortDirection === 'asc' ? value : -value)
+
+        const filtered = copy.filter((mail) => {
+            if (activeFilter === 'unread') return mail.seen !== true
+            if (activeFilter === 'flagged') return mail.flagged === true
+            if (activeFilter === 'toMe') {
+                if (!accountEmailNormalized) return false
+                return normalizeMailText(mail.recipient_to).includes(accountEmailNormalized)
+            }
+            return true
+        })
+
+        filtered.sort((a, b) => {
+            let result = 0
+
+            if (sortBy === 'date') {
+                result = dateMs(a) - dateMs(b)
+            } else if (sortBy === 'from') {
+                result = cmpText(
+                    normalizeMailText(a?.name || a?.address),
+                    normalizeMailText(b?.name || b?.address),
+                )
+            } else if (sortBy === 'category') {
+                result = cmpText(getMailCategory(a), getMailCategory(b))
+            } else if (sortBy === 'flagStatus') {
+                result = Number(a?.flagged === true) - Number(b?.flagged === true)
+            } else if (sortBy === 'size') {
+                result = (Number(a?.size) || 0) - (Number(b?.size) || 0)
+            } else if (sortBy === 'subject') {
+                result = cmpText(normalizeMailText(a?.subject), normalizeMailText(b?.subject))
+            } else if (sortBy === 'type') {
+                result = cmpText(getMailType(a), getMailType(b))
+            }
+
+            result = applyDirection(result)
+            if (result !== 0) return result
+
+            const dateFallback = dateMs(b) - dateMs(a)
+            if (dateFallback !== 0) return dateFallback
             return uidNum(b) - uidNum(a)
         })
-        return copy
-    }, [mails])
+        return filtered
+    }, [accountEmail, activeFilter, mails, sortBy, sortDirection])
+
+    const filteredMaxPage = Math.max(1, Math.ceil(visibleMails.length / perPageValue))
+    const displayPage = Math.min(currentPage, filteredMaxPage)
+    const pageStart = (displayPage - 1) * perPageValue
+    const pagedVisibleMails = visibleMails.slice(pageStart, pageStart + perPageValue)
 
     const formatMailDateLong = (dateValue) => {
         if (!dateValue) return ''
@@ -858,6 +995,9 @@ function MailSection({
     }
 
     const perPageRef = useRef(null)
+    const selectionMenuRef = useRef(null)
+    const filterMenuRef = useRef(null)
+    const sortMenuRef = useRef(null)
     const isResizingFolder = useRef(false)
     const isResizingList = useRef(false)
     const mailToolbarRef = useRef(null)
@@ -956,10 +1096,63 @@ function MailSection({
             if (perPageRef.current && !perPageRef.current.contains(e.target)) {
                 setIsPerPageOpen(false)
             }
+            if (selectionMenuRef.current && !selectionMenuRef.current.contains(e.target)) {
+                setIsSelectionMenuOpen(false)
+            }
+            if (filterMenuRef.current && !filterMenuRef.current.contains(e.target)) {
+                setIsFilterMenuOpen(false)
+            }
+            if (sortMenuRef.current && !sortMenuRef.current.contains(e.target)) {
+                setIsSortMenuOpen(false)
+            }
         }
         document.addEventListener('mousedown', handleClickOutside)
         return () => document.removeEventListener('mousedown', handleClickOutside)
     }, [])
+
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if (e.key === 'Escape') {
+                if (isSortMenuOpen) {
+                    setIsSortMenuOpen(false)
+                    return
+                }
+                if (isFilterMenuOpen) {
+                    setIsFilterMenuOpen(false)
+                    return
+                }
+                if (isSelectionMenuOpen) {
+                    setIsSelectionMenuOpen(false)
+                    return
+                }
+                if (selectMode) {
+                    setSelectMode(false)
+                    setSelectedMailIds(new Set())
+                } else if (selectedMail) {
+                    setSelectedMail(null)
+                    setMailContent(null)
+                }
+            }
+        }
+        window.addEventListener('keydown', handleKeyDown)
+        return () => window.removeEventListener('keydown', handleKeyDown)
+    }, [isFilterMenuOpen, isSelectionMenuOpen, isSortMenuOpen, selectMode, selectedMail, setMailContent, setSelectedMail])
+
+    useEffect(() => {
+        if (sortBy === 'importance') {
+            setSortBy('date')
+        }
+    }, [sortBy])
+
+    useEffect(() => {
+        setCurrentPage(1)
+    }, [activeFilter, sortBy, sortDirection, setCurrentPage])
+
+    useEffect(() => {
+        if (currentPage > filteredMaxPage) {
+            setCurrentPage(filteredMaxPage)
+        }
+    }, [currentPage, filteredMaxPage, setCurrentPage])
 
     useEffect(() => {
         const handleMouseMove = (e) => {
@@ -1013,6 +1206,9 @@ function MailSection({
             const next = new Set(prev)
             if (next.has(mailId)) next.delete(mailId)
             else next.add(mailId)
+            if (next.size === 0) {
+                setTimeout(() => setSelectMode(false), 0)
+            }
             return next
         })
     }
@@ -1022,6 +1218,20 @@ function MailSection({
         setSelectMode(true)
         toggleMailSelected(mailId)
     }
+
+    const applyBulkSelection = useCallback((scope) => {
+        const nextSelectedIds = visibleMails
+            .filter((mail) => {
+                if (scope === 'read') return mail.seen === true
+                if (scope === 'unread') return mail.seen !== true
+                return true
+            })
+            .map((mail) => mail.id)
+
+        setSelectedMailIds(new Set(nextSelectedIds))
+        setSelectMode(nextSelectedIds.length > 0)
+        setIsSelectionMenuOpen(false)
+    }, [visibleMails])
 
     const buildTree = (list) => {
         const tree = []
@@ -1360,42 +1570,153 @@ function MailSection({
                                     >
                                         {isSyncing ? '⟳' : '🔄'}
                                     </button>
-                                    <button
-                                        type="button"
-                                        className={`db-mail-toolbar-btn ${selectMode ? 'active' : ''}`}
-                                        onClick={() => {
-                                            setSelectMode((prev) => {
-                                                const next = !prev
-                                                if (!next) setSelectedMailIds(new Set())
-                                                return next
-                                            })
-                                        }}
-                                        title="Select"
-                                    >
-                                        ☑
-                                    </button>
-                                    <button type="button" className="db-mail-toolbar-btn" title="Filter">🔍</button>
-                                    <button type="button" className="db-mail-toolbar-btn" title="Sort">↕️</button>
+                                    <div className="db-mail-toolbar-split" ref={selectionMenuRef}>
+                                        <button
+                                            type="button"
+                                            className={`db-mail-toolbar-btn ${selectMode ? 'active' : ''}`}
+                                            onClick={() => {
+                                                setSelectMode((prev) => {
+                                                    const next = !prev
+                                                    if (!next) {
+                                                        setSelectedMailIds(new Set())
+                                                        setIsSelectionMenuOpen(false)
+                                                    }
+                                                    return next
+                                                })
+                                            }}
+                                            title="Select"
+                                        >
+                                            ☑
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className={`db-mail-toolbar-btn db-mail-toolbar-btn--split ${isSelectionMenuOpen ? 'active' : ''}`}
+                                            onClick={() => setIsSelectionMenuOpen((prev) => !prev)}
+                                            aria-haspopup="menu"
+                                            aria-expanded={isSelectionMenuOpen}
+                                            aria-label="Open selection options"
+                                            title="Selection options"
+                                        >
+                                            ▾
+                                        </button>
+                                        {isSelectionMenuOpen && (
+                                            <div className="db-toolbar-dropdown" role="menu" aria-label="Selection options">
+                                                <button type="button" className="db-toolbar-dropdown__item" role="menuitem" onClick={() => applyBulkSelection('all')}>
+                                                    Tümünü seç
+                                                </button>
+                                                <button type="button" className="db-toolbar-dropdown__item" role="menuitem" onClick={() => applyBulkSelection('read')}>
+                                                    Tüm okunmuşlar
+                                                </button>
+                                                <button type="button" className="db-toolbar-dropdown__item" role="menuitem" onClick={() => applyBulkSelection('unread')}>
+                                                    Tüm okunmamışlar
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="db-toolbar-menu-wrap" ref={filterMenuRef}>
+                                        <button
+                                            type="button"
+                                            className={`db-mail-toolbar-btn ${isFilterMenuOpen ? 'menu-open' : ''}`}
+                                            title="Filter"
+                                            onClick={() => {
+                                                setIsSortMenuOpen(false)
+                                                setIsFilterMenuOpen((prev) => !prev)
+                                            }}
+                                            aria-haspopup="menu"
+                                            aria-expanded={isFilterMenuOpen}
+                                        >
+                                            🔍
+                                        </button>
+                                        {isFilterMenuOpen && (
+                                            <div className="db-toolbar-popover" role="menu" aria-label="Filter mails">
+                                                {MAIL_FILTER_OPTIONS.map((option) => (
+                                                    <button
+                                                        key={option.key}
+                                                        type="button"
+                                                        className={`db-toolbar-popover__item ${activeFilter === option.key ? 'selected' : ''}`}
+                                                        role="menuitemradio"
+                                                        aria-checked={activeFilter === option.key}
+                                                        onClick={() => {
+                                                            setActiveFilter(option.key)
+                                                            setIsFilterMenuOpen(false)
+                                                        }}
+                                                    >
+                                                        <span className="db-toolbar-popover__check">{activeFilter === option.key ? '✓' : ''}</span>
+                                                        <span className="db-toolbar-popover__icon">{option.icon}</span>
+                                                        <span>{option.label}</span>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="db-toolbar-menu-wrap" ref={sortMenuRef}>
+                                        <button
+                                            type="button"
+                                            className={`db-mail-toolbar-btn ${isSortMenuOpen ? 'menu-open' : ''}`}
+                                            title="Sort"
+                                            onClick={() => {
+                                                setIsFilterMenuOpen(false)
+                                                setIsSortMenuOpen((prev) => !prev)
+                                            }}
+                                            aria-haspopup="menu"
+                                            aria-expanded={isSortMenuOpen}
+                                        >
+                                            ↕️
+                                        </button>
+                                        {isSortMenuOpen && (
+                                            <div className="db-toolbar-popover db-toolbar-popover--sort" role="menu" aria-label="Sort mails">
+                                                <div className="db-toolbar-popover__section-title">Sort by</div>
+                                                {MAIL_SORT_OPTIONS.map((option) => (
+                                                    <button
+                                                        key={option.key}
+                                                        type="button"
+                                                        className={`db-toolbar-popover__item ${sortBy === option.key ? 'selected' : ''}`}
+                                                        role="menuitemradio"
+                                                        aria-checked={sortBy === option.key}
+                                                        onClick={() => setSortBy(option.key)}
+                                                    >
+                                                        <span className="db-toolbar-popover__check">{sortBy === option.key ? '✓' : ''}</span>
+                                                        <span>{option.label}</span>
+                                                    </button>
+                                                ))}
+                                                <div className="db-toolbar-popover__divider" />
+                                                <div className="db-toolbar-popover__section-title">Sort order</div>
+                                                {(['desc', 'asc']).map((direction) => (
+                                                    <button
+                                                        key={direction}
+                                                        type="button"
+                                                        className={`db-toolbar-popover__item ${sortDirection === direction ? 'selected' : ''}`}
+                                                        role="menuitemradio"
+                                                        aria-checked={sortDirection === direction}
+                                                        onClick={() => setSortDirection(direction)}
+                                                    >
+                                                        <span className="db-toolbar-popover__check">{sortDirection === direction ? '✓' : ''}</span>
+                                                        <span>{getSortDirectionLabel(sortBy, direction)}</span>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
 
                                     <div className="db-toolbar-separator" />
 
                                     <div className="db-pagination-controls">
                                         <button
                                             className="db-pagination-btn"
-                                            disabled={currentPage <= 1 || loadingMails}
+                                            disabled={displayPage <= 1 || loadingMails}
                                             onClick={() => {
-                                                const p = currentPage - 1
+                                                const p = displayPage - 1
                                                 setCurrentPage(p)
                                             }}
                                         >
                                             ◀
                                         </button>
-                                        <span className="db-page-num">{currentPage}/{maxPage}</span>
+                                        <span className="db-page-num">{displayPage}/{filteredMaxPage}</span>
                                         <button
                                             className="db-pagination-btn"
-                                            disabled={currentPage >= maxPage || loadingMails}
+                                            disabled={displayPage >= filteredMaxPage || loadingMails}
                                             onClick={() => {
-                                                const p = currentPage + 1
+                                                const p = displayPage + 1
                                                 setCurrentPage(p)
                                             }}
                                         >
@@ -1501,9 +1822,14 @@ function MailSection({
                                         <div className="db-empty-icon">📭</div>
                                         <div className="db-empty-text">This folder is empty</div>
                                     </div>
+                                ) : visibleMails.length === 0 ? (
+                                    <div className="db-empty-state">
+                                        <div className="db-empty-icon">🔎</div>
+                                        <div className="db-empty-text">No mails match the current filter.</div>
+                                    </div>
                                 ) : (
                                     <ul className="db-mail-list" data-cols={displayCols}>
-                                        {sortedMails.map((mail) => {
+                                        {pagedVisibleMails.map((mail) => {
                                             const isChecked = selectedMailIds.has(mail.id)
 
                                             return (

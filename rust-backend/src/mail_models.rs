@@ -8,6 +8,12 @@ pub struct MailPreview {
     pub subject: String,
     pub date: String,
     pub seen: bool,
+    pub flagged: bool,
+    pub recipient_to: String,
+    pub size: usize,
+    pub importance: i32,
+    pub content_type: String,
+    pub category: String,
 }
 
 #[derive(Serialize)]

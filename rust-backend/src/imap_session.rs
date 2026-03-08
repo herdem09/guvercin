@@ -79,11 +79,11 @@ impl ImapSession {
         let data = match self {
             ImapSession::Plain(s) => s.fetch(
                 sequence,
-                "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] FLAGS UID)",
+                "(BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE CONTENT-TYPE IMPORTANCE X-PRIORITY KEYWORDS X-CATEGORY)] FLAGS UID RFC822.SIZE)",
             ),
             ImapSession::Tls(s) => s.fetch(
                 sequence,
-                "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] FLAGS UID)",
+                "(BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE CONTENT-TYPE IMPORTANCE X-PRIORITY KEYWORDS X-CATEGORY)] FLAGS UID RFC822.SIZE)",
             ),
         };
 
@@ -105,12 +105,20 @@ impl ImapSession {
                 .flags()
                 .iter()
                 .any(|f| matches!(f, imap::types::Flag::Seen));
+            let flagged = msg
+                .flags()
+                .iter()
+                .any(|f| matches!(f, imap::types::Flag::Flagged));
 
             if let Some(header_bytes) = msg.header() {
                 let header_str = String::from_utf8_lossy(header_bytes);
                 let subject = parse_header(&header_str, "Subject");
                 let from_raw = parse_header(&header_str, "From");
+                let recipient_to = parse_header(&header_str, "To");
                 let date = parse_header(&header_str, "Date");
+                let content_type = parse_content_type(&parse_header(&header_str, "Content-Type"));
+                let importance = parse_importance(&header_str);
+                let category = parse_category(&header_str);
                 let (name, address) = split_from(&from_raw);
 
                 previews.push(MailPreview {
@@ -120,6 +128,12 @@ impl ImapSession {
                     subject,
                     date,
                     seen,
+                    flagged,
+                    recipient_to,
+                    size: msg.size.unwrap_or(0) as usize,
+                    importance,
+                    content_type,
+                    category,
                 });
             }
         }
@@ -212,11 +226,11 @@ impl ImapSession {
         let data = match self {
             ImapSession::Plain(s) => s.uid_fetch(
                 uid_set,
-                "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] FLAGS UID)",
+                "(BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE CONTENT-TYPE IMPORTANCE X-PRIORITY KEYWORDS X-CATEGORY)] FLAGS UID RFC822.SIZE)",
             ),
             ImapSession::Tls(s) => s.uid_fetch(
                 uid_set,
-                "(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)] FLAGS UID)",
+                "(BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE CONTENT-TYPE IMPORTANCE X-PRIORITY KEYWORDS X-CATEGORY)] FLAGS UID RFC822.SIZE)",
             ),
         };
 
@@ -246,12 +260,20 @@ impl ImapSession {
                 .flags()
                 .iter()
                 .any(|f| matches!(f, imap::types::Flag::Seen));
+            let flagged = msg
+                .flags()
+                .iter()
+                .any(|f| matches!(f, imap::types::Flag::Flagged));
 
             if let Some(header_bytes) = msg.header() {
                 let header_str = String::from_utf8_lossy(header_bytes);
                 let subject = parse_header(&header_str, "Subject");
                 let from_raw = parse_header(&header_str, "From");
+                let recipient_to = parse_header(&header_str, "To");
                 let date = parse_header(&header_str, "Date");
+                let content_type = parse_content_type(&parse_header(&header_str, "Content-Type"));
+                let importance = parse_importance(&header_str);
+                let category = parse_category(&header_str);
                 let (name, address) = split_from(&from_raw);
 
                 previews.push(MailPreview {
@@ -261,6 +283,12 @@ impl ImapSession {
                     subject,
                     date,
                     seen,
+                    flagged,
+                    recipient_to,
+                    size: msg.size.unwrap_or(0) as usize,
+                    importance,
+                    content_type,
+                    category,
                 });
             }
         }
@@ -794,17 +822,79 @@ struct AttachmentDescriptor {
 // ─────────────────────────────────────────────────────────────────
 
 fn parse_header(headers: &str, name: &str) -> String {
-    let search = format!("{name}:");
+    let wanted = name.to_ascii_lowercase();
+    let mut current_key = String::new();
+    let mut current_value = String::new();
+
     for line in headers.lines() {
-        if line
-            .to_ascii_lowercase()
-            .starts_with(&search.to_ascii_lowercase())
-        {
-            let value = line[search.len()..].trim().to_string();
-            return decode_encoded_word(&value);
+        if line.starts_with(' ') || line.starts_with('\t') {
+            if current_key == wanted && !current_value.is_empty() {
+                current_value.push(' ');
+                current_value.push_str(line.trim());
+            }
+            continue;
+        }
+
+        if current_key == wanted && !current_value.is_empty() {
+            return decode_encoded_word(current_value.trim());
+        }
+
+        current_key.clear();
+        current_value.clear();
+
+        if let Some((key, value)) = line.split_once(':') {
+            current_key = key.trim().to_ascii_lowercase();
+            if current_key == wanted {
+                current_value = value.trim().to_string();
+            }
         }
     }
+
+    if current_key == wanted && !current_value.is_empty() {
+        return decode_encoded_word(current_value.trim());
+    }
+
     String::new()
+}
+
+fn parse_content_type(value: &str) -> String {
+    value
+        .split(';')
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_ascii_lowercase()
+}
+
+fn parse_importance(headers: &str) -> i32 {
+    let importance = parse_header(headers, "Importance").to_ascii_lowercase();
+    match importance.as_str() {
+        "high" => 2,
+        "normal" => 1,
+        "low" => 0,
+        _ => {
+            let x_priority = parse_header(headers, "X-Priority");
+            let digit = x_priority
+                .chars()
+                .find(|ch| ch.is_ascii_digit())
+                .and_then(|ch| ch.to_digit(10))
+                .unwrap_or(3);
+            match digit {
+                1 | 2 => 2,
+                3 => 1,
+                4 | 5 => 0,
+                _ => 1,
+            }
+        }
+    }
+}
+
+fn parse_category(headers: &str) -> String {
+    let x_category = parse_header(headers, "X-Category");
+    if !x_category.is_empty() {
+        return x_category;
+    }
+    parse_header(headers, "Keywords")
 }
 
 fn decode_encoded_word(s: &str) -> String {

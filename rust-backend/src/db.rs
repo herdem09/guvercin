@@ -419,10 +419,16 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             folder TEXT NOT NULL,
             sender_name TEXT,
             sender_address TEXT,
+            recipient_to TEXT,
             subject TEXT,
             seen BOOLEAN DEFAULT 0,
+            flagged BOOLEAN DEFAULT 0,
             date_value TEXT,
             date_ms INTEGER DEFAULT 0,
+            size_bytes INTEGER DEFAULT 0,
+            importance_value INTEGER DEFAULT 0,
+            content_type TEXT,
+            category TEXT,
             cc_value TEXT,
             bcc_value TEXT,
             plain_body TEXT,
@@ -449,6 +455,30 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .await;
 
     let _ = sqlx::query("ALTER TABLE local_mail_cache ADD COLUMN bcc_value TEXT")
+        .execute(pool)
+        .await;
+
+    let _ = sqlx::query("ALTER TABLE local_mail_cache ADD COLUMN recipient_to TEXT")
+        .execute(pool)
+        .await;
+
+    let _ = sqlx::query("ALTER TABLE local_mail_cache ADD COLUMN flagged BOOLEAN DEFAULT 0")
+        .execute(pool)
+        .await;
+
+    let _ = sqlx::query("ALTER TABLE local_mail_cache ADD COLUMN size_bytes INTEGER DEFAULT 0")
+        .execute(pool)
+        .await;
+
+    let _ = sqlx::query("ALTER TABLE local_mail_cache ADD COLUMN importance_value INTEGER DEFAULT 0")
+        .execute(pool)
+        .await;
+
+    let _ = sqlx::query("ALTER TABLE local_mail_cache ADD COLUMN content_type TEXT")
+        .execute(pool)
+        .await;
+
+    let _ = sqlx::query("ALTER TABLE local_mail_cache ADD COLUMN category TEXT")
         .execute(pool)
         .await;
 

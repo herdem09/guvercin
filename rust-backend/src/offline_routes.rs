@@ -151,7 +151,7 @@ pub async fn get_local_mail_list(
 
     let rows = sqlx::query(
         r#"
-        SELECT uid, sender_name, sender_address, subject, date_value, seen
+        SELECT uid, sender_name, sender_address, recipient_to, subject, date_value, seen, flagged, size_bytes, importance_value, content_type, category
         FROM local_mail_cache
         WHERE folder = ?
         ORDER BY date_ms DESC, uid DESC
@@ -178,6 +178,11 @@ pub async fn get_local_mail_list(
                 .ok()
                 .flatten()
                 .unwrap_or_default(),
+            recipient_to: r
+                .try_get::<Option<String>, _>("recipient_to")
+                .ok()
+                .flatten()
+                .unwrap_or_default(),
             subject: r
                 .try_get::<Option<String>, _>("subject")
                 .ok()
@@ -194,6 +199,33 @@ pub async fn get_local_mail_list(
                 .flatten()
                 .unwrap_or(0)
                 != 0,
+            flagged: r
+                .try_get::<Option<i64>, _>("flagged")
+                .ok()
+                .flatten()
+                .unwrap_or(0)
+                != 0,
+            size: r
+                .try_get::<Option<i64>, _>("size_bytes")
+                .ok()
+                .flatten()
+                .unwrap_or(0)
+                .max(0) as usize,
+            importance: r
+                .try_get::<Option<i64>, _>("importance_value")
+                .ok()
+                .flatten()
+                .unwrap_or(0) as i32,
+            content_type: r
+                .try_get::<Option<String>, _>("content_type")
+                .ok()
+                .flatten()
+                .unwrap_or_default(),
+            category: r
+                .try_get::<Option<String>, _>("category")
+                .ok()
+                .flatten()
+                .unwrap_or_default(),
         })
         .collect();
 
@@ -1768,9 +1800,15 @@ mod tests {
             id: id.to_string(),
             name: "n".to_string(),
             address: "a@example.com".to_string(),
+            recipient_to: "me@example.com".to_string(),
             subject: "s".to_string(),
             date: "Mon, 01 Jan 2024 00:00:00 +0000".to_string(),
             seen: false,
+            flagged: false,
+            size: 0,
+            importance: 1,
+            content_type: "text/plain".to_string(),
+            category: String::new(),
         }
     }
 
@@ -1818,15 +1856,24 @@ async fn cache_mail_preview(
         .unwrap_or(0);
     sqlx::query(
         r#"
-        INSERT INTO local_mail_cache (uid, folder, sender_name, sender_address, subject, seen, date_value, date_ms, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO local_mail_cache (
+            uid, folder, sender_name, sender_address, recipient_to, subject, seen, flagged,
+            date_value, date_ms, size_bytes, importance_value, content_type, category, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(uid, folder) DO UPDATE SET
             sender_name = excluded.sender_name,
             sender_address = excluded.sender_address,
+            recipient_to = excluded.recipient_to,
             subject = excluded.subject,
             seen = excluded.seen,
+            flagged = excluded.flagged,
             date_value = excluded.date_value,
             date_ms = excluded.date_ms,
+            size_bytes = excluded.size_bytes,
+            importance_value = excluded.importance_value,
+            content_type = excluded.content_type,
+            category = excluded.category,
             updated_at = CURRENT_TIMESTAMP
         "#,
     )
@@ -1834,10 +1881,16 @@ async fn cache_mail_preview(
     .bind(mailbox)
     .bind(&mail.name)
     .bind(&mail.address)
+    .bind(&mail.recipient_to)
     .bind(&mail.subject)
     .bind(mail.seen as i64)
+    .bind(mail.flagged as i64)
     .bind(&mail.date)
     .bind(date_ms)
+    .bind(mail.size as i64)
+    .bind(mail.importance as i64)
+    .bind(&mail.content_type)
+    .bind(&mail.category)
     .execute(pool)
     .await?;
 
@@ -1853,22 +1906,30 @@ async fn cache_mail_preview(
         if folder_id > 0 {
             let _ = sqlx::query(
                 r#"
-                INSERT INTO emails (server_uid, uid_validity, message_id, in_reply_to, sender_from, recipient_to, recipient_cc, recipient_bcc, subject, date_sent, attach_amount, is_read, folder_id, sync_status)
-                VALUES (?, 0, NULL, NULL, ?, '', NULL, NULL, ?, ?, NULL, ?, ?, 1)
+                INSERT INTO emails (
+                    server_uid, uid_validity, message_id, in_reply_to, sender_from, recipient_to,
+                    recipient_cc, recipient_bcc, subject, date_sent, attach_amount, is_read,
+                    is_flagged, folder_id, sync_status
+                )
+                VALUES (?, 0, NULL, NULL, ?, ?, NULL, NULL, ?, ?, NULL, ?, ?, ?, 1)
                 ON CONFLICT(server_uid) DO UPDATE SET
                     sender_from = excluded.sender_from,
+                    recipient_to = excluded.recipient_to,
                     subject = excluded.subject,
                     date_sent = excluded.date_sent,
                     is_read = excluded.is_read,
+                    is_flagged = excluded.is_flagged,
                     folder_id = excluded.folder_id,
                     sync_status = excluded.sync_status
                 "#,
             )
             .bind(server_uid)
             .bind(&mail.address)
+            .bind(&mail.recipient_to)
             .bind(&mail.subject)
             .bind(&mail.date)
             .bind(mail.seen as i64)
+            .bind(mail.flagged as i64)
             .bind(folder_id)
             .execute(pool)
             .await;

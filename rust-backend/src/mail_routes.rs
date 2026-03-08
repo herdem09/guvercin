@@ -194,15 +194,24 @@ pub async fn get_mail_list(
                 .unwrap_or(0);
             let _ = sqlx::query(
                 r#"
-                INSERT INTO local_mail_cache (uid, folder, sender_name, sender_address, subject, date_value, date_ms, seen, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO local_mail_cache (
+                    uid, folder, sender_name, sender_address, recipient_to, subject, date_value, date_ms,
+                    seen, flagged, size_bytes, importance_value, content_type, category, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(uid, folder) DO UPDATE SET
                     sender_name = excluded.sender_name,
                     sender_address = excluded.sender_address,
+                    recipient_to = excluded.recipient_to,
                     subject = excluded.subject,
                     date_value = excluded.date_value,
                     date_ms = excluded.date_ms,
                     seen = excluded.seen,
+                    flagged = excluded.flagged,
+                    size_bytes = excluded.size_bytes,
+                    importance_value = excluded.importance_value,
+                    content_type = excluded.content_type,
+                    category = excluded.category,
                     updated_at = CURRENT_TIMESTAMP
                 "#,
             )
@@ -210,10 +219,16 @@ pub async fn get_mail_list(
             .bind(&q.mailbox)
             .bind(&mail.name)
             .bind(&mail.address)
+            .bind(&mail.recipient_to)
             .bind(&mail.subject)
             .bind(&mail.date)
             .bind(date_ms)
             .bind(mail.seen as i64)
+            .bind(mail.flagged as i64)
+            .bind(mail.size as i64)
+            .bind(mail.importance as i64)
+            .bind(&mail.content_type)
+            .bind(&mail.category)
             .execute(&pool)
             .await;
         }
