@@ -34,14 +34,26 @@
 .db-action-notice__body {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   gap: 12px;
   padding: 12px 14px 10px;
+}
+
+.db-action-notice__commit {
+  border: none;
+  background: transparent;
+  color: #FFCB08;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 0;
+  flex-shrink: 0;
+  order: -1;
 }
 
 .db-action-notice__text {
   font-size: 13px;
   line-height: 1.35;
+  flex: 1;
 }
 
 .db-action-notice__actions {
@@ -51,7 +63,6 @@
   flex-shrink: 0;
 }
 
-.db-action-notice__commit,
 .db-action-notice__undo {
   border: none;
   background: transparent;
@@ -1720,6 +1731,49 @@ body.resizing * {
   border-color: rgba(0, 0, 0, 0.08);
   color: #666;
   flex: 0 0 auto;
+}
+
+.db-label-popover__actions {
+  display: flex;
+  gap: 8px;
+  padding: 8px 12px;
+}
+
+.db-label-popover__apply-btn {
+  background: #007acc;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  flex: 1;
+}
+
+.db-label-popover__apply-btn:hover {
+  background: #005a9e;
+}
+
+.db-label-popover__cancel-btn {
+  background: #f0f0f0;
+  color: #666;
+  border: 1px solid #ddd;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.db-label-popover__cancel-btn:hover {
+  background: #e0e0e0;
+}
+
+.db-label-popover__item.pending {
+  background: rgba(0, 122, 204, 0.05);
+}
+
+.db-label-popover__item.pending:hover {
+  background: rgba(0, 122, 204, 0.1);
 }
 
 /* ── Right panel: mail content ───────────────────── */
