@@ -1700,6 +1700,7 @@ function MailSection({
     const [mailsHidden, setMailsHidden] = useState(false)
     const [selectMode, setSelectMode] = useState(false)
     const [selectedMailIds, setSelectedMailIds] = useState(() => new Set())
+    const [lastSelectedMailId, setLastSelectedMailId] = useState(null)
     const [isSelectionMenuOpen, setIsSelectionMenuOpen] = useState(false)
     const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false)
     const [isSortMenuOpen, setIsSortMenuOpen] = useState(false)
@@ -2209,6 +2210,7 @@ function MailSection({
     const resetBulkSelection = () => {
         setSelectedMailIds(new Set())
         setSelectMode(false)
+        setLastSelectedMailId(null)
     }
 
     const resolveFolderDestination = (kind) => {
@@ -2480,6 +2482,7 @@ function MailSection({
                 if (selectMode) {
                     setSelectMode(false)
                     setSelectedMailIds(new Set())
+                    setLastSelectedMailId(null)
                 } else if (selectedMail) {
                     setSelectedMail(null)
                     setMailContent(null)
@@ -2579,7 +2582,30 @@ function MailSection({
     const handleMailSelectionToggle = (event, mailId) => {
         event.stopPropagation()
         setSelectMode(true)
+        
+        // Handle shift-select for range selection
+        if (event.shiftKey && lastSelectedMailId && lastSelectedMailId !== mailId) {
+            const currentIndex = pagedVisibleMails.findIndex(mail => mail.id === mailId)
+            const lastIndex = pagedVisibleMails.findIndex(mail => mail.id === lastSelectedMailId)
+            
+            if (currentIndex !== -1 && lastIndex !== -1) {
+                const startIndex = Math.min(currentIndex, lastIndex)
+                const endIndex = Math.max(currentIndex, lastIndex)
+                const rangeIds = pagedVisibleMails.slice(startIndex, endIndex + 1).map(mail => mail.id)
+                
+                setSelectedMailIds(prev => {
+                    const next = new Set(prev)
+                    rangeIds.forEach(id => next.add(id))
+                    return next
+                })
+                setLastSelectedMailId(mailId)
+                return
+            }
+        }
+        
+        // Normal single selection
         toggleMailSelected(mailId)
+        setLastSelectedMailId(mailId)
     }
 
     const applyBulkSelection = useCallback((scope) => {
@@ -2593,6 +2619,7 @@ function MailSection({
 
         setSelectedMailIds(new Set(nextSelectedIds))
         setSelectMode(nextSelectedIds.length > 0)
+        setLastSelectedMailId(nextSelectedIds.length > 0 ? nextSelectedIds[nextSelectedIds.length - 1] : null)
         setIsSelectionMenuOpen(false)
     }, [visibleMails])
 
@@ -3403,6 +3430,7 @@ function MailSection({
                                                     const next = !prev
                                                     if (!next) {
                                                         setSelectedMailIds(new Set())
+                                                        setLastSelectedMailId(null)
                                                         setIsSelectionMenuOpen(false)
                                                     }
                                                     return next
