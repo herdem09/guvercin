@@ -894,6 +894,30 @@ body.resizing * {
   text-transform: uppercase;
   font-size: 11px;
   letter-spacing: 0.5px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.db-folder-add-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  font-size: 14px;
+  font-weight: 600;
+  color: #666;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, color 0.2s;
+}
+
+.db-folder-add-btn:hover {
+  background: #FFCB08;
+  color: #000;
 }
 
 .db-folder-item {

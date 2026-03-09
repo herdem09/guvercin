@@ -2704,7 +2704,38 @@ function MailSection({
 
     const renderFolderSection = (title, nodes, withDivider = false) => (
         <div className={`db-folder-section${withDivider ? ' db-folder-section--divided' : ''}`}>
-            <div className="db-folder-section__header">{title}</div>
+            <div className="db-folder-section__header">
+                <span>{title}</span>
+                {title === t('Folders') && (
+                    <button
+                        type="button"
+                        className="db-folder-add-btn"
+                        onClick={async () => {
+                            const name = window.prompt('New folder name:')
+                            if (!name) return
+                            const mailboxName = applyMailboxNamespace(name, getMailboxNamespacePrefix(folders, ['Folders']))
+                            await createMailbox(mailboxName)
+                        }}
+                        title="New folder"
+                    >
+                        +
+                    </button>
+                )}
+                {(title === t('Labels') || title === 'Labels') && (
+                    <button
+                        type="button"
+                        className="db-folder-add-btn"
+                        onClick={async () => {
+                            const labelKey = await promptForNewLabelKey()
+                            if (!labelKey) return
+                            await createLabel(labelKey)
+                        }}
+                        title="New label"
+                    >
+                        +
+                    </button>
+                )}
+            </div>
             {nodes.map((node) => renderFolderItem(node))}
         </div>
     )
