@@ -393,7 +393,11 @@ export default function DetachedMailWindow() {
                   📁 Move
                 </button>
                 {isMoveMenuOpen && (
-                  <div className="db-submenu-popover" style={movePopoverStyle || undefined}>
+                  <div 
+                    className="db-submenu-popover" 
+                    style={movePopoverStyle || undefined}
+                    onWheel={(e) => e.stopPropagation()}
+                  >
                     {moveFolderOptions.map((folder) => (
                       <button key={folder} type="button" className="db-submenu-popover__item" onClick={() => handleMove(folder)}>
                         {folder}

@@ -533,7 +533,7 @@ body.resizing * {
   left: 0;
   min-width: 180px;
   max-width: min(280px, calc(100vw - 24px));
-  max-height: 280px;
+  max-height: calc(100vh - 40px);
   overflow-y: auto;
   background: #fff;
   border: 1px solid #d6d6d6;
@@ -1097,6 +1097,8 @@ body.resizing * {
   border-radius: 8px;
   box-shadow: 0 10px 24px rgba(0, 0, 0, 0.14);
   z-index: 5000;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
 }
 
 .db-toolbar-dropdown__item {
@@ -1132,6 +1134,8 @@ body.resizing * {
   border-radius: 8px;
   box-shadow: 0 12px 30px rgba(0, 0, 0, 0.16);
   z-index: 5000;
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
 }
 
 .db-toolbar-popover--sort {
@@ -1308,7 +1312,7 @@ body.resizing * {
   box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
   margin-top: 4px;
   z-index: 5000;
-  max-height: 200px;
+  max-height: calc(100vh - 40px);
   overflow-y: auto;
 }
 

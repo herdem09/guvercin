@@ -1519,7 +1519,11 @@ const DashboardPage = () => {
                             />
                         </button>
                         {accountMenuOpen && (
-                            <div className="account-popover" ref={accountMenuRef}>
+                            <div 
+                                className="account-popover" 
+                                ref={accountMenuRef}
+                                onWheel={(e) => e.stopPropagation()}
+                            >
                                 <div className="account-popover__avatar">
                                     <Avatar
                                         email={accountEmailLabel}
@@ -2162,7 +2166,11 @@ function MailSection({
         const { className = '', style } = options
 
         return (
-            <div className={`db-submenu-popover db-label-popover ${className}`.trim()} style={style}>
+            <div 
+                className={`db-submenu-popover db-label-popover ${className}`.trim()} 
+                style={style}
+                onWheel={(e) => e.stopPropagation()}
+            >
                 {states.length === 0 ? (
                     <div className="db-label-popover__empty">No labels yet.</div>
                 ) : (
@@ -3035,7 +3043,11 @@ function MailSection({
                                     📁 {t('Move')}
                                 </button>
                                 {isMoveMenuOpen && (
-                                    <div className="db-submenu-popover" style={movePopoverStyle || undefined}>
+                                    <div 
+                                        className="db-submenu-popover" 
+                                        style={movePopoverStyle || undefined}
+                                        onWheel={(e) => e.stopPropagation()}
+                                    >
                                         {moveFolderOptions.map((folder) => (
                                             <button
                                                 key={folder}
@@ -3095,7 +3107,11 @@ function MailSection({
                                     📁 {t('Move')}
                                 </button>
                                 {isMoveMenuOpen && (
-                                    <div className="db-submenu-popover" style={movePopoverStyle || undefined}>
+                                    <div 
+                                        className="db-submenu-popover" 
+                                        style={movePopoverStyle || undefined}
+                                        onWheel={(e) => e.stopPropagation()}
+                                    >
                                         {moveFolderOptions.map((folder) => (
                                             <button
                                                 key={folder}
@@ -3377,7 +3393,12 @@ function MailSection({
                                             ▾
                                         </button>
                                         {isSelectionMenuOpen && (
-                                            <div className="db-toolbar-dropdown" role="menu" aria-label="Selection options">
+                                            <div 
+                                                className="db-toolbar-dropdown" 
+                                                role="menu" 
+                                                aria-label="Selection options"
+                                                onWheel={(e) => e.stopPropagation()}
+                                            >
                                                 <button type="button" className="db-toolbar-dropdown__item" role="menuitem" onClick={() => applyBulkSelection('all')}>
                                                     Tümünü seç
                                                 </button>
@@ -3405,7 +3426,12 @@ function MailSection({
                                             🔍
                                         </button>
                                         {isFilterMenuOpen && (
-                                            <div className="db-toolbar-popover" role="menu" aria-label="Filter mails">
+                                            <div 
+                                                className="db-toolbar-popover" 
+                                                role="menu" 
+                                                aria-label="Filter mails"
+                                                onWheel={(e) => e.stopPropagation()}
+                                            >
                                                 {MAIL_FILTER_OPTIONS.map((option) => (
                                                     <button
                                                         key={option.key}
@@ -3441,7 +3467,12 @@ function MailSection({
                                             ↕️
                                         </button>
                                         {isSortMenuOpen && (
-                                            <div className="db-toolbar-popover db-toolbar-popover--sort" role="menu" aria-label="Sort mails">
+                                            <div 
+                                                className="db-toolbar-popover db-toolbar-popover--sort" 
+                                                role="menu" 
+                                                aria-label="Sort mails"
+                                                onWheel={(e) => e.stopPropagation()}
+                                            >
                                                 <div className="db-toolbar-popover__section-title">Sort by</div>
                                                 {MAIL_SORT_OPTIONS.map((option) => (
                                                     <button
@@ -3525,7 +3556,10 @@ function MailSection({
                                                 placeholder="Count"
                                             />
                                             {isPerPageOpen && (
-                                                <div className="db-perpage-dropdown">
+                                                <div 
+                                                    className="db-perpage-dropdown"
+                                                    onWheel={(e) => e.stopPropagation()}
+                                                >
                                                     {[10, 20, 50, 100, 150, 200, 250].map(val => (
                                                         <div
                                                             key={val}
@@ -3694,7 +3728,11 @@ function MailSection({
                                         </ul>
                                         {mailItemMenuMail && (
                                             <div ref={mailItemMenuRef}>
-                                                <div className="db-submenu-popover db-mail-item-menu" style={mailItemMenu.style}>
+                                                <div 
+                                                    className="db-submenu-popover db-mail-item-menu" 
+                                                    style={mailItemMenu.style}
+                                                    onWheel={(e) => e.stopPropagation()}
+                                                >
                                                     <button type="button" className="db-submenu-popover__item" onClick={handleMailItemMenuDelete}>
                                                         🗑️ Delete
                                                     </button>
@@ -3731,7 +3769,11 @@ function MailSection({
                                                     </button>
                                                 </div>
                                                 {mailItemMenu.moveMenuOpen && (
-                                                    <div className="db-submenu-popover db-mail-item-menu" style={mailItemMoveMenuStyle || undefined}>
+                                                    <div 
+                                                        className="db-submenu-popover db-mail-item-menu" 
+                                                        style={mailItemMoveMenuStyle || undefined}
+                                                        onWheel={(e) => e.stopPropagation()}
+                                                    >
                                                         {moveFolderOptions.map((folder) => (
                                                             <button
                                                                 key={folder}
