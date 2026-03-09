@@ -97,7 +97,7 @@ body.resizing * {
   gap: 15px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
   flex-shrink: 0;
-  z-index: 100;
+  z-index: 6000;
 }
 
 .db-logo-btn {
@@ -254,7 +254,7 @@ body.resizing * {
   box-shadow: 0 20px 45px rgba(17, 17, 17, 0.25);
   border: 1px solid rgba(0, 0, 0, 0.06);
   color: #14142b;
-  z-index: 220;
+  z-index: 6200;
 }
 
 .db-sync-indicator:hover .db-sync-popover,
@@ -274,6 +274,28 @@ body.resizing * {
   padding: 2px 0;
   color: #2b2b2b;
   word-break: break-word;
+}
+
+.db-sync-popover__action {
+  width: 100%;
+  margin-top: 10px;
+  border: none;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #111827;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.db-sync-popover__action:hover {
+  background: #1f2937;
+}
+
+.db-sync-popover__action:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .db-sync-popover__error {
@@ -547,6 +569,63 @@ body.resizing * {
   color: #888;
 }
 
+.db-label-popover {
+  min-width: 220px;
+  max-width: min(320px, calc(100vw - 24px));
+}
+
+.db-label-popover__item {
+  width: 100%;
+  border: none;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #333;
+  cursor: pointer;
+}
+
+.db-label-popover__item:hover {
+  background: #f2f2f2;
+}
+
+.db-label-popover__item.checked,
+.db-label-popover__item.indeterminate {
+  background: #f7f4e1;
+}
+
+.db-label-popover__check {
+  width: 16px;
+  height: 16px;
+  border: 1px solid #b9b9b9;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 700;
+  color: #5f4b00;
+  background: #fff;
+}
+
+.db-label-popover__label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.db-label-popover__empty {
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #777;
+}
+
 /* ── Main body (sidebar + panels) ────────────────── */
 .db-main-container {
   display: flex;
@@ -786,8 +865,19 @@ body.resizing * {
   border-top: 1px solid #ddd;
 }
 
-.db-folder-node.db-folder-section[key*="Labels"] .db-folder-item-content,
-.db-folder-node.db-folder-section[key*="Etiketler"] .db-folder-item-content {
+.db-folder-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.db-folder-section--divided {
+  margin-top: 15px;
+  padding-top: 10px;
+  border-top: 1px solid #ddd;
+}
+
+.db-folder-section__header {
+  padding: 0 8px 6px;
   font-style: italic;
   color: #555;
   text-transform: uppercase;
@@ -1324,7 +1414,7 @@ body.resizing * {
   border-bottom: none;
   min-width: 0;
   width: 100%;
-  height: 84px;
+  height: 96px;
   overflow: hidden;
   box-sizing: border-box;
   display: flex;
@@ -1484,6 +1574,14 @@ body.resizing * {
   flex: 1;
   overflow: hidden;
   min-width: 0;
+  gap: 4px;
+}
+
+.db-mail-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .db-mail-quick-actions {
@@ -1493,6 +1591,11 @@ body.resizing * {
   margin-left: 4px;
   opacity: 0;
   transition: opacity 0.1s ease-in-out;
+}
+
+.db-mail-qa-row {
+  display: flex;
+  gap: 2px;
 }
 
 .db-mail-item:hover .db-mail-quick-actions {
@@ -1566,22 +1669,57 @@ body.resizing * {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  margin-bottom: 2px;
+  min-width: 0;
 }
 
 .db-mail-time {
   font-size: 10px;
   color: #999;
-  margin-top: 2px;
+  flex: 0 0 auto;
 }
 
 .db-mail-sender {
   font-size: 13px;
   color: #222;
   font-weight: 500;
+  flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.db-mail-labels {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.db-mail-label-chip {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 120px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(191, 146, 0, 0.22);
+  background: #fff4ba;
+  color: #765600;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.db-mail-label-chip--more {
+  background: #f2f2f2;
+  border-color: rgba(0, 0, 0, 0.08);
+  color: #666;
+  flex: 0 0 auto;
 }
 
 /* ── Right panel: mail content ───────────────────── */

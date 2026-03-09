@@ -11,14 +11,14 @@ use axum::{
 };
 use chrono::{DateTime, Duration, Utc};
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{self, json};
 use sqlx::{Row, SqlitePool};
 
 use crate::{
     db::{self, AppState},
     error::AppError,
     imap_session::{self, ImapState},
-    mail_models::{MailContent, MailListResponse, MailPreview, MailboxListResponse},
+    mail_models::{MailContent, MailListResponse, MailPreview, MailboxListResponse, merge_mailbox_label_into_preview},
     mail_routes::MailAppState,
     models::{
         DownloadRuleInput, DownloadRuleRecord, InitialSyncPolicyInput, OfflineActionRequest,
@@ -70,6 +70,121 @@ fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+fn is_removed_flag_action(action_type: &str) -> bool {
+    matches!(action_type, "flag" | "unflag")
+}
+
+fn validate_offline_action_type(action_type: &str) -> Result<(), AppError> {
+    if is_removed_flag_action(action_type) {
+        return Err(AppError::BadRequest(
+            "Flag actions are no longer supported".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn normalize_label_values(labels: Vec<String>) -> Vec<String> {
+    let mut normalized = Vec::new();
+
+    for label in labels {
+        let trimmed = label.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if normalized
+            .iter()
+            .any(|existing: &String| existing.eq_ignore_ascii_case(trimmed))
+        {
+            continue;
+        }
+        normalized.push(trimmed.to_string());
+    }
+
+    normalized
+}
+
+fn parse_labels_json_value(raw: &str) -> Vec<String> {
+    let parsed = serde_json::from_str::<Vec<String>>(raw).unwrap_or_default();
+    normalize_label_values(parsed)
+}
+
+fn serialize_labels_json_value(labels: &[String]) -> String {
+    serde_json::to_string(labels).unwrap_or_else(|_| "[]".to_string())
+}
+
+fn strip_label_mailbox_prefix(mailbox: &str) -> Option<String> {
+    let trimmed = mailbox.trim();
+    let lower = trimmed.to_ascii_lowercase();
+
+    if lower.starts_with("labels/") {
+        return Some(trimmed[7..].trim_matches('/').to_string());
+    }
+    if lower.starts_with("etiketler/") {
+        return Some(trimmed[10..].trim_matches('/').to_string());
+    }
+    if lower.starts_with("[labels]/") {
+        return Some(trimmed[9..].trim_matches('/').to_string());
+    }
+
+    None
+}
+
+fn mailbox_matches_label(mailbox: &str, label: &str) -> bool {
+    let normalized_label = label.trim();
+    if normalized_label.is_empty() {
+        return false;
+    }
+
+    strip_label_mailbox_prefix(mailbox)
+        .map(|candidate| candidate.eq_ignore_ascii_case(normalized_label))
+        .unwrap_or(false)
+}
+
+struct LocalLabelMutation {
+    labels_json: String,
+    next_category: Option<String>,
+    delete_row: bool,
+}
+
+fn compute_local_label_mutation(
+    existing_labels_json: &str,
+    category: Option<&str>,
+    label: &str,
+    add: bool,
+    folder: &str,
+) -> LocalLabelMutation {
+    let trimmed_label = label.trim();
+    let mut labels = parse_labels_json_value(existing_labels_json);
+
+    if add {
+        if !labels
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(trimmed_label))
+        {
+            labels.push(trimmed_label.to_string());
+        }
+    } else {
+        labels.retain(|existing| !existing.eq_ignore_ascii_case(trimmed_label));
+    }
+
+    let category_value = category.map(str::trim).filter(|value| !value.is_empty());
+    let next_category = if add {
+        category_value
+            .map(str::to_string)
+            .or_else(|| labels.first().cloned())
+    } else if category_value.map(|value| value.eq_ignore_ascii_case(trimmed_label)).unwrap_or(false) {
+        labels.first().cloned()
+    } else {
+        category_value.map(str::to_string)
+    };
+
+    LocalLabelMutation {
+        labels_json: serialize_labels_json_value(&labels),
+        delete_row: !add && mailbox_matches_label(folder, trimmed_label),
+        next_category,
+    }
 }
 
 async fn set_transfer_receiving(
@@ -132,7 +247,7 @@ pub async fn get_local_mailboxes(
         .await?;
     }
 
-    Ok(Json(MailboxListResponse { mailboxes }))
+    Ok(Json(MailboxListResponse::from_mailboxes(mailboxes)))
 }
 
 pub async fn get_local_mail_list(
@@ -151,7 +266,7 @@ pub async fn get_local_mail_list(
 
     let rows = sqlx::query(
         r#"
-        SELECT uid, sender_name, sender_address, recipient_to, subject, date_value, seen, flagged, size_bytes, importance_value, content_type, category
+        SELECT uid, sender_name, sender_address, recipient_to, subject, date_value, seen, flagged, size_bytes, importance_value, content_type, category, labels_json
         FROM local_mail_cache
         WHERE folder = ?
         ORDER BY date_ms DESC, uid DESC
@@ -166,66 +281,77 @@ pub async fn get_local_mail_list(
 
     let mails = rows
         .into_iter()
-        .map(|r| MailPreview {
-            id: r.try_get::<String, _>("uid").unwrap_or_default(),
-            name: r
-                .try_get::<Option<String>, _>("sender_name")
-                .ok()
-                .flatten()
-                .unwrap_or_default(),
-            address: r
-                .try_get::<Option<String>, _>("sender_address")
-                .ok()
-                .flatten()
-                .unwrap_or_default(),
-            recipient_to: r
-                .try_get::<Option<String>, _>("recipient_to")
-                .ok()
-                .flatten()
-                .unwrap_or_default(),
-            subject: r
-                .try_get::<Option<String>, _>("subject")
-                .ok()
-                .flatten()
-                .unwrap_or_default(),
-            date: r
-                .try_get::<Option<String>, _>("date_value")
-                .ok()
-                .flatten()
-                .unwrap_or_default(),
-            seen: r
-                .try_get::<Option<i64>, _>("seen")
-                .ok()
-                .flatten()
-                .unwrap_or(0)
-                != 0,
-            flagged: r
-                .try_get::<Option<i64>, _>("flagged")
-                .ok()
-                .flatten()
-                .unwrap_or(0)
-                != 0,
-            size: r
-                .try_get::<Option<i64>, _>("size_bytes")
-                .ok()
-                .flatten()
-                .unwrap_or(0)
-                .max(0) as usize,
-            importance: r
-                .try_get::<Option<i64>, _>("importance_value")
-                .ok()
-                .flatten()
-                .unwrap_or(0) as i32,
-            content_type: r
-                .try_get::<Option<String>, _>("content_type")
-                .ok()
-                .flatten()
-                .unwrap_or_default(),
-            category: r
-                .try_get::<Option<String>, _>("category")
-                .ok()
-                .flatten()
-                .unwrap_or_default(),
+        .map(|r| {
+            let mut preview = MailPreview {
+                id: r.try_get::<String, _>("uid").unwrap_or_default(),
+                name: r
+                    .try_get::<Option<String>, _>("sender_name")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                address: r
+                    .try_get::<Option<String>, _>("sender_address")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                recipient_to: r
+                    .try_get::<Option<String>, _>("recipient_to")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                subject: r
+                    .try_get::<Option<String>, _>("subject")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                date: r
+                    .try_get::<Option<String>, _>("date_value")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                seen: r
+                    .try_get::<Option<i64>, _>("seen")
+                    .ok()
+                    .flatten()
+                    .unwrap_or(0)
+                    != 0,
+                flagged: r
+                    .try_get::<Option<i64>, _>("flagged")
+                    .ok()
+                    .flatten()
+                    .unwrap_or(0)
+                    != 0,
+                size: r
+                    .try_get::<Option<i64>, _>("size_bytes")
+                    .ok()
+                    .flatten()
+                    .unwrap_or(0)
+                    .max(0) as usize,
+                importance: r
+                    .try_get::<Option<i64>, _>("importance_value")
+                    .ok()
+                    .flatten()
+                    .unwrap_or(0) as i32,
+                content_type: r
+                    .try_get::<Option<String>, _>("content_type")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                category: r
+                    .try_get::<Option<String>, _>("category")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                labels: r
+                    .try_get::<Option<String>, _>("labels_json")
+                    .ok()
+                    .flatten()
+                    .map(|value| parse_labels_json_value(&value))
+                    .unwrap_or_default(),
+            };
+
+            merge_mailbox_label_into_preview(&mut preview, &q.mailbox);
+            preview
         })
         .collect();
 
@@ -798,6 +924,7 @@ pub async fn post_offline_action(
     Path(account_id): Path<i64>,
     Json(payload): Json<OfflineActionRequest>,
 ) -> Result<Json<OfflineActionResponse>, AppError> {
+    validate_offline_action_type(&payload.action_type)?;
     let pool = db::get_user_db_pool(&state._db, account_id).await?;
     let payload_json = payload
         .payload
@@ -999,43 +1126,41 @@ pub async fn process_queue_once(
         let parsed: serde_json::Value =
             serde_json::from_str(&payload_json).unwrap_or_else(|_| json!({}));
 
-        let result = match action_type.as_str() {
-            "mark_read" => {
-                imap_session::mark_seen(&state.imap, account_id, &target_folder, &target_uid, true)
+        let result = if is_removed_flag_action(action_type.as_str()) {
+            Ok(())
+        } else {
+            match action_type.as_str() {
+                "mark_read" => {
+                    imap_session::mark_seen(&state.imap, account_id, &target_folder, &target_uid, true)
+                }
+                "mark_unread" => {
+                    imap_session::mark_seen(&state.imap, account_id, &target_folder, &target_uid, false)
+                }
+                "delete" => imap_session::delete_mail(&state.imap, account_id, &target_folder, &target_uid),
+                "move" => {
+                    let destination = parsed
+                        .get("destination")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(target_folder.as_str());
+                    imap_session::move_mail(&state.imap, account_id, &target_folder, &target_uid, destination)
+                }
+                "label_add" => {
+                    let label = parsed
+                        .get("label")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default();
+                    imap_session::set_label(&state.imap, account_id, &target_folder, &target_uid, label, true)
+                }
+                "label_remove" => {
+                    let label = parsed
+                        .get("label")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default();
+                    imap_session::set_label(&state.imap, account_id, &target_folder, &target_uid, label, false)
+                }
+                "send" => Err("Queued send is not implemented on the backend yet".to_string()),
+                _ => Err(format!("Unsupported action type: {action_type}")),
             }
-            "mark_unread" => {
-                imap_session::mark_seen(&state.imap, account_id, &target_folder, &target_uid, false)
-            }
-            "flag" => {
-                imap_session::mark_flagged(&state.imap, account_id, &target_folder, &target_uid, true)
-            }
-            "unflag" => {
-                imap_session::mark_flagged(&state.imap, account_id, &target_folder, &target_uid, false)
-            }
-            "delete" => imap_session::delete_mail(&state.imap, account_id, &target_folder, &target_uid),
-            "move" => {
-                let destination = parsed
-                    .get("destination")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or(target_folder.as_str());
-                imap_session::move_mail(&state.imap, account_id, &target_folder, &target_uid, destination)
-            }
-            "label_add" => {
-                let label = parsed
-                    .get("label")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default();
-                imap_session::set_label(&state.imap, account_id, &target_folder, &target_uid, label, true)
-            }
-            "label_remove" => {
-                let label = parsed
-                    .get("label")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default();
-                imap_session::set_label(&state.imap, account_id, &target_folder, &target_uid, label, false)
-            }
-            "send" => Err("Queued send is not implemented on the backend yet".to_string()),
-            _ => Err(format!("Unsupported action type: {action_type}")),
         };
 
         match result {
@@ -1585,24 +1710,6 @@ async fn apply_local_action_side_effects(
             .execute(pool)
             .await?;
         }
-        "flag" => {
-            sqlx::query(
-                "UPDATE local_mail_cache SET flagged = 1, updated_at = CURRENT_TIMESTAMP WHERE uid = ? AND folder = ?",
-            )
-            .bind(uid)
-            .bind(folder)
-            .execute(pool)
-            .await?;
-        }
-        "unflag" => {
-            sqlx::query(
-                "UPDATE local_mail_cache SET flagged = 0, updated_at = CURRENT_TIMESTAMP WHERE uid = ? AND folder = ?",
-            )
-            .bind(uid)
-            .bind(folder)
-            .execute(pool)
-            .await?;
-        }
         "delete" => {
             sqlx::query("DELETE FROM local_mail_cache WHERE uid = ? AND folder = ?")
                 .bind(uid)
@@ -1632,14 +1739,44 @@ async fn apply_local_action_side_effects(
                 .map(str::trim)
                 .filter(|value| !value.is_empty());
             if let Some(label) = label {
-                sqlx::query(
-                    "UPDATE local_mail_cache SET category = ?, updated_at = CURRENT_TIMESTAMP WHERE uid = ? AND folder = ?",
+                let rows = sqlx::query(
+                    "SELECT folder, category, labels_json FROM local_mail_cache WHERE uid = ?",
                 )
-                .bind(label)
                 .bind(uid)
-                .bind(folder)
-                .execute(pool)
+                .fetch_all(pool)
                 .await?;
+
+                for row in rows {
+                    let row_folder = row
+                        .try_get::<Option<String>, _>("folder")
+                        .ok()
+                        .flatten()
+                        .unwrap_or_else(|| folder.to_string());
+                    let existing_category = row.try_get::<Option<String>, _>("category").ok().flatten();
+                    let existing_labels_json = row
+                        .try_get::<Option<String>, _>("labels_json")
+                        .ok()
+                        .flatten()
+                        .unwrap_or_else(|| "[]".to_string());
+
+                    let mutation = compute_local_label_mutation(
+                        &existing_labels_json,
+                        existing_category.as_deref(),
+                        label,
+                        true,
+                        &row_folder,
+                    );
+
+                    sqlx::query(
+                        "UPDATE local_mail_cache SET category = ?, labels_json = ?, updated_at = CURRENT_TIMESTAMP WHERE uid = ? AND folder = ?",
+                    )
+                    .bind(mutation.next_category.as_deref())
+                    .bind(&mutation.labels_json)
+                    .bind(uid)
+                    .bind(&row_folder)
+                    .execute(pool)
+                    .await?;
+                }
             }
         }
         "label_remove" => {
@@ -1649,19 +1786,53 @@ async fn apply_local_action_side_effects(
                 .map(str::trim)
                 .filter(|value| !value.is_empty());
             if let Some(label) = label {
-                sqlx::query(
-                    r#"
-                    UPDATE local_mail_cache
-                    SET category = CASE WHEN category = ? THEN NULL ELSE category END,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE uid = ? AND folder = ?
-                    "#,
+                let rows = sqlx::query(
+                    "SELECT folder, category, labels_json FROM local_mail_cache WHERE uid = ?",
                 )
-                .bind(label)
                 .bind(uid)
-                .bind(folder)
-                .execute(pool)
+                .fetch_all(pool)
                 .await?;
+
+                for row in rows {
+                    let row_folder = row
+                        .try_get::<Option<String>, _>("folder")
+                        .ok()
+                        .flatten()
+                        .unwrap_or_else(|| folder.to_string());
+                    let existing_category = row.try_get::<Option<String>, _>("category").ok().flatten();
+                    let existing_labels_json = row
+                        .try_get::<Option<String>, _>("labels_json")
+                        .ok()
+                        .flatten()
+                        .unwrap_or_else(|| "[]".to_string());
+
+                    let mutation = compute_local_label_mutation(
+                        &existing_labels_json,
+                        existing_category.as_deref(),
+                        label,
+                        false,
+                        &row_folder,
+                    );
+
+                    if mutation.delete_row {
+                        sqlx::query("DELETE FROM local_mail_cache WHERE uid = ? AND folder = ?")
+                            .bind(uid)
+                            .bind(&row_folder)
+                            .execute(pool)
+                            .await?;
+                        continue;
+                    }
+
+                    sqlx::query(
+                        "UPDATE local_mail_cache SET category = ?, labels_json = ?, updated_at = CURRENT_TIMESTAMP WHERE uid = ? AND folder = ?",
+                    )
+                    .bind(mutation.next_category.as_deref())
+                    .bind(&mutation.labels_json)
+                    .bind(uid)
+                    .bind(&row_folder)
+                    .execute(pool)
+                    .await?;
+                }
             }
         }
         _ => {}
@@ -1946,6 +2117,7 @@ mod tests {
             importance: 1,
             content_type: "text/plain".to_string(),
             category: String::new(),
+            labels: Vec::new(),
         }
     }
 
@@ -1981,6 +2153,50 @@ mod tests {
         // If we stop early (e.g., due to policy), we must not jump ahead.
         assert_eq!(max_uid, 150);
     }
+
+    #[test]
+    fn validate_offline_action_type_rejects_flag() {
+        let result = validate_offline_action_type("flag");
+        assert!(matches!(result, Err(AppError::BadRequest(_))));
+    }
+
+    #[test]
+    fn validate_offline_action_type_rejects_unflag() {
+        let result = validate_offline_action_type("unflag");
+        assert!(matches!(result, Err(AppError::BadRequest(_))));
+    }
+
+    #[test]
+    fn removed_flag_action_detection_matches_flag() {
+        assert!(is_removed_flag_action("flag"));
+    }
+
+    #[test]
+    fn removed_flag_action_detection_matches_unflag() {
+        assert!(is_removed_flag_action("unflag"));
+    }
+
+    #[test]
+    fn compute_local_label_mutation_adds_label_and_sets_category_when_empty() {
+        let mutation = compute_local_label_mutation("[]", None, "Work", true, "INBOX");
+        assert_eq!(mutation.labels_json, "[\"Work\"]");
+        assert_eq!(mutation.next_category.as_deref(), Some("Work"));
+        assert!(!mutation.delete_row);
+    }
+
+    #[test]
+    fn compute_local_label_mutation_removes_label_and_deletes_matching_label_mailbox_row() {
+        let mutation = compute_local_label_mutation(
+            "[\"Work\",\"Urgent\"]",
+            Some("Work"),
+            "Work",
+            false,
+            "Labels/Work",
+        );
+        assert_eq!(mutation.labels_json, "[\"Urgent\"]");
+        assert_eq!(mutation.next_category.as_deref(), Some("Urgent"));
+        assert!(mutation.delete_row);
+    }
 }
 
 async fn cache_mail_preview(
@@ -1988,16 +2204,20 @@ async fn cache_mail_preview(
     mailbox: &str,
     mail: &MailPreview,
 ) -> Result<(), AppError> {
+    let mut mail = mail.clone();
+    merge_mailbox_label_into_preview(&mut mail, mailbox);
+
     let date_ms: i64 = DateTime::parse_from_rfc2822(&mail.date)
         .map(|dt| dt.timestamp_millis())
         .unwrap_or(0);
+    let labels_json = serialize_labels_json_value(&mail.labels);
     sqlx::query(
         r#"
         INSERT INTO local_mail_cache (
             uid, folder, sender_name, sender_address, recipient_to, subject, seen, flagged,
-            date_value, date_ms, size_bytes, importance_value, content_type, category, updated_at
+            date_value, date_ms, size_bytes, importance_value, content_type, category, labels_json, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(uid, folder) DO UPDATE SET
             sender_name = excluded.sender_name,
             sender_address = excluded.sender_address,
@@ -2011,6 +2231,7 @@ async fn cache_mail_preview(
             importance_value = excluded.importance_value,
             content_type = excluded.content_type,
             category = excluded.category,
+            labels_json = excluded.labels_json,
             updated_at = CURRENT_TIMESTAMP
         "#,
     )
@@ -2028,6 +2249,7 @@ async fn cache_mail_preview(
     .bind(mail.importance as i64)
     .bind(&mail.content_type)
     .bind(&mail.category)
+    .bind(&labels_json)
     .execute(pool)
     .await?;
 

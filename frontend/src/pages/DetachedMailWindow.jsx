@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { apiUrl } from '../utils/api'
+import { normalizeMailboxResponse } from '../utils/mailboxes'
 import './DashboardPage.css'
 
 function safeParse(json) {
@@ -20,25 +21,6 @@ function isMoveTargetMailbox(value) {
   return !isLabelMailbox(mailbox)
 }
 
-function stripLabelMailboxPrefix(value) {
-  return (value || '').replace(/^Labels\//i, '').replace(/^Etiketler\//i, '').trim()
-}
-
-function getMailboxNamespacePrefix(mailboxes, namespaceRoots) {
-  const root = namespaceRoots.find((candidate) => (
-    Array.isArray(mailboxes)
-    && mailboxes.some((mailbox) => mailbox === candidate || mailbox.startsWith(`${candidate}/`))
-  ))
-  return root ? `${root}/` : ''
-}
-
-function applyMailboxNamespace(name, prefix) {
-  const trimmed = (name || '').trim().replace(/^\/+|\/+$/g, '')
-  if (!trimmed) return ''
-  if (!prefix || trimmed.startsWith(prefix)) return trimmed
-  return `${prefix}${trimmed}`
-}
-
 export default function DetachedMailWindow() {
   const [windowLabel, setWindowLabel] = useState('')
   const [data, setData] = useState(null)
@@ -47,13 +29,9 @@ export default function DetachedMailWindow() {
   const [error, setError] = useState('')
   const [folders, setFolders] = useState([])
   const [isMoveMenuOpen, setIsMoveMenuOpen] = useState(false)
-  const [isFlagMenuOpen, setIsFlagMenuOpen] = useState(false)
-  const [customFlagLabels, setCustomFlagLabels] = useState([])
   const [movePopoverStyle, setMovePopoverStyle] = useState(null)
-  const [flagPopoverStyle, setFlagPopoverStyle] = useState(null)
   const submenuScrollRef = useRef(null)
   const moveMenuRef = useRef(null)
-  const flagMenuRef = useRef(null)
 
   const accountId = data?.accountId
   const mail = data?.mail
@@ -69,19 +47,10 @@ export default function DetachedMailWindow() {
     return mail?.address || mail?.name || '-'
   }, [mail, mailContent])
   const readToggleLabel = mail?.seen === true ? 'Unread' : 'Read'
-  const flagToggleLabel = mail?.flagged === true ? 'Unflag' : 'Flag'
   const moveFolderOptions = useMemo(
     () => folders.filter(isMoveTargetMailbox),
     [folders],
   )
-  const availableFlagLabels = useMemo(() => {
-    const builtInLabels = folders
-      .filter(isLabelMailbox)
-      .map(stripLabelMailboxPrefix)
-      .filter(Boolean)
-    return Array.from(new Set([mail?.category, ...builtInLabels, ...customFlagLabels].filter(Boolean)))
-      .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }))
-  }, [customFlagLabels, folders, mail?.category])
 
   const patchMail = (patch) => {
     setData((prev) => (
@@ -150,22 +119,6 @@ export default function DetachedMailWindow() {
     detectLabel()
     return () => { active = false }
   }, [])
-
-  useEffect(() => {
-    if (!accountId) return
-    try {
-      const raw = localStorage.getItem(`gv-custom-flags-${accountId}`)
-      const next = JSON.parse(raw || '[]')
-      setCustomFlagLabels(Array.isArray(next) ? next.filter(Boolean) : [])
-    } catch {
-      setCustomFlagLabels([])
-    }
-  }, [accountId])
-
-  useEffect(() => {
-    if (!accountId) return
-    localStorage.setItem(`gv-custom-flags-${accountId}`, JSON.stringify(customFlagLabels))
-  }, [accountId, customFlagLabels])
 
   // Step 2: once we have the label, fetch mail data from Rust app state
   useEffect(() => {
@@ -262,12 +215,14 @@ export default function DetachedMailWindow() {
         let res = await fetch(apiUrl(`/api/offline/${accountId}/local-mailboxes`), { cache: 'no-store' })
         if (res.ok && active) {
           const json = await res.json()
-          setFolders(Array.isArray(json?.mailboxes) ? json.mailboxes : [])
+          const normalized = normalizeMailboxResponse(json)
+          setFolders(normalized.allMailboxes)
         }
         res = await fetch(apiUrl(`/api/mail/${accountId}/mailboxes`), { cache: 'no-store' })
         if (res.ok && active) {
           const json = await res.json()
-          setFolders(Array.isArray(json?.mailboxes) ? json.mailboxes : [])
+          const normalized = normalizeMailboxResponse(json)
+          setFolders(normalized.allMailboxes)
         }
       } catch {
         // noop
@@ -283,19 +238,13 @@ export default function DetachedMailWindow() {
   }, [loading, mail?.id, mail?.seen])
 
   useEffect(() => {
-    if (!isMoveMenuOpen && !isFlagMenuOpen) {
+    if (!isMoveMenuOpen) {
       setMovePopoverStyle(null)
-      setFlagPopoverStyle(null)
       return
     }
 
     const sync = () => {
-      if (isMoveMenuOpen) {
-        syncPopoverPosition(moveMenuRef, setMovePopoverStyle)
-      }
-      if (isFlagMenuOpen) {
-        syncPopoverPosition(flagMenuRef, setFlagPopoverStyle)
-      }
+      syncPopoverPosition(moveMenuRef, setMovePopoverStyle)
     }
 
     const frameId = window.requestAnimationFrame(sync)
@@ -311,7 +260,7 @@ export default function DetachedMailWindow() {
       window.removeEventListener('scroll', sync, true)
       scrollNode?.removeEventListener('scroll', sync)
     }
-  }, [isFlagMenuOpen, isMoveMenuOpen, syncPopoverPosition])
+  }, [isMoveMenuOpen, syncPopoverPosition])
 
   const closeWindow = async () => {
     try {
@@ -341,12 +290,6 @@ export default function DetachedMailWindow() {
     } catch {
       return false
     }
-  }
-
-  const ensureLabelExists = async (label) => {
-    const mailboxName = applyMailboxNamespace(label, getMailboxNamespacePrefix(folders, ['Labels', 'Etiketler']))
-    if (!mailboxName || mailboxName === label) return true
-    return createMailbox(mailboxName)
   }
 
   const openMailto = (params) => {
@@ -400,19 +343,6 @@ export default function DetachedMailWindow() {
     patchMail({ seen: nextSeen })
   }
 
-  const handleFlagToggle = async () => {
-    const nextFlagged = mail?.flagged !== true
-    await queueAction(nextFlagged ? 'flag' : 'unflag')
-    patchMail({ flagged: nextFlagged })
-    setIsFlagMenuOpen(false)
-  }
-
-  const handleFlagLabel = async (label) => {
-    await queueAction('label_add', { label })
-    patchMail({ category: label })
-    setIsFlagMenuOpen(false)
-  }
-
   const handleCreateFolderAndMove = async () => {
     const name = window.prompt('New folder name')
     if (!name) return
@@ -421,14 +351,6 @@ export default function DetachedMailWindow() {
     if (created) {
       await handleMove(mailboxName)
     }
-  }
-
-  const handleCreateFlag = async () => {
-    const name = (window.prompt('New flag name') || '').trim()
-    if (!name) return
-    setCustomFlagLabels((prev) => (prev.includes(name) ? prev : [...prev, name]))
-    await ensureLabelExists(name)
-    await handleFlagLabel(name)
   }
 
   if (!mail || !accountId) {
@@ -466,10 +388,7 @@ export default function DetachedMailWindow() {
                 <button
                   type="button"
                   className={isMoveMenuOpen ? 'submenu-open' : ''}
-                  onClick={() => {
-                    setIsFlagMenuOpen(false)
-                    setIsMoveMenuOpen((prev) => !prev)
-                  }}
+                  onClick={() => setIsMoveMenuOpen((prev) => !prev)}
                 >
                   📁 Move
                 </button>
@@ -488,35 +407,6 @@ export default function DetachedMailWindow() {
                 )}
               </li>
               <li><button type="button" onClick={handleReadToggle}>👁️ {readToggleLabel}</button></li>
-              <li className="db-submenu-menu-wrap" ref={flagMenuRef}>
-                <button
-                  type="button"
-                  className={isFlagMenuOpen ? 'submenu-open' : ''}
-                  onClick={() => {
-                    setIsMoveMenuOpen(false)
-                    setIsFlagMenuOpen((prev) => !prev)
-                  }}
-                >
-                  ⚑ {flagToggleLabel}
-                </button>
-                {isFlagMenuOpen && (
-                  <div className="db-submenu-popover" style={flagPopoverStyle || undefined}>
-                    <button type="button" className="db-submenu-popover__item" onClick={handleFlagToggle}>
-                      {flagToggleLabel}
-                    </button>
-                    {availableFlagLabels.length > 0 && <div className="db-submenu-popover__divider" />}
-                    {availableFlagLabels.map((label) => (
-                      <button key={label} type="button" className="db-submenu-popover__item" onClick={() => handleFlagLabel(label)}>
-                        {label}
-                      </button>
-                    ))}
-                    <div className="db-submenu-popover__divider" />
-                    <button type="button" className="db-submenu-popover__item" onClick={handleCreateFlag}>
-                      + New Flag
-                    </button>
-                  </div>
-                )}
-              </li>
             </ul>
             </div>
           </div>

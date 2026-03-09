@@ -429,6 +429,7 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             importance_value INTEGER DEFAULT 0,
             content_type TEXT,
             category TEXT,
+            labels_json TEXT DEFAULT '[]',
             cc_value TEXT,
             bcc_value TEXT,
             plain_body TEXT,
@@ -479,6 +480,10 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .await;
 
     let _ = sqlx::query("ALTER TABLE local_mail_cache ADD COLUMN category TEXT")
+        .execute(pool)
+        .await;
+
+    let _ = sqlx::query("ALTER TABLE local_mail_cache ADD COLUMN labels_json TEXT DEFAULT '[]'")
         .execute(pool)
         .await;
 

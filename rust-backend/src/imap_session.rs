@@ -110,6 +110,17 @@ impl ImapSession {
                 .iter()
                 .any(|f| matches!(f, imap::types::Flag::Flagged));
 
+            // Extract custom keywords from FLAGS as labels
+            let mut labels = Vec::new();
+            for f in msg.flags().iter() {
+                if let imap::types::Flag::Custom(s) = f {
+                    let keyword = s.to_string();
+                    if !labels.contains(&keyword) {
+                        labels.push(keyword);
+                    }
+                }
+            }
+
             if let Some(header_bytes) = msg.header() {
                 let header_str = String::from_utf8_lossy(header_bytes);
                 let subject = parse_header(&header_str, "Subject");
@@ -119,6 +130,12 @@ impl ImapSession {
                 let content_type = parse_content_type(&parse_header(&header_str, "Content-Type"));
                 let importance = parse_importance(&header_str);
                 let category = parse_category(&header_str);
+                // Merge labels from headers if any (e.g. Keywords header)
+                for h_label in parse_labels(&header_str) {
+                    if !labels.contains(&h_label) {
+                        labels.push(h_label);
+                    }
+                }
                 let (name, address) = split_from(&from_raw);
 
                 previews.push(MailPreview {
@@ -134,6 +151,7 @@ impl ImapSession {
                     importance,
                     content_type,
                     category,
+                    labels,
                 });
             }
         }
@@ -278,6 +296,17 @@ impl ImapSession {
                 .iter()
                 .any(|f| matches!(f, imap::types::Flag::Flagged));
 
+            // Extract custom keywords from FLAGS as labels
+            let mut labels = Vec::new();
+            for f in msg.flags().iter() {
+                if let imap::types::Flag::Custom(s) = f {
+                    let keyword = s.to_string();
+                    if !labels.contains(&keyword) {
+                        labels.push(keyword);
+                    }
+                }
+            }
+
             if let Some(header_bytes) = msg.header() {
                 let header_str = String::from_utf8_lossy(header_bytes);
                 let subject = parse_header(&header_str, "Subject");
@@ -287,6 +316,12 @@ impl ImapSession {
                 let content_type = parse_content_type(&parse_header(&header_str, "Content-Type"));
                 let importance = parse_importance(&header_str);
                 let category = parse_category(&header_str);
+                // Merge labels from headers if any (e.g. Keywords header)
+                for h_label in parse_labels(&header_str) {
+                    if !labels.contains(&h_label) {
+                        labels.push(h_label);
+                    }
+                }
                 let (name, address) = split_from(&from_raw);
 
                 previews.push(MailPreview {
@@ -302,6 +337,7 @@ impl ImapSession {
                     importance,
                     content_type,
                     category,
+                    labels,
                 });
             }
         }
@@ -573,21 +609,6 @@ pub fn mark_seen(
     session.uid_store_flag(uid, "\\Seen", seen)
 }
 
-pub fn mark_flagged(
-    state: &Arc<ImapState>,
-    account_id: i64,
-    mailbox: &str,
-    uid: &str,
-    flagged: bool,
-) -> Result<(), String> {
-    let mut sessions = state.sessions.lock().unwrap();
-    let session = sessions
-        .get_mut(&account_id)
-        .ok_or_else(|| format!("No IMAP session for account {account_id}"))?;
-    session.select_mailbox(mailbox)?;
-    session.uid_store_flag(uid, "\\Flagged", flagged)
-}
-
 pub fn set_label(
     state: &Arc<ImapState>,
     account_id: i64,
@@ -601,7 +622,37 @@ pub fn set_label(
         .get_mut(&account_id)
         .ok_or_else(|| format!("No IMAP session for account {account_id}"))?;
     session.select_mailbox(mailbox)?;
-    session.uid_store_keyword(uid, label, add)
+    session.uid_store_keyword(uid, label, add)?;
+
+    // If adding a label, also search for the corresponding label folder (mailbox)
+    // and copy the mail there so it appears in that folder.
+    if add {
+        let label_folders = ["Labels", "Etiketler", "[Labels]"];
+        let mut target_folder = None;
+        let mailboxes = session.list_mailboxes();
+        
+        for root in label_folders {
+            let candidate = format!("{}/{}", root, label);
+            if mailboxes.iter().any(|m| m.eq_ignore_ascii_case(&candidate)) {
+                target_folder = Some(candidate);
+                break;
+            }
+        }
+
+        if let Some(folder) = target_folder {
+            // Copy mail to target label folder (UID COPY)
+            let _ = match session {
+                ImapSession::Plain(s) => s.uid_copy(uid, folder),
+                ImapSession::Tls(s) => s.uid_copy(uid, folder),
+            };
+        }
+    } else {
+        // If removing a label, and we have a corresponding folder, it's hard to find
+        // and delete the specific copy in that folder by UID because it's in a different mailbox.
+        // However, the keyword state (flag) is now updated globally on the server.
+    }
+
+    Ok(())
 }
 
 pub fn move_mail(
@@ -940,6 +991,32 @@ fn parse_category(headers: &str) -> String {
     parse_header(headers, "Keywords")
 }
 
+fn parse_labels(headers: &str) -> Vec<String> {
+    let keywords = parse_header(headers, "Keywords");
+    if !keywords.is_empty() {
+        let mut labels = Vec::new();
+        for part in keywords.split(',') {
+            let label = part.trim();
+            if label.is_empty() {
+                continue;
+            }
+            if !labels.iter().any(|existing| existing == label) {
+                labels.push(label.to_string());
+            }
+        }
+        if !labels.is_empty() {
+            return labels;
+        }
+    }
+
+    let category = parse_header(headers, "X-Category");
+    if category.is_empty() {
+        return Vec::new();
+    }
+
+    vec![category]
+}
+
 fn decode_encoded_word(s: &str) -> String {
     // Minimal RFC 2047 decoder for common =?charset?Q/B?encoded?= patterns
     let mut result = s.to_string();
@@ -1039,5 +1116,28 @@ fn split_from(from: &str) -> (String, String) {
         (name, address)
     } else {
         (String::new(), from.trim().to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_labels;
+
+    #[test]
+    fn parse_labels_splits_and_dedupes_keywords() {
+        let labels = parse_labels("Keywords: Work, Urgent, Work,  , Clients\r\n");
+        assert_eq!(labels, vec!["Work", "Urgent", "Clients"]);
+    }
+
+    #[test]
+    fn parse_labels_falls_back_to_x_category() {
+        let labels = parse_labels("X-Category: FollowUp\r\n");
+        assert_eq!(labels, vec!["FollowUp"]);
+    }
+
+    #[test]
+    fn parse_labels_returns_empty_without_keywords_or_category() {
+        let labels = parse_labels("Subject: Hello\r\n");
+        assert!(labels.is_empty());
     }
 }

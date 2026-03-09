@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use crate::{
     imap_session::{self, ImapState},
-    mail_models::{ConnectImapBody, MailListResponse, MailboxListResponse},
+    mail_models::{ConnectImapBody, MailListResponse, MailboxListResponse, merge_mailbox_label_into_preview},
 };
 
 // Shared state includes both DB state and IMAP sessions
@@ -143,7 +143,7 @@ pub async fn get_mailboxes(
     .await
     .unwrap_or_default();
 
-    Json(MailboxListResponse { mailboxes })
+    Json(MailboxListResponse::from_mailboxes(mailboxes))
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -184,7 +184,7 @@ pub async fn get_mail_list(
     Path(account_id): Path<i64>,
     Query(q): Query<MailListQuery>,
 ) -> impl IntoResponse {
-    let (total, mails) = tokio::task::spawn_blocking({
+    let (total, mut mails) = tokio::task::spawn_blocking({
         let imap_state = state.imap.clone();
         let mailbox = q.mailbox.clone();
         move || imap_session::fetch_mail_list(&imap_state, account_id, &mailbox, q.page, q.per_page)
@@ -192,18 +192,23 @@ pub async fn get_mail_list(
     .await
     .unwrap_or_default();
 
+    mails
+        .iter_mut()
+        .for_each(|mail| merge_mailbox_label_into_preview(mail, &q.mailbox));
+
     if let Ok(pool) = crate::db::get_user_db_pool(&state._db, account_id).await {
         for mail in &mails {
             let date_ms: i64 = DateTime::parse_from_rfc2822(&mail.date)
                 .map(|dt| dt.timestamp_millis())
                 .unwrap_or(0);
+            let labels_json = serde_json::to_string(&mail.labels).unwrap_or_else(|_| "[]".to_string());
             let _ = sqlx::query(
                 r#"
                 INSERT INTO local_mail_cache (
                     uid, folder, sender_name, sender_address, recipient_to, subject, date_value, date_ms,
-                    seen, flagged, size_bytes, importance_value, content_type, category, updated_at
+                    seen, flagged, size_bytes, importance_value, content_type, category, labels_json, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(uid, folder) DO UPDATE SET
                     sender_name = excluded.sender_name,
                     sender_address = excluded.sender_address,
@@ -217,6 +222,7 @@ pub async fn get_mail_list(
                     importance_value = excluded.importance_value,
                     content_type = excluded.content_type,
                     category = excluded.category,
+                    labels_json = excluded.labels_json,
                     updated_at = CURRENT_TIMESTAMP
                 "#,
             )
@@ -234,6 +240,7 @@ pub async fn get_mail_list(
             .bind(mail.importance as i64)
             .bind(&mail.content_type)
             .bind(&mail.category)
+            .bind(&labels_json)
             .execute(&pool)
             .await;
         }

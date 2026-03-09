@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { apiUrl } from '../utils/api'
+import { normalizeMailboxResponse } from '../utils/mailboxes'
 import { useOfflineSync } from '../context/OfflineSyncContext.jsx'
 import Avatar from '../components/Avatar.jsx'
 import './DashboardPage.css'
@@ -32,7 +33,14 @@ const FOLDER_MAP = {
 }
 
 function folderInfo(name) {
-    const clean = name.replace(/^Folders\//i, '').replace(/^Labels\//i, '').replace(/^Etiketler\//i, '')
+    const clean = name
+        .replace(/^Folders\//i, '')
+        .replace(/^Labels\//i, '')
+        .replace(/^Etiketler\//i, '')
+        .replace(/^\[Labels\]\//i, '')
+    if (isLabelMailbox(name)) {
+        return { icon: '🏷️', label: clean }
+    }
     return FOLDER_MAP[clean] || FOLDER_MAP[name] || { icon: '📁', label: clean }
 }
 
@@ -120,7 +128,6 @@ function CollapsedTab({ label, title, onClick }) {
 const MAIL_FILTER_OPTIONS = [
     { key: 'all', label: 'All', icon: '✉' },
     { key: 'unread', label: 'Unread', icon: '⌁' },
-    { key: 'flagged', label: 'Flagged', icon: '⚑' },
     { key: 'toMe', label: 'To me', icon: '➤' },
 ]
 
@@ -128,7 +135,6 @@ const MAIL_SORT_OPTIONS = [
     { key: 'date', label: 'Date' },
     { key: 'from', label: 'From' },
     { key: 'category', label: 'Category' },
-    { key: 'flagStatus', label: 'Flag Status' },
     { key: 'size', label: 'Size' },
     { key: 'subject', label: 'Subject' },
     { key: 'type', label: 'Type' },
@@ -138,7 +144,6 @@ const MAIL_SORT_DIRECTION_LABELS = {
     date: { asc: 'Oldest on top', desc: 'Newest on top' },
     from: { asc: 'A to Z', desc: 'Z to A' },
     category: { asc: 'A to Z', desc: 'Z to A' },
-    flagStatus: { asc: 'Unflagged on top', desc: 'Flagged on top' },
     size: { asc: 'Smallest on top', desc: 'Largest on top' },
     subject: { asc: 'A to Z', desc: 'Z to A' },
     type: { asc: 'A to Z', desc: 'Z to A' },
@@ -168,12 +173,8 @@ function getSortDirectionLabel(sortBy, direction) {
     return MAIL_SORT_DIRECTION_LABELS[sortBy]?.[direction] || 'Newest on top'
 }
 
-function stripLabelFolderPrefix(value) {
-    return value.replace(/^Labels\//i, '').replace(/^Etiketler\//i, '').trim()
-}
-
 function isLabelMailbox(value) {
-    return /^(Labels|Etiketler)(\/|$)/i.test((value || '').trim())
+    return /^(Labels|Etiketler|\[Labels\])(\/|$)/i.test((value || '').trim())
 }
 
 function isMailboxSectionRoot(value) {
@@ -184,6 +185,73 @@ function isMoveTargetMailbox(value) {
     const mailbox = (value || '').trim()
     if (!mailbox || isMailboxSectionRoot(mailbox)) return false
     return !isLabelMailbox(mailbox)
+}
+
+const LABEL_NAMESPACE_ROOTS = ['Labels', 'Etiketler', '[Labels]']
+
+function stripLabelMailboxNamespace(value) {
+    return (value || '')
+        .trim()
+        .replace(/^Labels\//i, '')
+        .replace(/^Etiketler\//i, '')
+        .replace(/^\[Labels\]\//i, '')
+}
+
+function getMailLabels(mail) {
+    if (!Array.isArray(mail?.labels)) return []
+
+    const next = []
+    mail.labels.forEach((label) => {
+        const trimmed = (label || '').trim()
+        if (!trimmed) return
+        if (next.some((existing) => existing.toLowerCase() === trimmed.toLowerCase())) return
+        next.push(trimmed)
+    })
+    return next
+}
+
+function toggleMailLabelState(mail, labelKey, shouldAdd) {
+    const trimmedLabel = (labelKey || '').trim()
+    if (!trimmedLabel) return mail
+
+    const labels = getMailLabels(mail)
+    const hasLabel = labels.some((label) => label.toLowerCase() === trimmedLabel.toLowerCase())
+    const nextLabels = shouldAdd
+        ? (hasLabel ? labels : [...labels, trimmedLabel])
+        : labels.filter((label) => label.toLowerCase() !== trimmedLabel.toLowerCase())
+
+    const currentCategory = (mail?.category || '').trim()
+    const nextCategory = shouldAdd
+        ? (currentCategory || nextLabels[0] || '')
+        : (currentCategory.toLowerCase() === trimmedLabel.toLowerCase() ? (nextLabels[0] || '') : currentCategory)
+
+    if (
+        nextLabels.length === labels.length
+        && nextLabels.every((label, index) => label === labels[index])
+        && nextCategory === currentCategory
+    ) {
+        return mail
+    }
+
+    return {
+        ...mail,
+        labels: nextLabels,
+        category: nextCategory,
+    }
+}
+
+function isValidImapLabelKeyword(value) {
+    const trimmed = (value || '').trim()
+    if (!trimmed) return false
+    return !trimmed.split('').some((char) => (
+        /\s/.test(char) || ['(', ')', '{', '%', '*', '"', '\\', ']'].includes(char)
+    ))
+}
+
+function isCurrentLabelMailbox(mailbox, labelKey) {
+    const normalizedMailbox = stripLabelMailboxNamespace(mailbox).toLowerCase()
+    const normalizedLabel = (labelKey || '').trim().toLowerCase()
+    return normalizedMailbox !== '' && normalizedMailbox === normalizedLabel
 }
 
 function getMailboxNamespacePrefix(mailboxes, namespaceRoots) {
@@ -686,6 +754,7 @@ const DashboardPage = () => {
     const [connected, setConnected] = useState(false)
     const [connecting, setConnecting] = useState(false)
     const [folders, setFolders] = useState([])
+    const [labels, setLabels] = useState([])
     const [selectedFolder, setSelectedFolder] = useState('INBOX')
     const [mails, setMails] = useState([])
     const [cacheMailTotal, setCacheMailTotal] = useState(null)
@@ -791,10 +860,16 @@ const DashboardPage = () => {
         navigate('/login', { replace: true })
     }
 
-    const ensureImapConnected = useCallback(async () => {
+    const ensureImapConnected = useCallback(async (options = {}) => {
+        const { force = false, throttleMs = 15_000 } = options
         if (!backendReachable || !networkOnline || !accountId) return false
         if (connected) return true
         if (connecting) return false
+        const now = Date.now()
+        if (!force && throttleMs > 0 && now - lastConnectAttemptAtRef.current < throttleMs) {
+            return false
+        }
+        lastConnectAttemptAtRef.current = now
         setConnecting(true)
         try {
             const res = await fetch(apiUrl(`/api/mail/${accountId}/connect-stored`), { method: 'POST' })
@@ -818,7 +893,9 @@ const DashboardPage = () => {
             let res = await fetch(apiUrl(`/api/offline/${accountId}/local-mailboxes`), { cache: 'no-store' })
             if (res.ok) {
                 const data = await res.json()
-                setFolders(data.mailboxes || [])
+                const normalized = normalizeMailboxResponse(data)
+                setFolders(normalized.allMailboxes)
+                setLabels(normalized.labels)
             }
 
             // Eğer online'yız, remote'tan da senkronizasyon yap
@@ -828,27 +905,25 @@ const DashboardPage = () => {
                 res = await fetch(apiUrl(`/api/mail/${accountId}/mailboxes`), { cache: 'no-store' })
                 if (res.ok) {
                     const data = await res.json()
-                    setFolders(data.mailboxes || [])
+                    const normalized = normalizeMailboxResponse(data)
+                    setFolders(normalized.allMailboxes)
+                    setLabels(normalized.labels)
                 }
             }
         } catch {
             setFolders([])
+            setLabels([])
         }
     }, [accountId, backendReachable, canUseRemoteMail, ensureImapConnected, networkOnline])
 
-    useEffect(() => {
-        if (!backendReachable || !networkOnline || !accountId || connected) return
-        const attempt = async () => {
-            if (connecting) return
-            const now = Date.now()
-            if (now - lastConnectAttemptAtRef.current < 15_000) return
-            lastConnectAttemptAtRef.current = now
-            await ensureImapConnected()
+    const handleReconnectImap = useCallback(async () => {
+        if (!accountId || !backendReachable || !networkOnline || connecting) return
+        const ok = await ensureImapConnected({ force: true, throttleMs: 0 })
+        await refreshStatus(accountId)
+        if (ok) {
+            loadFolders()
         }
-        attempt()
-        const timer = setInterval(attempt, 15_000)
-        return () => clearInterval(timer)
-    }, [accountId, backendReachable, connected, connecting, ensureImapConnected, networkOnline])
+    }, [accountId, backendReachable, connecting, ensureImapConnected, loadFolders, networkOnline, refreshStatus])
 
     const loadMailsFromCache = useCallback(async (folder, page, limit) => {
         if (!accountId || !backendReachable) return
@@ -1074,7 +1149,7 @@ const DashboardPage = () => {
 
     const queueAction = async (actionType, targetUid, payload = {}, targetFolderOverride = null) => {
         if (!accountId || !backendReachable) return
-        await fetch(apiUrl(`/api/offline/${accountId}/actions`), {
+        const response = await fetch(apiUrl(`/api/offline/${accountId}/actions`), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1084,6 +1159,10 @@ const DashboardPage = () => {
                 payload,
             }),
         })
+        if (!response.ok) {
+            const errorBody = await response.json().catch(() => null)
+            throw new Error(errorBody?.error || errorBody?.message || `Failed to queue ${actionType}`)
+        }
         refreshStatus(accountId)
         if (networkOnline) {
             flushQueue(accountId)
@@ -1214,66 +1293,6 @@ const DashboardPage = () => {
         await Promise.all(ids.map((id) => queueAction(seen ? 'mark_read' : 'mark_unread', id, {}, sourceFolder)))
     }
 
-    const setMailsFlaggedState = async (mailIds, flagged) => {
-        const ids = Array.from(new Set((mailIds || []).filter(Boolean)))
-        if (ids.length === 0) return
-        const sourceFolder = selectedFolder || 'INBOX'
-        const previousStates = mails
-            .filter((mail) => ids.includes(mail.id))
-            .map((mail) => ({ id: mail.id, flagged: mail.flagged }))
-        const previousSelectedMail = selectedMail && ids.includes(selectedMail.id)
-            ? { ...selectedMail }
-            : null
-
-        enqueueUndoableAction({
-            label: flagged
-                ? (ids.length === 1 ? 'Mail flagged' : `${ids.length} mails flagged`)
-                : (ids.length === 1 ? 'Mail unflagged' : `${ids.length} mails unflagged`),
-            apply: () => {
-                setMails((prev) => prev.map((mail) => (
-                    ids.includes(mail.id) ? { ...mail, flagged } : mail
-                )))
-                setSelectedMail((prev) => (prev && ids.includes(prev.id) ? { ...prev, flagged } : prev))
-            },
-            undo: () => {
-                const previousMap = new Map(previousStates.map((item) => [item.id, item.flagged]))
-                setMails((prev) => prev.map((mail) => (
-                    previousMap.has(mail.id) ? { ...mail, flagged: previousMap.get(mail.id) } : mail
-                )))
-                if (previousSelectedMail) {
-                    setSelectedMail((prev) => (prev && prev.id === previousSelectedMail.id ? previousSelectedMail : prev))
-                }
-            },
-            commit: () => Promise.all(ids.map((id) => queueAction(flagged ? 'flag' : 'unflag', id, {}, sourceFolder))),
-        })
-    }
-
-    const addMailLabel = async (mailIds, label) => {
-        const ids = Array.from(new Set((mailIds || []).filter(Boolean)))
-        const trimmedLabel = label.trim()
-        if (ids.length === 0 || !trimmedLabel) return
-        const sourceFolder = selectedFolder || 'INBOX'
-        const previousStates = mails
-            .filter((mail) => ids.includes(mail.id))
-            .map((mail) => ({ id: mail.id, category: mail.category }))
-
-        enqueueUndoableAction({
-            label: ids.length === 1 ? `Flag "${trimmedLabel}" applied` : `Flag "${trimmedLabel}" applied to ${ids.length} mails`,
-            apply: () => {
-                setMails((prev) => prev.map((mail) => (
-                    ids.includes(mail.id) ? { ...mail, category: trimmedLabel } : mail
-                )))
-            },
-            undo: () => {
-                const previousMap = new Map(previousStates.map((item) => [item.id, item.category]))
-                setMails((prev) => prev.map((mail) => (
-                    previousMap.has(mail.id) ? { ...mail, category: previousMap.get(mail.id) } : mail
-                )))
-            },
-            commit: () => Promise.all(ids.map((id) => queueAction('label_add', id, { label: trimmedLabel }, sourceFolder))),
-        })
-    }
-
     const createMailbox = async (name) => {
         const mailboxName = name.trim()
         if (!mailboxName || !accountId || !backendReachable) return false
@@ -1281,7 +1300,7 @@ const DashboardPage = () => {
 
         try {
             if (networkOnline) {
-                const ok = canUseRemoteMail || (await ensureImapConnected())
+                const ok = canUseRemoteMail || (await ensureImapConnected({ force: true }))
                 if (ok) {
                     const res = await fetch(apiUrl(`/api/mail/${accountId}/mailboxes`), {
                         method: 'POST',
@@ -1467,13 +1486,21 @@ const DashboardPage = () => {
                         </button>
                         <div className="db-sync-popover" role="tooltip">
                             <div className="db-sync-popover__title">Network</div>
+                            <div className="db-sync-popover__row">Internet: {networkOnline ? 'online' : 'offline'}</div>
                             <div className="db-sync-popover__row">Mode: {canUseRemoteMail ? 'Live' : 'Offline Cache'}</div>
                             <div className="db-sync-popover__row">Sync: {syncState}</div>
                             <div className="db-sync-popover__row">Queue: {queueDepth}</div>
-                            <div className="db-sync-popover__row">Browser: {networkOnline ? 'online' : 'offline'}</div>
                             <div className="db-sync-popover__row">Backend: {backendReachable ? 'reachable' : 'down'}</div>
                             <div className="db-sync-popover__row">IMAP: {imapReachable ? 'reachable' : 'down'}</div>
                             <div className="db-sync-popover__row">SMTP: {smtpReachable ? 'configured' : 'not set'}</div>
+                            <button
+                                type="button"
+                                className="db-sync-popover__action"
+                                onClick={handleReconnectImap}
+                                disabled={!networkOnline || !backendReachable || connecting}
+                            >
+                                {connecting ? 'Reconnecting...' : 'Reconnect IMAP'}
+                            </button>
                             {lastSyncAt && <div className="db-sync-popover__row">Last sync: {lastSyncAt}</div>}
                             {formatTransfer(transfer?.receiving) && <div className="db-sync-popover__row">{formatTransfer(transfer.receiving)}</div>}
                             {formatTransfer(transfer?.sending) && <div className="db-sync-popover__row">{formatTransfer(transfer.sending)}</div>}
@@ -1544,9 +1571,11 @@ const DashboardPage = () => {
                                 networkOnline={networkOnline}
                                 ensureImapConnected={ensureImapConnected}
                                 folders={folders}
+                                labels={labels}
                                 selectedFolder={selectedFolder}
                                 setSelectedFolder={setSelectedFolder}
                                 mails={mails}
+                                setMails={setMails}
                                 selectedMail={selectedMail}
                                 setSelectedMail={setSelectedMail}
                                 mailContent={mailContent}
@@ -1574,8 +1603,7 @@ const DashboardPage = () => {
                                 deleteMailsOptimistic={deleteMailsOptimistic}
                                 moveMailsOptimistic={moveMailsOptimistic}
                                 setMailsSeenState={setMailsSeenState}
-                                setMailsFlaggedState={setMailsFlaggedState}
-                                addMailLabel={addMailLabel}
+                                queueAction={queueAction}
                                 createMailbox={createMailbox}
                                 canUseRemoteMail={canUseRemoteMail}
                                 composeOpen={composeOpen}
@@ -1646,13 +1674,13 @@ function MailSection({
     backendReachable,
     networkOnline,
     ensureImapConnected,
-    folders, selectedFolder, setSelectedFolder, mails,
+    folders, labels, selectedFolder, setSelectedFolder, mails, setMails,
     selectedMail, setSelectedMail, mailContent, setMailContent, loadingMails, loadingContent,
     connecting, loadMails, loadMailsFromCache, syncMailsFromRemote, prefetchInlineAssets, isSyncing,
     openMail, detachMailToWindow, detachMailToWindowFromList, iframeRef, getShortTime,
     currentPage, setCurrentPage, maxPage, perPage, setPerPage,
     isMailFullscreen, toggleMailFullscreen,
-    deleteMailsOptimistic, moveMailsOptimistic, setMailsSeenState, setMailsFlaggedState, addMailLabel, createMailbox,
+    deleteMailsOptimistic, moveMailsOptimistic, setMailsSeenState, queueAction, createMailbox,
     canUseRemoteMail, composeOpen, setComposeOpen, composeForm, setComposeForm, sendComposedMail,
     tabs, setTabs, activeTabId, setActiveTabId, tabContents, setTabContents, loadingTab, setLoadingTab, nextTabId,
 }) {
@@ -1660,7 +1688,7 @@ function MailSection({
     const hasFolderAccess = folders.length > 0
     const hasMailSource = canUseRemoteMail || hasFolderAccess
     const [activeRibbonTab, setActiveRibbonTab] = useState('home')
-    const [expandedFolders, setExpandedFolders] = useState(['INBOX', 'Folders', 'Labels', 'Etiketler'])
+    const [expandedFolders, setExpandedFolders] = useState(['INBOX'])
     const [folderWidth, setFolderWidth] = useState(240)
     const [listWidth, setListWidth] = useState(460)
     const [minListWidth, setMinListWidth] = useState(360)
@@ -1672,19 +1700,19 @@ function MailSection({
     const [isFilterMenuOpen, setIsFilterMenuOpen] = useState(false)
     const [isSortMenuOpen, setIsSortMenuOpen] = useState(false)
     const [isMoveMenuOpen, setIsMoveMenuOpen] = useState(false)
-    const [isFlagMenuOpen, setIsFlagMenuOpen] = useState(false)
+    const [isLabelMenuOpen, setIsLabelMenuOpen] = useState(false)
     const [activeFilter, setActiveFilter] = useState('all')
     const [sortBy, setSortBy] = useState('date')
     const [sortDirection, setSortDirection] = useState('desc')
-    const [customFlagLabels, setCustomFlagLabels] = useState([])
     const [isPerPageOpen, setIsPerPageOpen] = useState(false)
     const [attachmentsExpanded, setAttachmentsExpanded] = useState(true)
     const [fileActionLoading, setFileActionLoading] = useState('')
     const [layoutCols, setLayoutCols] = useState(1)
     const [movePopoverStyle, setMovePopoverStyle] = useState(null)
-    const [flagPopoverStyle, setFlagPopoverStyle] = useState(null)
+    const [labelPopoverStyle, setLabelPopoverStyle] = useState(null)
     const [mailItemMenu, setMailItemMenu] = useState(null)
     const [mailItemMoveMenuStyle, setMailItemMoveMenuStyle] = useState(null)
+    const [mailItemLabelMenuStyle, setMailItemLabelMenuStyle] = useState(null)
     const displayCols = isMailFullscreen ? layoutCols : 1
     const perPageValue = Math.max(1, Number.parseInt(perPage, 10) || 50)
 
@@ -1704,7 +1732,6 @@ function MailSection({
 
         const filtered = copy.filter((mail) => {
             if (activeFilter === 'unread') return mail.seen !== true
-            if (activeFilter === 'flagged') return mail.flagged === true
             if (activeFilter === 'toMe') {
                 if (!accountEmailNormalized) return false
                 return normalizeMailText(mail.recipient_to).includes(accountEmailNormalized)
@@ -1724,8 +1751,6 @@ function MailSection({
                 )
             } else if (sortBy === 'category') {
                 result = cmpText(getMailCategory(a), getMailCategory(b))
-            } else if (sortBy === 'flagStatus') {
-                result = Number(a?.flagged === true) - Number(b?.flagged === true)
             } else if (sortBy === 'size') {
                 result = (Number(a?.size) || 0) - (Number(b?.size) || 0)
             } else if (sortBy === 'subject') {
@@ -1760,29 +1785,34 @@ function MailSection({
     const hasAnyActionMail = actionableMails.length > 0
     const hasMultipleActionMails = actionableMails.length > 1
     const allActionMailsSeen = hasAnyActionMail && actionableMails.every((mail) => mail.seen === true)
-    const allActionMailsFlagged = hasAnyActionMail && actionableMails.every((mail) => mail.flagged === true)
     const homeReplyLabel = hasMultipleActionMails ? 'Reply All' : 'Reply'
     const homeForwardLabel = hasMultipleActionMails ? 'Forward All' : 'Forward'
     const readToggleLabel = allActionMailsSeen ? 'Unread' : 'Read'
-    const flagToggleLabel = allActionMailsFlagged ? 'Unflag' : 'Flag'
     const moveFolderOptions = useMemo(() => folders.filter(isMoveTargetMailbox), [folders])
-    const availableFlagLabels = useMemo(() => {
-        const builtInLabels = folders
-            .filter(isLabelMailbox)
-            .map(stripLabelFolderPrefix)
-            .filter(Boolean)
-        const existingMailLabels = mails
-            .map((mail) => (mail?.category || '').trim())
-            .filter(Boolean)
-
-        return Array.from(new Set([...builtInLabels, ...existingMailLabels, ...customFlagLabels]))
-            .sort((left, right) => left.localeCompare(right, undefined, { sensitivity: 'base' }))
-    }, [customFlagLabels, folders, mails])
-    const ensureLabelExists = async (label) => {
-        const mailboxName = applyMailboxNamespace(label, getMailboxNamespacePrefix(folders, ['Labels', 'Etiketler']))
-        if (!mailboxName || mailboxName === label) return true
-        return createMailbox(mailboxName)
-    }
+    const labelOptions = useMemo(() => {
+        const seen = new Set()
+        return labels
+            .map((mailbox) => {
+                const labelKey = stripLabelMailboxNamespace(mailbox)
+                return {
+                    mailbox,
+                    labelKey,
+                    labelLabel: folderInfo(mailbox).label,
+                }
+            })
+            .filter((option) => {
+                if (!option.labelKey) return false
+                const key = option.labelKey.toLowerCase()
+                if (seen.has(key)) return false
+                seen.add(key)
+                return true
+            })
+            .sort((left, right) => left.labelLabel.localeCompare(right.labelLabel, undefined, { sensitivity: 'base' }))
+    }, [labels])
+    const labelNamespacePrefix = useMemo(
+        () => getMailboxNamespacePrefix(labels, LABEL_NAMESPACE_ROOTS) || 'Labels/',
+        [labels],
+    )
     const selectionRequiredTitle = hasAnyActionMail ? undefined : 'Select a mail first'
 
     const formatMailDateLong = (dateValue) => {
@@ -1994,14 +2024,177 @@ function MailSection({
         }).join('\n')
     )
 
+    const buildLabelSelectionStates = useCallback((targetMails) => {
+        const mailsToCheck = Array.isArray(targetMails) ? targetMails.filter(Boolean) : []
+        if (mailsToCheck.length === 0) return []
+
+        return labelOptions.map((option) => {
+            const selectedCount = mailsToCheck.reduce((count, mail) => {
+                const hasLabel = getMailLabels(mail).some((label) => label.toLowerCase() === option.labelKey.toLowerCase())
+                return count + (hasLabel ? 1 : 0)
+            }, 0)
+
+            let state = 'unchecked'
+            if (selectedCount === mailsToCheck.length) state = 'checked'
+            else if (selectedCount > 0) state = 'indeterminate'
+
+            return {
+                ...option,
+                state,
+            }
+        })
+    }, [labelOptions])
+
+    const promptForNewLabelKey = useCallback(() => {
+        const name = window.prompt('New label name')
+        if (!name) return null
+
+        const labelKey = name.trim().replace(/^\/+|\/+$/g, '')
+        if (!labelKey) return null
+        if (!isValidImapLabelKeyword(labelKey)) {
+            window.alert('Label name contains characters not supported by IMAP keywords.')
+            return null
+        }
+        return labelKey
+    }, [])
+
+    const createLabel = useCallback(async (relativeName) => {
+        const labelKey = (relativeName || '').trim().replace(/^\/+|\/+$/g, '')
+        if (!labelKey) return null
+        if (!isValidImapLabelKeyword(labelKey)) {
+            window.alert('Label name contains characters not supported by IMAP keywords.')
+            return null
+        }
+
+        const mailboxName = applyMailboxNamespace(labelKey, labelNamespacePrefix)
+        const created = await createMailbox(mailboxName)
+        return created ? labelKey : null
+    }, [createMailbox, labelNamespacePrefix])
+
+    const toggleLabelsOptimistic = useCallback(async (mailIds, labelKey, shouldAdd) => {
+        const ids = Array.from(new Set((mailIds || []).filter(Boolean)))
+        const trimmedLabel = (labelKey || '').trim()
+        if (ids.length === 0 || !trimmedLabel) return false
+
+        const idSet = new Set(ids)
+        const shouldPruneCurrentView = !shouldAdd && isCurrentLabelMailbox(selectedFolder, trimmedLabel)
+        const previousMails = mails
+        const previousSelectedMail = selectedMail
+        const previousMailContent = mailContent
+        const previousSelectedMailIds = new Set(selectedMailIds)
+        const previousTabs = tabs
+        const previousMailItemMenu = mailItemMenu
+
+        setMails((prev) => {
+            const next = prev
+                .map((mail) => (idSet.has(mail.id) ? toggleMailLabelState(mail, trimmedLabel, shouldAdd) : mail))
+            return shouldPruneCurrentView ? next.filter((mail) => !idSet.has(mail.id)) : next
+        })
+
+        setSelectedMail((prev) => {
+            if (!prev || !idSet.has(prev.id)) return prev
+            if (shouldPruneCurrentView) return null
+            return toggleMailLabelState(prev, trimmedLabel, shouldAdd)
+        })
+
+        if (shouldPruneCurrentView && selectedMail && idSet.has(selectedMail.id)) {
+            setMailContent(null)
+        }
+
+        if (shouldPruneCurrentView) {
+            setSelectedMailIds((prev) => new Set([...prev].filter((id) => !idSet.has(id))))
+        }
+
+        setTabs((prev) => prev.map((tab) => (
+            idSet.has(tab.mail.id)
+                ? { ...tab, mail: toggleMailLabelState(tab.mail, trimmedLabel, shouldAdd) }
+                : tab
+        )))
+
+        setMailItemMenu((prev) => {
+            if (!prev || !idSet.has(prev.mail.id)) return prev
+            return {
+                ...prev,
+                mail: toggleMailLabelState(prev.mail, trimmedLabel, shouldAdd),
+            }
+        })
+
+        try {
+            const sourceFolder = selectedFolder || 'INBOX'
+            await Promise.all(ids.map((id) => queueAction(shouldAdd ? 'label_add' : 'label_remove', id, { label: trimmedLabel }, sourceFolder)))
+            return true
+        } catch (error) {
+            setMails(previousMails)
+            setSelectedMail(previousSelectedMail)
+            setMailContent(previousMailContent)
+            setSelectedMailIds(previousSelectedMailIds)
+            setTabs(previousTabs)
+            setMailItemMenu(previousMailItemMenu)
+            window.alert(error?.message || 'The label action failed.')
+            return false
+        }
+    }, [
+        mailContent,
+        mailItemMenu,
+        mails,
+        queueAction,
+        selectedFolder,
+        selectedMail,
+        selectedMailIds,
+        setMailContent,
+        setMailItemMenu,
+        setMails,
+        setSelectedMail,
+        setTabs,
+        tabs,
+    ])
+
+    const createAndApplyLabel = useCallback(async (mailIds) => {
+        const labelKey = promptForNewLabelKey()
+        if (!labelKey) return false
+        const createdLabel = await createLabel(labelKey)
+        if (!createdLabel) return false
+        return toggleLabelsOptimistic(mailIds, createdLabel, true)
+    }, [createLabel, promptForNewLabelKey, toggleLabelsOptimistic])
+
+    const renderLabelChecklist = useCallback((targetMails, onToggleLabel, onCreateLabel, options = {}) => {
+        const states = buildLabelSelectionStates(targetMails)
+        const { className = '', style } = options
+
+        return (
+            <div className={`db-submenu-popover db-label-popover ${className}`.trim()} style={style}>
+                {states.length === 0 ? (
+                    <div className="db-label-popover__empty">No labels yet.</div>
+                ) : (
+                    states.map((option) => (
+                        <button
+                            key={option.labelKey}
+                            type="button"
+                            className={`db-label-popover__item ${option.state === 'checked' ? 'checked' : ''} ${option.state === 'indeterminate' ? 'indeterminate' : ''}`}
+                            onClick={() => onToggleLabel(option.labelKey, option.state !== 'checked')}
+                        >
+                            <span className="db-label-popover__check">{option.state === 'checked' ? '✓' : (option.state === 'indeterminate' ? '−' : '')}</span>
+                            <span className="db-label-popover__label">{option.labelLabel}</span>
+                        </button>
+                    ))
+                )}
+                <div className="db-submenu-popover__divider" />
+                <button type="button" className="db-submenu-popover__item" onClick={onCreateLabel}>
+                    + New Label
+                </button>
+            </div>
+        )
+    }, [buildLabelSelectionStates])
+
     const closeMailItemMenu = useCallback(() => {
         setMailItemMenu(null)
         setMailItemMoveMenuStyle(null)
+        setMailItemLabelMenuStyle(null)
     }, [])
 
     const closeActionMenus = () => {
         setIsMoveMenuOpen(false)
-        setIsFlagMenuOpen(false)
+        setIsLabelMenuOpen(false)
         closeMailItemMenu()
     }
 
@@ -2022,13 +2215,13 @@ function MailSection({
     const sortMenuRef = useRef(null)
     const submenuScrollRef = useRef(null)
     const moveMenuRef = useRef(null)
-    const flagMenuRef = useRef(null)
+    const labelMenuRef = useRef(null)
     const mailItemMenuRef = useRef(null)
     const isResizingFolder = useRef(false)
     const isResizingList = useRef(false)
     const mailToolbarRef = useRef(null)
 
-    const syncPopoverPosition = useCallback((menuRef, setStyle) => {
+    const syncPopoverPosition = useCallback((menuRef, setStyle, estimatedWidth = 220) => {
         const node = menuRef.current
         if (!node) {
             setStyle(null)
@@ -2036,7 +2229,6 @@ function MailSection({
         }
 
         const rect = node.getBoundingClientRect()
-        const estimatedWidth = 220
         const left = Math.min(
             Math.max(12, rect.left),
             Math.max(12, window.innerWidth - estimatedWidth - 12),
@@ -2061,9 +2253,11 @@ function MailSection({
 
     const openMailItemMenuAt = useCallback((mail, left, top) => {
         setMailItemMoveMenuStyle(null)
+        setMailItemLabelMenuStyle(null)
         setMailItemMenu({
             mail,
             moveMenuOpen: false,
+            labelMenuOpen: false,
             style: clampFloatingMenuPosition(left, top),
         })
     }, [clampFloatingMenuPosition])
@@ -2084,9 +2278,21 @@ function MailSection({
         event.stopPropagation()
         const rect = event.currentTarget.getBoundingClientRect()
         setMailItemMoveMenuStyle(clampFloatingMenuPosition(rect.right + 6, rect.top, 240, 320))
+        setMailItemLabelMenuStyle(null)
         setMailItemMenu((prev) => {
             if (!prev) return prev
-            return { ...prev, moveMenuOpen: !prev.moveMenuOpen }
+            return { ...prev, moveMenuOpen: !prev.moveMenuOpen, labelMenuOpen: false }
+        })
+    }, [clampFloatingMenuPosition])
+
+    const toggleMailItemLabelMenu = useCallback((event) => {
+        event.stopPropagation()
+        const rect = event.currentTarget.getBoundingClientRect()
+        setMailItemLabelMenuStyle(clampFloatingMenuPosition(rect.right + 6, rect.top, 260, 320))
+        setMailItemMoveMenuStyle(null)
+        setMailItemMenu((prev) => {
+            if (!prev) return prev
+            return { ...prev, moveMenuOpen: false, labelMenuOpen: !prev.labelMenuOpen }
         })
     }, [clampFloatingMenuPosition])
 
@@ -2178,22 +2384,6 @@ function MailSection({
     }, [activeTabId, tabContents])
 
     useEffect(() => {
-        if (!accountId) return
-        try {
-            const raw = localStorage.getItem(`gv-custom-flags-${accountId}`)
-            const next = JSON.parse(raw || '[]')
-            setCustomFlagLabels(Array.isArray(next) ? next.filter(Boolean) : [])
-        } catch {
-            setCustomFlagLabels([])
-        }
-    }, [accountId])
-
-    useEffect(() => {
-        if (!accountId) return
-        localStorage.setItem(`gv-custom-flags-${accountId}`, JSON.stringify(customFlagLabels))
-    }, [accountId, customFlagLabels])
-
-    useEffect(() => {
         const handleClickOutside = (e) => {
             if (perPageRef.current && !perPageRef.current.contains(e.target)) {
                 setIsPerPageOpen(false)
@@ -2210,8 +2400,8 @@ function MailSection({
             if (moveMenuRef.current && !moveMenuRef.current.contains(e.target)) {
                 setIsMoveMenuOpen(false)
             }
-            if (flagMenuRef.current && !flagMenuRef.current.contains(e.target)) {
-                setIsFlagMenuOpen(false)
+            if (labelMenuRef.current && !labelMenuRef.current.contains(e.target)) {
+                setIsLabelMenuOpen(false)
             }
             if (mailItemMenuRef.current && !mailItemMenuRef.current.contains(e.target)) {
                 closeMailItemMenu()
@@ -2222,19 +2412,19 @@ function MailSection({
     }, [closeMailItemMenu])
 
     useEffect(() => {
-        if (!isMoveMenuOpen && !isFlagMenuOpen) {
-            setMovePopoverStyle(null)
-            setFlagPopoverStyle(null)
-            return
-        }
-
         const sync = () => {
             if (isMoveMenuOpen) {
-                syncPopoverPosition(moveMenuRef, setMovePopoverStyle)
+                syncPopoverPosition(moveMenuRef, setMovePopoverStyle, 220)
             }
-            if (isFlagMenuOpen) {
-                syncPopoverPosition(flagMenuRef, setFlagPopoverStyle)
+            if (isLabelMenuOpen) {
+                syncPopoverPosition(labelMenuRef, setLabelPopoverStyle, 260)
             }
+        }
+
+        if (!isMoveMenuOpen && !isLabelMenuOpen) {
+            setMovePopoverStyle(null)
+            setLabelPopoverStyle(null)
+            return
         }
 
         const frameId = window.requestAnimationFrame(sync)
@@ -2250,7 +2440,7 @@ function MailSection({
             window.removeEventListener('scroll', sync, true)
             scrollNode?.removeEventListener('scroll', sync)
         }
-    }, [activeRibbonTab, activeTabId, isFlagMenuOpen, isMoveMenuOpen, syncPopoverPosition])
+    }, [activeRibbonTab, activeTabId, isLabelMenuOpen, isMoveMenuOpen, syncPopoverPosition])
 
     useEffect(() => {
         const handleKeyDown = (e) => {
@@ -2259,12 +2449,12 @@ function MailSection({
                     closeMailItemMenu()
                     return
                 }
-                if (isFlagMenuOpen) {
-                    setIsFlagMenuOpen(false)
-                    return
-                }
                 if (isMoveMenuOpen) {
                     setIsMoveMenuOpen(false)
+                    return
+                }
+                if (isLabelMenuOpen) {
+                    setIsLabelMenuOpen(false)
                     return
                 }
                 if (isSortMenuOpen) {
@@ -2290,7 +2480,7 @@ function MailSection({
         }
         window.addEventListener('keydown', handleKeyDown)
         return () => window.removeEventListener('keydown', handleKeyDown)
-    }, [closeMailItemMenu, isFilterMenuOpen, isFlagMenuOpen, isMoveMenuOpen, isSelectionMenuOpen, isSortMenuOpen, mailItemMenu, selectMode, selectedMail, setMailContent, setSelectedMail])
+    }, [closeMailItemMenu, isFilterMenuOpen, isLabelMenuOpen, isMoveMenuOpen, isSelectionMenuOpen, isSortMenuOpen, mailItemMenu, selectMode, selectedMail, setMailContent, setSelectedMail])
 
     useEffect(() => {
         if (!mailItemMenu) return
@@ -2398,18 +2588,28 @@ function MailSection({
         setIsSelectionMenuOpen(false)
     }, [visibleMails])
 
-    const buildTree = (list) => {
+    const buildTree = (list, namespaceRoots = []) => {
         const tree = []
-        list.forEach(path => {
-            const parts = path.split('/')
+        const normalizedNamespaceRoots = namespaceRoots.map((root) => root.toLowerCase())
+
+        list.forEach((path) => {
+            const rawParts = path.split('/').filter(Boolean)
+            if (rawParts.length === 0) return
+
+            const startsWithNamespace = normalizedNamespaceRoots.includes(rawParts[0].toLowerCase())
+            const parts = startsWithNamespace ? rawParts.slice(1) : rawParts
+            const rawStartIndex = rawParts.length - parts.length
+            if (parts.length === 0) return
+
             let currentLevel = tree
             parts.forEach((part, index) => {
-                let existing = currentLevel.find(item => item.name === part)
+                const fullPath = rawParts.slice(0, rawStartIndex + index + 1).join('/')
+                let existing = currentLevel.find((item) => item.fullPath === fullPath)
                 if (!existing) {
                     existing = {
                         name: part,
-                        fullPath: parts.slice(0, index + 1).join('/'),
-                        children: []
+                        fullPath,
+                        children: [],
                     }
                     currentLevel.push(existing)
                 }
@@ -2457,7 +2657,12 @@ function MailSection({
         )
     }
 
-    const folderTree = buildTree(folders)
+    const folderMailboxes = useMemo(
+        () => folders.filter((mailbox) => !isLabelMailbox(mailbox) && !isMailboxSectionRoot(mailbox)),
+        [folders],
+    )
+    const folderTree = buildTree(folderMailboxes, ['Folders'])
+    const labelTree = buildTree(labels, ['Labels', 'Etiketler', '[Labels]'])
 
     const renderFolderItem = (node, depth = 0) => {
         const info = folderInfo(node.fullPath)
@@ -2465,10 +2670,8 @@ function MailSection({
         const isExpanded = expandedFolders.includes(node.fullPath)
         const hasChildren = node.children.length > 0
 
-        const isSection = depth === 0 && ['Folders', 'Labels', 'Etiketler'].includes(node.name)
-
         return (
-            <div key={node.fullPath} className={`db-folder-node ${isSection ? 'db-folder-section' : ''}`}>
+            <div key={node.fullPath} className="db-folder-node">
                 <li className={`db-folder-item ${isSelected ? 'selected' : ''}`} style={{ paddingLeft: `${depth * 12}px` }}>
                     <div className="db-folder-item-content" onClick={() => setSelectedFolder(node.fullPath)}>
                         {hasChildren ? (
@@ -2490,6 +2693,13 @@ function MailSection({
             </div>
         )
     }
+
+    const renderFolderSection = (title, nodes, withDivider = false) => (
+        <div className={`db-folder-section${withDivider ? ' db-folder-section--divided' : ''}`}>
+            <div className="db-folder-section__header">{title}</div>
+            {nodes.map((node) => renderFolderItem(node))}
+        </div>
+    )
 
     const handleNewMail = () => {
         composeDraft({ to: '', cc: '', bcc: '', subject: '', body: '' })
@@ -2524,16 +2734,14 @@ function MailSection({
         await setMailsSeenState(actionableMailIds, !allActionMailsSeen)
     }
 
-    const handleFlagToggleAction = async () => {
+    const handleLabelToggleAction = async (labelKey, shouldAdd) => {
         if (!hasAnyActionMail) return
-        await setMailsFlaggedState(actionableMailIds, !allActionMailsFlagged)
-        closeActionMenus()
+        await toggleLabelsOptimistic(actionableMailIds, labelKey, shouldAdd)
     }
 
-    const handleFlagLabelAction = async (label) => {
-        if (!hasAnyActionMail || !label) return
-        await addMailLabel(actionableMailIds, label)
-        closeActionMenus()
+    const handleCreateLabelAction = async () => {
+        if (!hasAnyActionMail) return
+        await createAndApplyLabel(actionableMailIds)
     }
 
     const handleCreateFolderAndMove = async () => {
@@ -2545,18 +2753,6 @@ function MailSection({
         if (created) {
             await handleMoveAction(mailboxName)
         }
-    }
-
-    const handleCreateFlagLabel = async () => {
-        if (!hasAnyActionMail) return
-        const name = window.prompt('New flag name')
-        const trimmed = (name || '').trim()
-        if (!trimmed) return
-        setCustomFlagLabels((prev) => (
-            prev.includes(trimmed) ? prev : [...prev, trimmed]
-        ))
-        await ensureLabelExists(trimmed)
-        await handleFlagLabelAction(trimmed)
     }
 
     const composeReplyDraft = async (mailList) => {
@@ -2655,23 +2851,25 @@ function MailSection({
         closeMailItemMenu()
     }
 
-    const handleMailItemMenuFlagToggle = async () => {
+    const handleMailItemMenuLabelToggle = async (labelKey, shouldAdd) => {
         if (!mailItemMenu?.mail) return
-        await setMailsFlaggedState([mailItemMenu.mail.id], mailItemMenu.mail.flagged !== true)
-        closeMailItemMenu()
+        await toggleLabelsOptimistic([mailItemMenu.mail.id], labelKey, shouldAdd)
+    }
+
+    const handleMailItemMenuCreateLabel = async () => {
+        if (!mailItemMenu?.mail) return
+        await createAndApplyLabel([mailItemMenu.mail.id])
     }
 
     const activeTab = tabs.find(t => t.id === activeTabId)
     const activeTabContent = activeTabId ? tabContents[activeTabId] : null
     const activeTabMail = activeTab ? (mails.find((mail) => mail.id === activeTab.mail.id) || activeTab.mail) : null
     const activeTabReadLabel = activeTabMail?.seen === true ? 'Unread' : 'Read'
-    const activeTabFlagLabel = activeTabMail?.flagged === true ? 'Unflag' : 'Flag'
     const fileActionsDisabled = !selectedMail || loadingContent || fileActionLoading !== ''
     const mailItemMenuMail = mailItemMenu?.mail
         ? (mails.find((mail) => mail.id === mailItemMenu.mail.id) || mailItemMenu.mail)
         : null
     const mailItemReadLabel = mailItemMenuMail?.seen === true ? 'Mark as unread' : 'Mark as read'
-    const mailItemFlagLabel = mailItemMenuMail?.flagged === true ? 'Unflag' : 'Flag'
 
     const closeTabsForMailIds = (mailIds) => {
         const ids = new Set(mailIds)
@@ -2751,19 +2949,14 @@ function MailSection({
         patchOpenTabsForMail(activeTabMail.id, { seen: nextSeen })
     }
 
-    const handleActiveTabFlagToggleAction = async () => {
+    const handleActiveTabLabelToggleAction = async (labelKey, shouldAdd) => {
         if (!activeTabMail) return
-        const nextFlagged = activeTabMail.flagged !== true
-        await setMailsFlaggedState([activeTabMail.id], nextFlagged)
-        patchOpenTabsForMail(activeTabMail.id, { flagged: nextFlagged })
-        closeActionMenus()
+        await toggleLabelsOptimistic([activeTabMail.id], labelKey, shouldAdd)
     }
 
-    const handleActiveTabFlagLabelAction = async (label) => {
-        if (!activeTabMail || !label) return
-        await addMailLabel([activeTabMail.id], label)
-        patchOpenTabsForMail(activeTabMail.id, { category: label })
-        closeActionMenus()
+    const handleActiveTabCreateLabelAction = async () => {
+        if (!activeTabMail) return
+        await createAndApplyLabel([activeTabMail.id])
     }
 
     const handleCreateFolderAndMoveFromTab = async () => {
@@ -2775,18 +2968,6 @@ function MailSection({
         if (created) {
             await handleActiveTabMoveAction(mailboxName)
         }
-    }
-
-    const handleCreateFlagLabelFromTab = async () => {
-        if (!activeTabMail) return
-        const name = window.prompt('New flag name')
-        const trimmed = (name || '').trim()
-        if (!trimmed) return
-        setCustomFlagLabels((prev) => (
-            prev.includes(trimmed) ? prev : [...prev, trimmed]
-        ))
-        await ensureLabelExists(trimmed)
-        await handleActiveTabFlagLabelAction(trimmed)
     }
 
     return (
@@ -2834,212 +3015,180 @@ function MailSection({
             )}
             <div className="db-submenu">
                 <div className="db-submenu-scroll" ref={submenuScrollRef}>
-                {activeTabId ? (
-                    <ul>
-                        <li><button disabled={!activeTabMail} onClick={handleActiveTabDeleteAction}>🗑️ {t('Delete')}</button></li>
-                        <li><button disabled={!activeTabMail} onClick={handleActiveTabMoveToTrashAction}>🗃️ {t('Move to Trash')}</button></li>
-                        <li><button disabled={!activeTabMail} onClick={handleActiveTabArchiveAction}>📦 {t('Archive')}</button></li>
-                        <li><button disabled={!activeTabMail} onClick={handleActiveTabReplyAction}>↩️ Reply</button></li>
-                        <li><button disabled={!activeTabMail} onClick={handleActiveTabForwardAction}>➡️ Forward</button></li>
-                        <li className="db-submenu-menu-wrap" ref={moveMenuRef}>
-                            <button
-                                disabled={!activeTabMail}
-                                title={activeTabMail ? undefined : 'Open a mail first'}
-                                className={isMoveMenuOpen ? 'submenu-open' : ''}
-                                onClick={() => {
-                                    setIsFlagMenuOpen(false)
-                                    setIsMoveMenuOpen((prev) => !prev)
-                                }}
-                            >
-                                📁 {t('Move')}
-                            </button>
-                            {isMoveMenuOpen && (
-                                <div className="db-submenu-popover" style={movePopoverStyle || undefined}>
-                                    {moveFolderOptions.map((folder) => (
-                                        <button
-                                            key={folder}
-                                            type="button"
-                                            className="db-submenu-popover__item"
-                                            onClick={() => handleActiveTabMoveAction(folder)}
-                                        >
-                                            {folderInfo(folder).label}
+                    {activeTabId ? (
+                        <ul>
+                            <li><button disabled={!activeTabMail} onClick={handleActiveTabDeleteAction}>🗑️ {t('Delete')}</button></li>
+                            <li><button disabled={!activeTabMail} onClick={handleActiveTabMoveToTrashAction}>🗃️ {t('Move to Trash')}</button></li>
+                            <li><button disabled={!activeTabMail} onClick={handleActiveTabArchiveAction}>📦 {t('Archive')}</button></li>
+                            <li><button disabled={!activeTabMail} onClick={handleActiveTabReplyAction}>↩️ Reply</button></li>
+                            <li><button disabled={!activeTabMail} onClick={handleActiveTabForwardAction}>➡️ Forward</button></li>
+                            <li className="db-submenu-menu-wrap" ref={moveMenuRef}>
+                                <button
+                                    disabled={!activeTabMail}
+                                    title={activeTabMail ? undefined : 'Open a mail first'}
+                                    className={isMoveMenuOpen ? 'submenu-open' : ''}
+                                    onClick={() => {
+                                        setIsLabelMenuOpen(false)
+                                        setIsMoveMenuOpen((prev) => !prev)
+                                    }}
+                                >
+                                    📁 {t('Move')}
+                                </button>
+                                {isMoveMenuOpen && (
+                                    <div className="db-submenu-popover" style={movePopoverStyle || undefined}>
+                                        {moveFolderOptions.map((folder) => (
+                                            <button
+                                                key={folder}
+                                                type="button"
+                                                className="db-submenu-popover__item"
+                                                onClick={() => handleActiveTabMoveAction(folder)}
+                                            >
+                                                {folderInfo(folder).label}
+                                            </button>
+                                        ))}
+                                        <div className="db-submenu-popover__divider" />
+                                        <button type="button" className="db-submenu-popover__item" onClick={handleCreateFolderAndMoveFromTab}>
+                                            + New Folder
                                         </button>
-                                    ))}
-                                    <div className="db-submenu-popover__divider" />
-                                    <button type="button" className="db-submenu-popover__item" onClick={handleCreateFolderAndMoveFromTab}>
-                                        + New Folder
-                                    </button>
-                                </div>
-                            )}
-                        </li>
-                        <li><button disabled={!activeTabMail} onClick={handleActiveTabReadToggleAction}>👁️ {activeTabReadLabel}</button></li>
-                        <li className="db-submenu-menu-wrap" ref={flagMenuRef}>
-                            <button
-                                disabled={!activeTabMail}
-                                title={activeTabMail ? undefined : 'Open a mail first'}
-                                className={isFlagMenuOpen ? 'submenu-open' : ''}
-                                onClick={() => {
-                                    setIsMoveMenuOpen(false)
-                                    setIsFlagMenuOpen((prev) => !prev)
-                                }}
-                            >
-                                ⚑ {activeTabFlagLabel}
-                            </button>
-                            {isFlagMenuOpen && (
-                                <div className="db-submenu-popover" style={flagPopoverStyle || undefined}>
-                                    <button type="button" className="db-submenu-popover__item" onClick={handleActiveTabFlagToggleAction}>
-                                        {activeTabFlagLabel}
-                                    </button>
-                                    {availableFlagLabels.length > 0 && <div className="db-submenu-popover__divider" />}
-                                    {availableFlagLabels.map((label) => (
-                                        <button
-                                            key={label}
-                                            type="button"
-                                            className="db-submenu-popover__item"
-                                            onClick={() => handleActiveTabFlagLabelAction(label)}
-                                        >
-                                            {label}
+                                    </div>
+                                )}
+                            </li>
+                            <li className="db-submenu-menu-wrap" ref={labelMenuRef}>
+                                <button
+                                    disabled={!activeTabMail}
+                                    title={activeTabMail ? undefined : 'Open a mail first'}
+                                    className={isLabelMenuOpen ? 'submenu-open' : ''}
+                                    onClick={() => {
+                                        setIsMoveMenuOpen(false)
+                                        setIsLabelMenuOpen((prev) => !prev)
+                                    }}
+                                >
+                                    🏷️ Labels
+                                </button>
+                                {isLabelMenuOpen && renderLabelChecklist(
+                                    activeTabMail ? [activeTabMail] : [],
+                                    handleActiveTabLabelToggleAction,
+                                    handleActiveTabCreateLabelAction,
+                                    { style: labelPopoverStyle || undefined },
+                                )}
+                            </li>
+                            <li><button disabled={!activeTabMail} onClick={handleActiveTabReadToggleAction}>👁️ {activeTabReadLabel}</button></li>
+                        </ul>
+                    ) : activeRibbonTab === 'home' && (
+                        <ul>
+                            <li><button onClick={handleNewMail}>🆕 {t('New Mail')}</button></li>
+                            <li><button disabled={!hasAnyActionMail} onClick={handleDeleteAction}>🗑️ {t('Delete')}</button></li>
+                            <li><button disabled={!hasAnyActionMail} onClick={handleMoveToTrashAction}>🗃️ {t('Move to Trash')}</button></li>
+                            <li><button disabled={!hasAnyActionMail} onClick={handleArchiveAction}>📦 {t('Archive')}</button></li>
+                            <li><button disabled={!hasAnyActionMail} onClick={handleReplyAction}>↩️ {homeReplyLabel}</button></li>
+                            <li><button disabled={!hasAnyActionMail} onClick={handleForwardAction}>➡️ {homeForwardLabel}</button></li>
+                            <li className="db-submenu-menu-wrap" ref={moveMenuRef}>
+                                <button
+                                    disabled={!hasAnyActionMail}
+                                    title={selectionRequiredTitle}
+                                    className={isMoveMenuOpen ? 'submenu-open' : ''}
+                                    onClick={() => {
+                                        setIsLabelMenuOpen(false)
+                                        setIsMoveMenuOpen((prev) => !prev)
+                                    }}
+                                >
+                                    📁 {t('Move')}
+                                </button>
+                                {isMoveMenuOpen && (
+                                    <div className="db-submenu-popover" style={movePopoverStyle || undefined}>
+                                        {moveFolderOptions.map((folder) => (
+                                            <button
+                                                key={folder}
+                                                type="button"
+                                                className="db-submenu-popover__item"
+                                                onClick={() => handleMoveAction(folder)}
+                                            >
+                                                {folderInfo(folder).label}
+                                            </button>
+                                        ))}
+                                        <div className="db-submenu-popover__divider" />
+                                        <button type="button" className="db-submenu-popover__item" onClick={handleCreateFolderAndMove}>
+                                            + New Folder
                                         </button>
-                                    ))}
-                                    <div className="db-submenu-popover__divider" />
-                                    <button type="button" className="db-submenu-popover__item" onClick={handleCreateFlagLabelFromTab}>
-                                        + New Flag
-                                    </button>
-                                </div>
-                            )}
-                        </li>
-                    </ul>
-                ) : activeRibbonTab === 'home' && (
-                    <ul>
-                        <li><button onClick={handleNewMail}>🆕 {t('New Mail')}</button></li>
-                        <li><button disabled={!hasAnyActionMail} onClick={handleDeleteAction}>🗑️ {t('Delete')}</button></li>
-                        <li><button disabled={!hasAnyActionMail} onClick={handleMoveToTrashAction}>🗃️ {t('Move to Trash')}</button></li>
-                        <li><button disabled={!hasAnyActionMail} onClick={handleArchiveAction}>📦 {t('Archive')}</button></li>
-                        <li><button disabled={!hasAnyActionMail} onClick={handleReplyAction}>↩️ {homeReplyLabel}</button></li>
-                        <li><button disabled={!hasAnyActionMail} onClick={handleForwardAction}>➡️ {homeForwardLabel}</button></li>
-                        <li className="db-submenu-menu-wrap" ref={moveMenuRef}>
-                            <button
-                                disabled={!hasAnyActionMail}
-                                title={selectionRequiredTitle}
-                                className={isMoveMenuOpen ? 'submenu-open' : ''}
-                                onClick={() => {
-                                    setIsFlagMenuOpen(false)
-                                    setIsMoveMenuOpen((prev) => !prev)
-                                }}
-                            >
-                                📁 {t('Move')}
-                            </button>
-                            {isMoveMenuOpen && (
-                                <div className="db-submenu-popover" style={movePopoverStyle || undefined}>
-                                    {moveFolderOptions.map((folder) => (
-                                        <button
-                                            key={folder}
-                                            type="button"
-                                            className="db-submenu-popover__item"
-                                            onClick={() => handleMoveAction(folder)}
-                                        >
-                                            {folderInfo(folder).label}
-                                        </button>
-                                    ))}
-                                    <div className="db-submenu-popover__divider" />
-                                    <button type="button" className="db-submenu-popover__item" onClick={handleCreateFolderAndMove}>
-                                        + New Folder
-                                    </button>
-                                </div>
-                            )}
-                        </li>
-                        <li><button disabled={!hasAnyActionMail} onClick={handleReadToggleAction}>👁️ {readToggleLabel}</button></li>
-                        <li className="db-submenu-menu-wrap" ref={flagMenuRef}>
-                            <button
-                                disabled={!hasAnyActionMail}
-                                title={selectionRequiredTitle}
-                                className={isFlagMenuOpen ? 'submenu-open' : ''}
-                                onClick={() => {
-                                    setIsMoveMenuOpen(false)
-                                    setIsFlagMenuOpen((prev) => !prev)
-                                }}
-                            >
-                                ⚑ {flagToggleLabel}
-                            </button>
-                            {isFlagMenuOpen && (
-                                <div className="db-submenu-popover" style={flagPopoverStyle || undefined}>
-                                    <button type="button" className="db-submenu-popover__item" onClick={handleFlagToggleAction}>
-                                        {flagToggleLabel}
-                                    </button>
-                                    {availableFlagLabels.length > 0 && <div className="db-submenu-popover__divider" />}
-                                    {availableFlagLabels.map((label) => (
-                                        <button
-                                            key={label}
-                                            type="button"
-                                            className="db-submenu-popover__item"
-                                            onClick={() => handleFlagLabelAction(label)}
-                                        >
-                                            {label}
-                                        </button>
-                                    ))}
-                                    <div className="db-submenu-popover__divider" />
-                                    <button type="button" className="db-submenu-popover__item" onClick={handleCreateFlagLabel}>
-                                        + New Flag
-                                    </button>
-                                </div>
-                            )}
-                        </li>
-                    </ul>
-                )}
-                {!activeTabId && activeRibbonTab === 'file' && (
-                    <ul>
-                        <li>
-                            <button disabled={fileActionsDisabled} onClick={handleDownloadHtml}>
-                                💾 {fileActionLoading === 'html' ? 'Saving HTML...' : 'Download as HTML'}
-                            </button>
-                        </li>
-                        <li>
-                            <button disabled={fileActionsDisabled} onClick={handleDownloadMsg}>
-                                ✉️ {fileActionLoading === 'msg' ? 'Saving MSG...' : 'Download as MSG'}
-                            </button>
-                        </li>
-                        <li>
-                            <button disabled={fileActionsDisabled} onClick={handleDownloadEml}>
-                                📩 {fileActionLoading === 'eml' ? 'Saving EML...' : 'Download as EML'}
-                            </button>
-                        </li>
-                        <li>
-                            <button disabled={fileActionsDisabled} onClick={handleDownloadPdf}>
-                                📄 {fileActionLoading === 'pdf' ? 'Saving PDF...' : 'Download as PDF'}
-                            </button>
-                        </li>
-                        <li>
-                            <button disabled={fileActionsDisabled} onClick={handlePrintMail}>
-                                🖨️ {fileActionLoading === 'print' ? 'Preparing print...' : 'Print'}
-                            </button>
-                        </li>
-                    </ul>
-                )}
-                {!activeTabId && activeRibbonTab === 'send-receive' && (
-                    <ul>
-                        <li><button onClick={() => {
-                            loadMailsFromCache(selectedFolder, currentPage, perPage)
-                                .then(() => {
-                                    if (canUseRemoteMail && !isSyncing) {
-                                        syncMailsFromRemote(selectedFolder, currentPage, perPage)
-                                    }
-                                })
-                        }}>🔄 {t('Update Folder')}</button></li>
-                        <li><button onClick={() => { }}>📡 {t('Send All')}</button></li>
-                    </ul>
-                )}
-                {!activeTabId && activeRibbonTab === 'folder' && (
-                    <ul>
-                        <li><button onClick={() => { }}>📁 {t('New Folder')}</button></li>
-                        <li><button onClick={() => { }}>🏷️ {t('Rename')}</button></li>
-                    </ul>
-                )}
-                {!activeTabId && activeRibbonTab === 'view' && (
-                    <ul>
-                        <li><button onClick={() => { }}>📖 {t('Reading Pane')}</button></li>
-                        <li><button onClick={() => { }}>📏 {t('Layout')}</button></li>
-                    </ul>
-                )}
+                                    </div>
+                                )}
+                            </li>
+                            <li className="db-submenu-menu-wrap" ref={labelMenuRef}>
+                                <button
+                                    disabled={!hasAnyActionMail}
+                                    title={selectionRequiredTitle}
+                                    className={isLabelMenuOpen ? 'submenu-open' : ''}
+                                    onClick={() => {
+                                        setIsMoveMenuOpen(false)
+                                        setIsLabelMenuOpen((prev) => !prev)
+                                    }}
+                                >
+                                    🏷️ Labels
+                                </button>
+                                {isLabelMenuOpen && renderLabelChecklist(
+                                    actionableMails,
+                                    handleLabelToggleAction,
+                                    handleCreateLabelAction,
+                                    { style: labelPopoverStyle || undefined },
+                                )}
+                            </li>
+                            <li><button disabled={!hasAnyActionMail} onClick={handleReadToggleAction}>👁️ {readToggleLabel}</button></li>
+                        </ul>
+                    )}
+                    {!activeTabId && activeRibbonTab === 'file' && (
+                        <ul>
+                            <li>
+                                <button disabled={fileActionsDisabled} onClick={handleDownloadHtml}>
+                                    💾 {fileActionLoading === 'html' ? 'Saving HTML...' : 'Download as HTML'}
+                                </button>
+                            </li>
+                            <li>
+                                <button disabled={fileActionsDisabled} onClick={handleDownloadMsg}>
+                                    ✉️ {fileActionLoading === 'msg' ? 'Saving MSG...' : 'Download as MSG'}
+                                </button>
+                            </li>
+                            <li>
+                                <button disabled={fileActionsDisabled} onClick={handleDownloadEml}>
+                                    📩 {fileActionLoading === 'eml' ? 'Saving EML...' : 'Download as EML'}
+                                </button>
+                            </li>
+                            <li>
+                                <button disabled={fileActionsDisabled} onClick={handleDownloadPdf}>
+                                    📄 {fileActionLoading === 'pdf' ? 'Saving PDF...' : 'Download as PDF'}
+                                </button>
+                            </li>
+                            <li>
+                                <button disabled={fileActionsDisabled} onClick={handlePrintMail}>
+                                    🖨️ {fileActionLoading === 'print' ? 'Preparing print...' : 'Print'}
+                                </button>
+                            </li>
+                        </ul>
+                    )}
+                    {!activeTabId && activeRibbonTab === 'send-receive' && (
+                        <ul>
+                            <li><button onClick={() => {
+                                loadMailsFromCache(selectedFolder, currentPage, perPage)
+                                    .then(() => {
+                                        if (canUseRemoteMail && !isSyncing) {
+                                            syncMailsFromRemote(selectedFolder, currentPage, perPage)
+                                        }
+                                    })
+                            }}>🔄 {t('Update Folder')}</button></li>
+                            <li><button onClick={() => { }}>📡 {t('Send All')}</button></li>
+                        </ul>
+                    )}
+                    {!activeTabId && activeRibbonTab === 'folder' && (
+                        <ul>
+                            <li><button onClick={() => { }}>📁 {t('New Folder')}</button></li>
+                            <li><button onClick={() => { }}>🏷️ {t('Rename')}</button></li>
+                        </ul>
+                    )}
+                    {!activeTabId && activeRibbonTab === 'view' && (
+                        <ul>
+                            <li><button onClick={() => { }}>📖 {t('Reading Pane')}</button></li>
+                            <li><button onClick={() => { }}>📏 {t('Layout')}</button></li>
+                        </ul>
+                    )}
                 </div>
             </div>
 
@@ -3128,7 +3277,8 @@ function MailSection({
                                 {hasFolderAccess ? (
                                     <div className="db-folder-scroll-area">
                                         <ul className="db-folder-list">
-                                            {folderTree.map(node => renderFolderItem(node))}
+                                            {folderTree.length > 0 && renderFolderSection(t('Folders'), folderTree)}
+                                            {labelTree.length > 0 && renderFolderSection(t('Labels'), labelTree, folderTree.length > 0)}
                                         </ul>
                                     </div>
                                 ) : (
@@ -3184,7 +3334,7 @@ function MailSection({
                                         onClick={async () => {
                                             if (!backendReachable) return
                                             if (networkOnline) {
-                                                const ok = canUseRemoteMail || (await ensureImapConnected())
+                                                const ok = canUseRemoteMail || (await ensureImapConnected({ force: true }))
                                                 if (ok && !isSyncing) {
                                                     await syncMailsFromRemote(selectedFolder, currentPage, perPage)
                                                     return
@@ -3459,6 +3609,9 @@ function MailSection({
                                         <ul className="db-mail-list" data-cols={displayCols}>
                                             {pagedVisibleMails.map((mail) => {
                                                 const isChecked = selectedMailIds.has(mail.id)
+                                                const mailLabels = getMailLabels(mail)
+                                                const visibleMailLabels = mailLabels.slice(0, 2)
+                                                const remainingMailLabelCount = Math.max(0, mailLabels.length - visibleMailLabels.length)
 
                                                 return (
                                                     <li
@@ -3487,9 +3640,25 @@ function MailSection({
                                                             </button>
                                                         </div>
                                                         <div className="db-mail-item-content">
-                                                            <span className="db-mail-sender">{mail.name || mail.address || 'Unknown'}</span>
+                                                            <div className="db-mail-item-head">
+                                                                <span className="db-mail-sender">{mail.name || mail.address || 'Unknown'}</span>
+                                                                <span className="db-mail-time">{getShortTime(mail.date)}</span>
+                                                            </div>
                                                             <span className="db-mail-subject">{mail.subject || '(No Subject)'}</span>
-                                                            <span className="db-mail-time">{getShortTime(mail.date)}</span>
+                                                            {mailLabels.length > 0 && (
+                                                                <div className="db-mail-labels" title={mailLabels.join(', ')}>
+                                                                    {visibleMailLabels.map((label) => (
+                                                                        <span key={`${mail.id}-${label}`} className="db-mail-label-chip">
+                                                                            {label}
+                                                                        </span>
+                                                                    ))}
+                                                                    {remainingMailLabelCount > 0 && (
+                                                                        <span className="db-mail-label-chip db-mail-label-chip--more">
+                                                                            +{remainingMailLabelCount}
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            )}
                                                         </div>
                                                         <div className="db-mail-quick-actions">
                                                             <button
@@ -3499,23 +3668,25 @@ function MailSection({
                                                             >
                                                                 ⋮
                                                             </button>
-                                                            <button
-                                                                className="db-mail-qa-btn"
-                                                                title="Open in new tab"
-                                                                onClick={(e) => {
-                                                                    e.stopPropagation()
-                                                                    openMailInTab(mail)
-                                                                }}
-                                                            >
-                                                                🗂️
-                                                            </button>
-                                                            <button
-                                                                className="db-mail-qa-btn"
-                                                                title="Open in new window"
-                                                                onClick={(e) => detachMailToWindowFromList(e, mail)}
-                                                            >
-                                                                🪟
-                                                            </button>
+                                                            <div className="db-mail-qa-row">
+                                                                <button
+                                                                    className="db-mail-qa-btn"
+                                                                    title="Open in new tab"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation()
+                                                                        openMailInTab(mail)
+                                                                    }}
+                                                                >
+                                                                    🗂️
+                                                                </button>
+                                                                <button
+                                                                    className="db-mail-qa-btn"
+                                                                    title="Open in new window"
+                                                                    onClick={(e) => detachMailToWindowFromList(e, mail)}
+                                                                >
+                                                                    🪟
+                                                                </button>
+                                                            </div>
                                                         </div>
                                                     </li>
                                                 )
@@ -3547,11 +3718,16 @@ function MailSection({
                                                         <span>📁 Move</span>
                                                         <span className="db-mail-item-menu__chevron">›</span>
                                                     </button>
+                                                    <button
+                                                        type="button"
+                                                        className="db-submenu-popover__item db-mail-item-menu__submenu-trigger"
+                                                        onClick={toggleMailItemLabelMenu}
+                                                    >
+                                                        <span>🏷️ Labels</span>
+                                                        <span className="db-mail-item-menu__chevron">›</span>
+                                                    </button>
                                                     <button type="button" className="db-submenu-popover__item" onClick={handleMailItemMenuReadToggle}>
                                                         👁️ {mailItemReadLabel}
-                                                    </button>
-                                                    <button type="button" className="db-submenu-popover__item" onClick={handleMailItemMenuFlagToggle}>
-                                                        ⚑ {mailItemFlagLabel}
                                                     </button>
                                                 </div>
                                                 {mailItemMenu.moveMenuOpen && (
@@ -3584,6 +3760,14 @@ function MailSection({
                                                             + New Folder
                                                         </button>
                                                     </div>
+                                                )}
+                                                {mailItemMenu.labelMenuOpen && (
+                                                    renderLabelChecklist(
+                                                        mailItemMenuMail ? [mailItemMenuMail] : [],
+                                                        handleMailItemMenuLabelToggle,
+                                                        handleMailItemMenuCreateLabel,
+                                                        { className: 'db-mail-item-menu', style: mailItemLabelMenuStyle || undefined },
+                                                    )
                                                 )}
                                             </div>
                                         )}
