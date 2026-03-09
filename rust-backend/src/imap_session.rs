@@ -4,12 +4,15 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use chrono::DateTime;
+use chrono::{DateTime, Datelike, Duration, NaiveDate};
 use imap;
 use native_tls::TlsConnector;
 use tracing::{error, info, warn};
 
-use crate::mail_models::{AttachmentInfo, MailContent, MailPreview};
+use crate::mail_models::{
+    AdvancedSearchRequest, AttachmentInfo, MailContent, MailPreview, MailSearchPreview,
+    ReadStatus, SearchScope, merge_mailbox_label_into_preview,
+};
 use mailparse::{
     addrparse_header, parse_mail, DispositionType, MailAddr, MailHeaderMap, ParsedMail,
 };
@@ -252,6 +255,21 @@ impl ImapSession {
         }
     }
 
+    fn uid_search_query(&mut self, query: &str) -> Result<Vec<u32>, String> {
+        let result = match self {
+            ImapSession::Plain(s) => s.uid_search(query),
+            ImapSession::Tls(s) => s.uid_search(query),
+        };
+        match result {
+            Ok(set) => {
+                let mut v: Vec<u32> = set.into_iter().collect();
+                v.sort_unstable();
+                Ok(v)
+            }
+            Err(e) => Err(format!("{e}")),
+        }
+    }
+
     /// Fetch headers for an explicit comma-separated UID set (e.g. "101,102,103").
     fn fetch_headers_by_uid_set(&mut self, uid_set: &str, account_id: i64, mailbox: &str) -> Vec<MailPreview> {
         let data = match self {
@@ -474,6 +492,209 @@ pub fn fetch_mail_list(
             .then_with(|| b.id.cmp(&a.id))
     });
     (total, previews)
+}
+
+fn quote_imap_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\r' | '\n' => out.push(' '),
+            _ => out.push(ch),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn parse_ymd(value: &str) -> Option<NaiveDate> {
+    NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d").ok()
+}
+
+fn format_imap_date(date: NaiveDate) -> String {
+    let month = match date.month() {
+        1 => "Jan",
+        2 => "Feb",
+        3 => "Mar",
+        4 => "Apr",
+        5 => "May",
+        6 => "Jun",
+        7 => "Jul",
+        8 => "Aug",
+        9 => "Sep",
+        10 => "Oct",
+        11 => "Nov",
+        12 => "Dec",
+        _ => "Jan",
+    };
+    format!("{:02}-{month}-{}", date.day(), date.year())
+}
+
+pub fn build_imap_advanced_query(req: &AdvancedSearchRequest) -> String {
+    let mut parts: Vec<String> = Vec::new();
+
+    let from = req.from.as_deref().map(str::trim).filter(|v| !v.is_empty());
+    let to = req.to.as_deref().map(str::trim).filter(|v| !v.is_empty());
+    let cc = req.cc.as_deref().map(str::trim).filter(|v| !v.is_empty());
+    let subject = req.subject.as_deref().map(str::trim).filter(|v| !v.is_empty());
+    let keywords = req.keywords.as_deref().map(str::trim).filter(|v| !v.is_empty());
+
+    if let Some(value) = from {
+        parts.push(format!("FROM {}", quote_imap_string(value)));
+    }
+    if let Some(value) = to {
+        parts.push(format!("TO {}", quote_imap_string(value)));
+    }
+    if let Some(value) = cc {
+        parts.push(format!("CC {}", quote_imap_string(value)));
+    }
+    if let Some(value) = subject {
+        parts.push(format!("SUBJECT {}", quote_imap_string(value)));
+    }
+    if let Some(value) = keywords {
+        parts.push(format!("BODY {}", quote_imap_string(value)));
+    }
+
+    if let Some(start) = req
+        .date_start
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .and_then(parse_ymd)
+    {
+        parts.push(format!("SENTSINCE {}", format_imap_date(start)));
+    }
+
+    if let Some(end) = req
+        .date_end
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .and_then(parse_ymd)
+        .and_then(|d| d.checked_add_signed(Duration::days(1)))
+    {
+        parts.push(format!("SENTBEFORE {}", format_imap_date(end)));
+    }
+
+    match req.read_status.unwrap_or(ReadStatus::All) {
+        ReadStatus::Read => parts.push("SEEN".to_string()),
+        ReadStatus::Unread => parts.push("UNSEEN".to_string()),
+        ReadStatus::All => {}
+    }
+
+    if parts.is_empty() {
+        "ALL".to_string()
+    } else {
+        parts.join(" ")
+    }
+}
+
+fn matches_attachment_hint(content_type: &str) -> bool {
+    let value = content_type.trim().to_ascii_lowercase();
+    value.starts_with("multipart/mixed")
+        || value.starts_with("multipart/related")
+        || value.starts_with("multipart/report")
+}
+
+pub fn advanced_search(
+    state: &Arc<ImapState>,
+    account_id: i64,
+    req: &AdvancedSearchRequest,
+) -> Result<Vec<MailSearchPreview>, String> {
+    let mut sessions = state.sessions.lock().unwrap();
+    let session = sessions
+        .get_mut(&account_id)
+        .ok_or_else(|| format!("No IMAP session for account {account_id}"))?;
+
+    let query = build_imap_advanced_query(req);
+
+    let mut mailboxes: Vec<String> = match req.scope {
+        SearchScope::All => session.list_mailboxes(),
+        SearchScope::Mailboxes => req.mailboxes.clone(),
+    };
+
+    // Normalize + drop empty + de-dupe while keeping order.
+    let mut seen = std::collections::HashSet::new();
+    mailboxes.retain(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return false;
+        }
+        let lower = trimmed.to_ascii_lowercase();
+        if matches!(lower.as_str(), "folders" | "labels" | "etiketler" | "[labels]") {
+            return false;
+        }
+        if seen.contains(&lower) {
+            return false;
+        }
+        seen.insert(lower);
+        true
+    });
+
+    let want_attachments = req.has_attachments;
+    let mut results: Vec<MailSearchPreview> = Vec::new();
+    let chunk_size = 200usize;
+
+    for mailbox in mailboxes {
+        if session.select_mailbox(&mailbox).is_err() {
+            continue;
+        }
+
+        let uids = match session.uid_search_query(&query) {
+            Ok(v) => v,
+            Err(e) => {
+                warn!("advanced_search UID SEARCH error (mailbox={mailbox}): {e}");
+                continue;
+            }
+        };
+
+        if uids.is_empty() {
+            continue;
+        }
+
+        for chunk in uids.chunks(chunk_size) {
+            let uid_set = chunk
+                .iter()
+                .map(|u| u.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            let mut previews = session.fetch_headers_by_uid_set(&uid_set, account_id, &mailbox);
+
+            for preview in previews.iter_mut() {
+                merge_mailbox_label_into_preview(preview, &mailbox);
+            }
+
+            for preview in previews {
+                if want_attachments && !matches_attachment_hint(&preview.content_type) {
+                    continue;
+                }
+                results.push(MailSearchPreview {
+                    mailbox: mailbox.clone(),
+                    mail: preview,
+                });
+            }
+        }
+    }
+
+    fn date_ms(date_value: &str) -> i64 {
+        DateTime::parse_from_rfc2822(date_value)
+            .map(|dt| dt.timestamp_millis())
+            .unwrap_or(0)
+    }
+    fn uid_num(id: &str) -> u32 {
+        id.parse::<u32>().unwrap_or(0)
+    }
+
+    results.sort_by(|a, b| {
+        date_ms(&b.mail.date)
+            .cmp(&date_ms(&a.mail.date))
+            .then_with(|| uid_num(&b.mail.id).cmp(&uid_num(&a.mail.id)))
+            .then_with(|| b.mail.id.cmp(&a.mail.id))
+    });
+
+    Ok(results)
 }
 
 pub fn fetch_mail_raw_in_mailbox(
@@ -1121,7 +1342,8 @@ fn split_from(from: &str) -> (String, String) {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_labels;
+    use super::{build_imap_advanced_query, parse_labels};
+    use crate::mail_models::{AdvancedSearchRequest, ReadStatus};
 
     #[test]
     fn parse_labels_splits_and_dedupes_keywords() {
@@ -1139,5 +1361,39 @@ mod tests {
     fn parse_labels_returns_empty_without_keywords_or_category() {
         let labels = parse_labels("Subject: Hello\r\n");
         assert!(labels.is_empty());
+    }
+
+    #[test]
+    fn build_imap_advanced_query_defaults_to_all() {
+        let req = AdvancedSearchRequest::default();
+        assert_eq!(build_imap_advanced_query(&req), "ALL");
+    }
+
+    #[test]
+    fn build_imap_advanced_query_adds_unseen() {
+        let mut req = AdvancedSearchRequest::default();
+        req.read_status = Some(ReadStatus::Unread);
+        assert_eq!(build_imap_advanced_query(&req), "UNSEEN");
+    }
+
+    #[test]
+    fn build_imap_advanced_query_formats_date_range_inclusive_end() {
+        let mut req = AdvancedSearchRequest::default();
+        req.date_start = Some("2026-03-01".to_string());
+        req.date_end = Some("2026-03-09".to_string());
+        assert_eq!(
+            build_imap_advanced_query(&req),
+            "SENTSINCE 01-Mar-2026 SENTBEFORE 10-Mar-2026"
+        );
+    }
+
+    #[test]
+    fn build_imap_advanced_query_escapes_quotes_and_backslashes() {
+        let mut req = AdvancedSearchRequest::default();
+        req.subject = Some(r#"Hello "world" \\ test"#.to_string());
+        assert_eq!(
+            build_imap_advanced_query(&req),
+            r#"SUBJECT "Hello \"world\" \\\\ test""#
+        );
     }
 }

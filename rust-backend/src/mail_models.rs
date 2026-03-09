@@ -136,6 +136,73 @@ pub struct AttachmentInfo {
     pub is_inline: bool,
 }
 
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchScope {
+    All,
+    Mailboxes,
+}
+
+impl Default for SearchScope {
+    fn default() -> Self {
+        Self::All
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ReadStatus {
+    All,
+    Read,
+    Unread,
+}
+
+impl Default for ReadStatus {
+    fn default() -> Self {
+        Self::All
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct AdvancedSearchRequest {
+    #[serde(default)]
+    pub scope: SearchScope,
+    #[serde(default)]
+    pub mailboxes: Vec<String>,
+    #[serde(default)]
+    pub from: Option<String>,
+    #[serde(default)]
+    pub to: Option<String>,
+    #[serde(default)]
+    pub cc: Option<String>,
+    #[serde(default)]
+    pub subject: Option<String>,
+    #[serde(default)]
+    pub keywords: Option<String>,
+    #[serde(default)]
+    pub date_start: Option<String>,
+    #[serde(default)]
+    pub date_end: Option<String>,
+    #[serde(default)]
+    pub read_status: Option<ReadStatus>,
+    #[serde(default)]
+    pub has_attachments: bool,
+}
+
+#[derive(Serialize, Clone)]
+pub struct MailSearchPreview {
+    pub mailbox: String,
+    #[serde(flatten)]
+    pub mail: MailPreview,
+}
+
+#[derive(Serialize)]
+pub struct AdvancedSearchResponse {
+    pub total_count: usize,
+    pub mails: Vec<MailSearchPreview>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

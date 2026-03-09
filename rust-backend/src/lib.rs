@@ -80,6 +80,10 @@ pub async fn run(db_dir: Option<PathBuf>) -> anyhow::Result<()> {
             get(mail_routes::get_mail_list),
         )
         .route(
+            "/api/mail/:account_id/search-advanced",
+            post(mail_routes::search_advanced),
+        )
+        .route(
             "/api/mail/:account_id/content/:uid",
             get(mail_routes::get_mail_content),
         )
@@ -115,6 +119,10 @@ pub async fn run(db_dir: Option<PathBuf>) -> anyhow::Result<()> {
         .route(
             "/api/offline/:account_id/local-list",
             get(offline_routes::get_local_mail_list),
+        )
+        .route(
+            "/api/offline/:account_id/search-advanced",
+            post(offline_routes::search_advanced),
         )
         .route(
             "/api/offline/:account_id/local-content/:uid",

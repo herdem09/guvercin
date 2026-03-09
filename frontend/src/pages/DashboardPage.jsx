@@ -240,6 +240,72 @@ function toggleMailLabelState(mail, labelKey, shouldAdd) {
     }
 }
 
+function createDefaultAdvancedSearchDraft() {
+    return {
+        scope: 'all',
+        mailboxes: [],
+        from: '',
+        to: '',
+        cc: '',
+        subject: '',
+        keywords: '',
+        dateStart: '',
+        dateEnd: '',
+        readStatus: 'all',
+        hasAttachments: false,
+    }
+}
+
+function dedupeStringsCaseInsensitive(values) {
+    const next = []
+    const seen = new Set()
+    ;(values || []).forEach((value) => {
+        const trimmed = (value || '').toString().trim()
+        if (!trimmed) return
+        const key = trimmed.toLowerCase()
+        if (seen.has(key)) return
+        seen.add(key)
+        next.push(trimmed)
+    })
+    return next
+}
+
+function buildAdvancedSearchPayload(draft) {
+    const readStatus = ['all', 'read', 'unread'].includes(draft?.readStatus) ? draft.readStatus : 'all'
+    const mailboxes = dedupeStringsCaseInsensitive(draft?.mailboxes)
+    const scope = draft?.scope === 'mailboxes' && mailboxes.length > 0 ? 'mailboxes' : 'all'
+
+    const normalizeField = (value) => {
+        const trimmed = (value || '').toString().trim()
+        return trimmed ? trimmed : null
+    }
+
+    const payload = {
+        scope,
+        mailboxes: scope === 'mailboxes' ? mailboxes : [],
+        readStatus,
+        hasAttachments: !!draft?.hasAttachments,
+    }
+
+    const from = normalizeField(draft?.from)
+    const to = normalizeField(draft?.to)
+    const cc = normalizeField(draft?.cc)
+    const subject = normalizeField(draft?.subject)
+    const keywords = normalizeField(draft?.keywords)
+    const dateStart = normalizeField(draft?.dateStart)
+    const dateEnd = normalizeField(draft?.dateEnd)
+
+    if (from) payload.from = from
+    if (to) payload.to = to
+    if (cc) payload.cc = cc
+    if (subject) payload.subject = subject
+    if (keywords) payload.keywords = keywords
+    if (dateStart) payload.dateStart = dateStart
+    if (dateEnd) payload.dateEnd = dateEnd
+
+    return payload
+}
+
 function isValidImapLabelKeyword(value) {
     const trimmed = (value || '').trim()
     if (!trimmed) return false
@@ -756,6 +822,11 @@ const DashboardPage = () => {
     const [folders, setFolders] = useState([])
     const [labels, setLabels] = useState([])
     const [selectedFolder, setSelectedFolder] = useState('INBOX')
+    const [searchText, setSearchText] = useState('')
+    const [listMode, setListMode] = useState('mailbox')
+    const [activeSearch, setActiveSearch] = useState(null)
+    const [isAdvancedSearchOpen, setIsAdvancedSearchOpen] = useState(false)
+    const [advancedSearchDraft, setAdvancedSearchDraft] = useState(() => createDefaultAdvancedSearchDraft())
     const [mails, setMails] = useState([])
     const [cacheMailTotal, setCacheMailTotal] = useState(null)
     const [remoteMailTotal, setRemoteMailTotal] = useState(null)
@@ -789,10 +860,15 @@ const DashboardPage = () => {
     const pendingNoticeActionsRef = useRef(new Map())
     const prevCanUseRemoteMailRef = useRef(false)
     const lastConnectAttemptAtRef = useRef(0)
+    const lastMailboxBeforeSearchRef = useRef(null)
     const canUseRemoteMail = backendReachable && networkOnline && (remoteMailAvailable || connected)
     const totalCount = Array.isArray(mails) ? mails.length : 0
     const perPageNum = Math.max(1, Number.parseInt(perPage, 10) || 50)
     const maxPage = Math.max(1, Math.ceil(totalCount / perPageNum))
+    const searchMailboxOptions = useMemo(
+        () => dedupeStringsCaseInsensitive(folders).filter((mailbox) => !isMailboxSectionRoot(mailbox)),
+        [folders],
+    )
 
     useEffect(() => {
         const storedId = localStorage.getItem('current_account_id')
@@ -926,6 +1002,7 @@ const DashboardPage = () => {
     }, [accountId, backendReachable, connecting, ensureImapConnected, loadFolders, networkOnline, refreshStatus])
 
     const loadMailsFromCache = useCallback(async (folder, page, limit) => {
+        if (listMode === 'search') return false
         if (!accountId || !backendReachable) return
         try {
             const pageSize = 250
@@ -942,14 +1019,15 @@ const DashboardPage = () => {
 
                 const data = await res.json()
                 const chunk = Array.isArray(data.mails) ? data.mails : []
+                const chunkWithMailbox = chunk.map((mail) => ({ ...mail, mailbox: folder }))
                 if (typeof data.total_count === 'number') {
                     totalCount = data.total_count
                 }
-                allMails.push(...chunk)
+                allMails.push(...chunkWithMailbox)
 
-                if (chunk.length === 0) break
+                if (chunkWithMailbox.length === 0) break
                 if (typeof totalCount === 'number' && allMails.length >= totalCount) break
-                if (chunk.length < pageSize) break
+                if (chunkWithMailbox.length < pageSize) break
                 nextPage += 1
             }
 
@@ -960,9 +1038,10 @@ const DashboardPage = () => {
             setMails([])
         }
         return false
-    }, [accountId, backendReachable])
+    }, [accountId, backendReachable, listMode])
 
     const syncMailsFromRemote = useCallback(async (folder, page, limit) => {
+        if (listMode === 'search') return
         if (!accountId || !canUseRemoteMail) return
         if (isSyncingRef.current) return // prevent concurrent syncs
         isSyncingRef.current = true
@@ -984,14 +1063,15 @@ const DashboardPage = () => {
 
                 const data = await res.json()
                 const chunk = Array.isArray(data.mails) ? data.mails : []
+                const chunkWithMailbox = chunk.map((mail) => ({ ...mail, mailbox: folder }))
                 if (typeof data.total_count === 'number') {
                     totalCount = data.total_count
                 }
-                allMails.push(...chunk)
+                allMails.push(...chunkWithMailbox)
 
-                if (chunk.length === 0) break
+                if (chunkWithMailbox.length === 0) break
                 if (typeof totalCount === 'number' && allMails.length >= totalCount) break
-                if (chunk.length < pageSize) break
+                if (chunkWithMailbox.length < pageSize) break
                 nextPage += 1
             }
 
@@ -1008,10 +1088,11 @@ const DashboardPage = () => {
             setIsSyncing(false)
             syncAbortRef.current = null
         }
-    }, [accountId, canUseRemoteMail])
+    }, [accountId, canUseRemoteMail, listMode])
 
     const loadMails = useCallback(
         async (folder, page, limit, forceRemote = false) => {
+            if (listMode === 'search') return
             if (!accountId || !backendReachable) return
             setLoadingMails(true)
             try {
@@ -1028,7 +1109,8 @@ const DashboardPage = () => {
                     )
                     if (res.ok) {
                         const data = await res.json()
-                        setMails(data.mails || [])
+                        const mailList = Array.isArray(data?.mails) ? data.mails : []
+                        setMails(mailList.map((mail) => ({ ...mail, mailbox: folder })))
                         setRemoteMailTotal(typeof data.total_count === 'number' ? data.total_count : null)
                     } else {
                         const loaded = await loadMailsFromCache(folder, page, limit)
@@ -1045,8 +1127,122 @@ const DashboardPage = () => {
                 setLoadingMails(false)
             }
         },
-        [accountId, backendReachable, canUseRemoteMail, loadMailsFromCache],
+        [accountId, backendReachable, canUseRemoteMail, listMode, loadMailsFromCache],
     )
+
+    const exitSearchMode = useCallback(() => {
+        setListMode('mailbox')
+        setActiveSearch(null)
+        setSearchText('')
+        setMails([])
+        setSelectedMail(null)
+        setMailContent(null)
+        setCurrentPage(1)
+        lastMailboxBeforeSearchRef.current = null
+    }, [])
+
+    const clearAdvancedSearch = useCallback(() => {
+        const backFolder = lastMailboxBeforeSearchRef.current || selectedFolder || 'INBOX'
+        exitSearchMode()
+        setSelectedFolder(backFolder)
+    }, [exitSearchMode, selectedFolder])
+
+    const handleSelectFolder = useCallback((folder) => {
+        const nextFolder = (folder || '').toString().trim()
+        if (!nextFolder) return
+        if (listMode === 'search') {
+            exitSearchMode()
+        }
+        setSelectedFolder(nextFolder)
+    }, [exitSearchMode, listMode])
+
+    const executeAdvancedSearch = useCallback(async (options = {}) => {
+        const { draftOverride } = options
+        if (!accountId || !backendReachable) return
+
+        const criteria = { ...advancedSearchDraft, ...(draftOverride || {}) }
+        const payload = buildAdvancedSearchPayload(criteria)
+
+        if (listMode !== 'search') {
+            lastMailboxBeforeSearchRef.current = selectedFolder || 'INBOX'
+        }
+
+        setActiveSection('mail')
+        setCurrentPage(1)
+        setListMode('search')
+        setSelectedMail(null)
+        setMailContent(null)
+        setMails([])
+        setLoadingMails(true)
+
+        const startedAt = Date.now()
+        let source = 'offline'
+        let endpoint = `/api/offline/${accountId}/search-advanced`
+
+        try {
+            if (networkOnline) {
+                const ok = canUseRemoteMail || (await ensureImapConnected({ force: true }))
+                if (ok) {
+                    source = 'remote'
+                    endpoint = `/api/mail/${accountId}/search-advanced`
+                }
+            }
+
+            setActiveSearch({ criteria, totalCount: null, source, startedAt })
+
+            const res = await fetch(apiUrl(endpoint), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                cache: 'no-store',
+            })
+
+            if (!res.ok) {
+                const errBody = await res.json().catch(() => null)
+                const msg = errBody?.error || errBody?.message || 'Search failed.'
+                console.error('Advanced search error:', msg)
+                window.alert(msg)
+                setActiveSearch({ criteria, totalCount: 0, source, startedAt })
+                setMails([])
+                return
+            }
+
+            const data = await res.json().catch(() => ({}))
+            const items = Array.isArray(data?.mails) ? data.mails : []
+            const normalized = items
+                .map((mail) => (
+                    mail && typeof mail === 'object'
+                        ? { ...mail, mailbox: mail.mailbox || selectedFolder || 'INBOX' }
+                        : null
+                ))
+                .filter(Boolean)
+
+            setMails(normalized)
+            setActiveSearch({
+                criteria,
+                totalCount: typeof data?.total_count === 'number' ? data.total_count : normalized.length,
+                source,
+                startedAt,
+            })
+            setIsAdvancedSearchOpen(false)
+        } catch (error) {
+            console.error('Advanced search failed:', error)
+            window.alert('Search failed.')
+            setActiveSearch({ criteria, totalCount: 0, source, startedAt })
+            setMails([])
+        } finally {
+            setLoadingMails(false)
+        }
+    }, [
+        accountId,
+        advancedSearchDraft,
+        backendReachable,
+        canUseRemoteMail,
+        ensureImapConnected,
+        listMode,
+        networkOnline,
+        selectedFolder,
+    ])
 
     useEffect(() => {
         const prev = prevCanUseRemoteMailRef.current
@@ -1067,14 +1263,14 @@ const DashboardPage = () => {
     }, [folders, selectedFolder])
 
     useEffect(() => {
-        if (activeSection !== 'mail' || !backendReachable) return
+        if (activeSection !== 'mail' || !backendReachable || listMode === 'search') return
         setCacheMailTotal(null)
         setRemoteMailTotal(null)
         setCurrentPage(1)
-    }, [activeSection, backendReachable, selectedFolder])
+    }, [activeSection, backendReachable, listMode, selectedFolder])
 
     useEffect(() => {
-        if (activeSection !== 'mail' || !backendReachable) return
+        if (activeSection !== 'mail' || !backendReachable || listMode === 'search') return
 
         let cancelled = false
         const folder = selectedFolder
@@ -1087,7 +1283,7 @@ const DashboardPage = () => {
         return () => {
             cancelled = true
         }
-    }, [activeSection, backendReachable, canUseRemoteMail, selectedFolder, loadMailsFromCache, syncMailsFromRemote])
+    }, [activeSection, backendReachable, canUseRemoteMail, listMode, selectedFolder, loadMailsFromCache, syncMailsFromRemote])
 
     const prefetchInlineAssets = useCallback(
         async (uid, mailbox) => {
@@ -1115,7 +1311,7 @@ const DashboardPage = () => {
         setMailContent(null)
         setLoadingContent(true)
         try {
-            const mailbox = selectedFolder || 'INBOX'
+            const mailbox = mail?.mailbox || selectedFolder || 'INBOX'
             let endpoint
 
             // Offline endpoint'i dene (cache)
@@ -1228,6 +1424,9 @@ const DashboardPage = () => {
         if (ids.length === 0) return
         const sourceFolder = selectedFolder || 'INBOX'
         const affectedMails = mails.filter((mail) => ids.includes(mail.id))
+        const mailboxById = new Map(
+            affectedMails.map((mail) => [mail.id, mail.mailbox || sourceFolder]),
+        )
         const selectionSnapshot = selectedMail && ids.includes(selectedMail.id)
             ? { mail: selectedMail, content: mailContent }
             : null
@@ -1248,7 +1447,9 @@ const DashboardPage = () => {
                 })
                 restoreMailSelection(selectionSnapshot)
             },
-            commit: () => Promise.all(ids.map((id) => queueAction('delete', id, {}, sourceFolder))),
+            commit: () => Promise.all(ids.map((id) => (
+                queueAction('delete', id, {}, mailboxById.get(id) || sourceFolder)
+            ))),
         })
     }
 
@@ -1258,6 +1459,9 @@ const DashboardPage = () => {
         const sourceFolder = selectedFolder || 'INBOX'
         const destinationLabel = folderInfo(destination).label
         const affectedMails = mails.filter((mail) => ids.includes(mail.id))
+        const mailboxById = new Map(
+            affectedMails.map((mail) => [mail.id, mail.mailbox || sourceFolder]),
+        )
         const selectionSnapshot = selectedMail && ids.includes(selectedMail.id)
             ? { mail: selectedMail, content: mailContent }
             : null
@@ -1278,7 +1482,9 @@ const DashboardPage = () => {
                 })
                 restoreMailSelection(selectionSnapshot)
             },
-            commit: () => Promise.all(ids.map((id) => queueAction('move', id, { destination }, sourceFolder))),
+            commit: () => Promise.all(ids.map((id) => (
+                queueAction('move', id, { destination }, mailboxById.get(id) || sourceFolder)
+            ))),
         })
     }
 
@@ -1290,7 +1496,12 @@ const DashboardPage = () => {
         )))
         setSelectedMail((prev) => (prev && ids.includes(prev.id) ? { ...prev, seen } : prev))
         const sourceFolder = selectedFolder || 'INBOX'
-        await Promise.all(ids.map((id) => queueAction(seen ? 'mark_read' : 'mark_unread', id, {}, sourceFolder)))
+        const mailboxById = new Map(
+            mails.filter((mail) => ids.includes(mail.id)).map((mail) => [mail.id, mail.mailbox || sourceFolder]),
+        )
+        await Promise.all(ids.map((id) => (
+            queueAction(seen ? 'mark_read' : 'mark_unread', id, {}, mailboxById.get(id) || sourceFolder)
+        )))
     }
 
     const createMailbox = async (name) => {
@@ -1339,11 +1550,12 @@ const DashboardPage = () => {
             const { invoke } = await import('@tauri-apps/api/core')
             nextMailWindowId.current += 1
             const mailWindowLabel = `mail-${nextMailWindowId.current}`
+            const mailbox = selectedMail?.mailbox || selectedFolder || 'INBOX'
             const mailData = {
                 mail: selectedMail,
                 mailContent: mailContent,
                 accountId: accountId,
-                mailbox: selectedFolder || 'INBOX',
+                mailbox: mailbox,
                 preferOffline: !canUseRemoteMail,
             }
 
@@ -1362,7 +1574,7 @@ const DashboardPage = () => {
         e.stopPropagation()
         try {
             // First we need to fetch the content because it's not loaded yet
-            const mailbox = selectedFolder || 'INBOX'
+            const mailbox = mail?.mailbox || selectedFolder || 'INBOX'
             let content = null
             let endpoint = `/api/offline/${accountId}/local-content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
             let res = await fetch(apiUrl(endpoint), { cache: 'no-store' })
@@ -1468,8 +1680,45 @@ const DashboardPage = () => {
                     <span className="db-logo-text">Guvercin</span>
                 </button>
                 <div className="db-search">
-                    <input type="text" placeholder="Search..." />
-                    <button className="db-search-btn">🔍</button>
+                    <input
+                        type="text"
+                        placeholder="Search..."
+                        value={searchText}
+                        onChange={(e) => setSearchText(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key !== 'Enter') return
+                            const trimmed = searchText.trim()
+                            if (!trimmed) {
+                                setIsAdvancedSearchOpen(true)
+                                return
+                            }
+                            executeAdvancedSearch({ draftOverride: { keywords: trimmed } })
+                        }}
+                    />
+                    <button
+                        type="button"
+                        className="db-search-filters-btn"
+                        onClick={() => setIsAdvancedSearchOpen(true)}
+                        title={t('Advanced search')}
+                    >
+                        ⚙️
+                    </button>
+                    <button
+                        type="button"
+                        className="db-search-btn"
+                        onClick={() => {
+                            const trimmed = searchText.trim()
+                            if (!trimmed) {
+                                setIsAdvancedSearchOpen(true)
+                                return
+                            }
+                            executeAdvancedSearch({ draftOverride: { keywords: trimmed } })
+                        }}
+                        aria-label={t('Search')}
+                        title={t('Search')}
+                    >
+                        🔍
+                    </button>
                 </div>
                 <div className="db-navbar-right">
                     <div className="db-clock">
@@ -1573,6 +1822,10 @@ const DashboardPage = () => {
                                 accountEmail={accountEmailLabel}
                                 backendReachable={backendReachable}
                                 networkOnline={networkOnline}
+                                listMode={listMode}
+                                activeSearch={activeSearch}
+                                onClearSearch={clearAdvancedSearch}
+                                onSelectFolder={handleSelectFolder}
                                 ensureImapConnected={ensureImapConnected}
                                 folders={folders}
                                 labels={labels}
@@ -1668,6 +1921,190 @@ const DashboardPage = () => {
                     })}
                 </div>
             )}
+            {isAdvancedSearchOpen && (
+                <div className="db-advanced-search-modal" onMouseDown={() => setIsAdvancedSearchOpen(false)}>
+                    <div
+                        className="db-advanced-search-panel"
+                        onMouseDown={(e) => e.stopPropagation()}
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label={t('Advanced search')}
+                    >
+                        <div className="db-advanced-search-panel__header">
+                            <div className="db-advanced-search-panel__title">{t('Advanced search')}</div>
+                            <button
+                                type="button"
+                                className="db-advanced-search-panel__close"
+                                onClick={() => setIsAdvancedSearchOpen(false)}
+                                aria-label="Close"
+                                title="Close"
+                            >
+                                ✕
+                            </button>
+                        </div>
+
+                        <div className="db-advanced-search-form">
+                            <div className="db-advanced-search-grid">
+                                <div className="db-advanced-search-label">{t('Search in')}</div>
+                                <div className="db-advanced-search-mailboxes">
+                                    <label className="db-advanced-search-mailbox-item">
+                                        <input
+                                            type="checkbox"
+                                            checked={advancedSearchDraft.mailboxes.length === 0}
+                                            onChange={(e) => {
+                                                const checked = e.target.checked
+                                                setAdvancedSearchDraft((prev) => (
+                                                    checked
+                                                        ? { ...prev, scope: 'all', mailboxes: [] }
+                                                        : {
+                                                            ...prev,
+                                                            scope: 'mailboxes',
+                                                            mailboxes: dedupeStringsCaseInsensitive([selectedFolder || 'INBOX']),
+                                                        }
+                                                ))
+                                            }}
+                                        />
+                                        <span>{t('All folders')}</span>
+                                    </label>
+                                    <div className="db-advanced-search-mailbox-list">
+                                        {searchMailboxOptions.length === 0 ? (
+                                            <div className="db-advanced-search-mailbox-empty">{t('No results found.')}</div>
+                                        ) : (
+                                            searchMailboxOptions.map((mailbox) => {
+                                                const checked = advancedSearchDraft.mailboxes
+                                                    .some((entry) => entry.toLowerCase() === mailbox.toLowerCase())
+                                                const label = folderInfo(mailbox).label
+                                                return (
+                                                    <label key={mailbox} className="db-advanced-search-mailbox-item">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={advancedSearchDraft.scope === 'mailboxes' && checked}
+                                                            onChange={(e) => {
+                                                                const nextChecked = e.target.checked
+                                                                setAdvancedSearchDraft((prev) => {
+                                                                    const current = dedupeStringsCaseInsensitive(prev.mailboxes)
+                                                                    const exists = current.some((entry) => entry.toLowerCase() === mailbox.toLowerCase())
+                                                                    const next = nextChecked
+                                                                        ? (exists ? current : [...current, mailbox])
+                                                                        : current.filter((entry) => entry.toLowerCase() !== mailbox.toLowerCase())
+                                                                    const nextMailboxes = dedupeStringsCaseInsensitive(next)
+                                                                    const nextScope = nextMailboxes.length > 0 ? 'mailboxes' : 'all'
+                                                                    return { ...prev, scope: nextScope, mailboxes: nextMailboxes }
+                                                                })
+                                                            }}
+                                                        />
+                                                        <span title={mailbox}>{label}</span>
+                                                    </label>
+                                                )
+                                            })
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="db-advanced-search-label">{t('From')}</div>
+                                <input
+                                    className="db-advanced-search-input"
+                                    type="text"
+                                    value={advancedSearchDraft.from}
+                                    onChange={(e) => setAdvancedSearchDraft((prev) => ({ ...prev, from: e.target.value }))}
+                                />
+
+                                <div className="db-advanced-search-label">{t('To')}</div>
+                                <input
+                                    className="db-advanced-search-input"
+                                    type="text"
+                                    value={advancedSearchDraft.to}
+                                    onChange={(e) => setAdvancedSearchDraft((prev) => ({ ...prev, to: e.target.value }))}
+                                />
+
+                                <div className="db-advanced-search-label">{t('Cc')}</div>
+                                <input
+                                    className="db-advanced-search-input"
+                                    type="text"
+                                    value={advancedSearchDraft.cc}
+                                    onChange={(e) => setAdvancedSearchDraft((prev) => ({ ...prev, cc: e.target.value }))}
+                                />
+
+                                <div className="db-advanced-search-label">{t('Subject')}</div>
+                                <input
+                                    className="db-advanced-search-input"
+                                    type="text"
+                                    value={advancedSearchDraft.subject}
+                                    onChange={(e) => setAdvancedSearchDraft((prev) => ({ ...prev, subject: e.target.value }))}
+                                />
+
+                                <div className="db-advanced-search-label">{t('Keywords')}</div>
+                                <input
+                                    className="db-advanced-search-input"
+                                    type="text"
+                                    value={advancedSearchDraft.keywords}
+                                    onChange={(e) => setAdvancedSearchDraft((prev) => ({ ...prev, keywords: e.target.value }))}
+                                />
+
+                                <div className="db-advanced-search-label">{t('Date')}</div>
+                                <div className="db-advanced-search-date-row">
+                                    <div className="db-advanced-search-date-field">
+                                        <span className="db-advanced-search-date-caption">{t('Start')}</span>
+                                        <input
+                                            className="db-advanced-search-input"
+                                            type="date"
+                                            value={advancedSearchDraft.dateStart}
+                                            onChange={(e) => setAdvancedSearchDraft((prev) => ({ ...prev, dateStart: e.target.value }))}
+                                        />
+                                    </div>
+                                    <div className="db-advanced-search-date-field">
+                                        <span className="db-advanced-search-date-caption">{t('End')}</span>
+                                        <input
+                                            className="db-advanced-search-input"
+                                            type="date"
+                                            value={advancedSearchDraft.dateEnd}
+                                            onChange={(e) => setAdvancedSearchDraft((prev) => ({ ...prev, dateEnd: e.target.value }))}
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="db-advanced-search-label">{t('Read status')}</div>
+                                <select
+                                    className="db-advanced-search-select"
+                                    value={advancedSearchDraft.readStatus}
+                                    onChange={(e) => setAdvancedSearchDraft((prev) => ({ ...prev, readStatus: e.target.value }))}
+                                >
+                                    <option value="all">{t('All')}</option>
+                                    <option value="read">{t('Read')}</option>
+                                    <option value="unread">{t('Unread')}</option>
+                                </select>
+
+                                <div className="db-advanced-search-label">{t('Has attachments')}</div>
+                                <label className="db-advanced-search-checkbox">
+                                    <input
+                                        type="checkbox"
+                                        checked={advancedSearchDraft.hasAttachments}
+                                        onChange={(e) => setAdvancedSearchDraft((prev) => ({ ...prev, hasAttachments: e.target.checked }))}
+                                    />
+                                    <span>{t('Has attachments')}</span>
+                                </label>
+                            </div>
+
+                            <div className="db-advanced-search-actions">
+                                <button
+                                    type="button"
+                                    className="db-advanced-search-btn"
+                                    onClick={() => executeAdvancedSearch()}
+                                >
+                                    {t('Search')}
+                                </button>
+                                <button
+                                    type="button"
+                                    className="db-advanced-search-btn db-advanced-search-btn--secondary"
+                                    onClick={() => setAdvancedSearchDraft(createDefaultAdvancedSearchDraft())}
+                                >
+                                    {t('Clear filters')}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }
@@ -1677,6 +2114,10 @@ function MailSection({
     accountEmail,
     backendReachable,
     networkOnline,
+    listMode,
+    activeSearch,
+    onClearSearch,
+    onSelectFolder,
     ensureImapConnected,
     folders, labels, selectedFolder, setSelectedFolder, mails, setMails,
     selectedMail, setSelectedMail, mailContent, setMailContent, loadingMails, loadingContent,
@@ -1861,7 +2302,7 @@ function MailSection({
         if (selectedMail?.id === mail.id && mailContent) return mailContent
 
         try {
-            const mailbox = selectedFolder || 'INBOX'
+            const mailbox = mail?.mailbox || selectedFolder || 'INBOX'
             let endpoint = `/api/offline/${accountId}/local-content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
             let res = await fetch(apiUrl(endpoint), { cache: 'no-store' })
             if (!res.ok && canUseRemoteMail) {
@@ -1881,7 +2322,7 @@ function MailSection({
     const fetchMailRawBytes = useCallback(async (mail) => {
         if (!mail || !accountId) return null
 
-        const mailbox = selectedFolder || 'INBOX'
+        const mailbox = mail?.mailbox || selectedFolder || 'INBOX'
         const candidates = canUseRemoteMail
             ? [
                 `/api/mail/${accountId}/raw/${encodeURIComponent(mail.id)}?mailbox=${encodeURIComponent(mailbox)}`,
@@ -2126,7 +2567,19 @@ function MailSection({
 
         try {
             const sourceFolder = selectedFolder || 'INBOX'
-            await Promise.all(ids.map((id) => queueAction(shouldAdd ? 'label_add' : 'label_remove', id, { label: trimmedLabel }, sourceFolder)))
+            const mailboxById = new Map(
+                mails
+                    .filter((mail) => idSet.has(mail.id))
+                    .map((mail) => [mail.id, mail.mailbox || sourceFolder]),
+            )
+            await Promise.all(ids.map((id) => (
+                queueAction(
+                    shouldAdd ? 'label_add' : 'label_remove',
+                    id,
+                    { label: trimmedLabel },
+                    mailboxById.get(id) || sourceFolder,
+                )
+            )))
             return true
         } catch (error) {
             setMails(previousMails)
@@ -2339,7 +2792,7 @@ function MailSection({
         if (!content) {
             setLoadingTab(true)
             try {
-                const mailbox = selectedFolder || 'INBOX'
+                const mailbox = mail?.mailbox || selectedFolder || 'INBOX'
                 let endpoint = `/api/offline/${accountId}/local-content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
                 let res = await fetch(apiUrl(endpoint), { cache: 'no-store' })
                 if (!res.ok && canUseRemoteMail) {
@@ -2361,7 +2814,7 @@ function MailSection({
         if (mail.seen !== true) {
             setMailsSeenState([mail.id], true)
         }
-        setTabs(prev => [...prev, { id: tabId, mail, mailbox: selectedFolder || 'INBOX' }])
+        setTabs(prev => [...prev, { id: tabId, mail, mailbox: mail?.mailbox || selectedFolder || 'INBOX' }])
         setTabContents(prev => ({ ...prev, [tabId]: content }))
         setActiveTabId(tabId)
 
@@ -2701,14 +3154,17 @@ function MailSection({
 
     const renderFolderItem = (node, depth = 0) => {
         const info = folderInfo(node.fullPath)
-        const isSelected = selectedFolder === node.fullPath
+        const isSelected = listMode !== 'search' && selectedFolder === node.fullPath
         const isExpanded = expandedFolders.includes(node.fullPath)
         const hasChildren = node.children.length > 0
 
         return (
             <div key={node.fullPath} className="db-folder-node">
                 <li className={`db-folder-item ${isSelected ? 'selected' : ''}`} style={{ paddingLeft: `${depth * 12}px` }}>
-                    <div className="db-folder-item-content" onClick={() => setSelectedFolder(node.fullPath)}>
+                    <div
+                        className="db-folder-item-content"
+                        onClick={() => (onSelectFolder ? onSelectFolder(node.fullPath) : setSelectedFolder(node.fullPath))}
+                    >
                         {hasChildren ? (
                             <span className={`db-folder-chevron ${isExpanded ? 'expanded' : ''}`} onClick={(e) => toggleExpand(e, node.fullPath)}>
                                 ❯
@@ -3351,6 +3807,15 @@ function MailSection({
                                 {hasFolderAccess ? (
                                     <div className="db-folder-scroll-area">
                                         <ul className="db-folder-list">
+                                            {listMode === 'search' && (
+                                                <li className="db-folder-item selected">
+                                                    <div className="db-folder-item-content">
+                                                        <span className="db-folder-chevron-placeholder" />
+                                                        <span className="db-folder-icon">🔎</span>
+                                                        <span className="db-folder-text">{t('Search results')}</span>
+                                                    </div>
+                                                </li>
+                                            )}
                                             {folderTree.length > 0 && renderFolderSection(t('Folders'), folderTree)}
                                             {labelTree.length > 0 && renderFolderSection(t('Labels'), labelTree, folderTree.length > 0)}
                                         </ul>
@@ -3674,6 +4139,22 @@ function MailSection({
                                         </>
                                     )}
                                 </div>
+                                {listMode === 'search' && (
+                                    <div className="db-search-results-banner">
+                                        <div className="db-search-results-banner__text">
+                                            {t('Search results found', {
+                                                count: typeof activeSearch?.totalCount === 'number' ? activeSearch.totalCount : mails.length,
+                                            })}
+                                        </div>
+                                        <button
+                                            type="button"
+                                            className="db-search-results-banner__clear"
+                                            onClick={onClearSearch}
+                                        >
+                                            {t('Clear search')}
+                                        </button>
+                                    </div>
+                                )}
                                 {!hasMailSource ? (
                                     <div className="db-empty-state">
                                         <div className="db-empty-icon">📭</div>
@@ -3689,8 +4170,10 @@ function MailSection({
                                     <div className="db-loading"><div className="db-spinner" />Loading...</div>
                                 ) : mails.length === 0 ? (
                                     <div className="db-empty-state">
-                                        <div className="db-empty-icon">📭</div>
-                                        <div className="db-empty-text">This folder is empty</div>
+                                        <div className="db-empty-icon">{listMode === 'search' ? '🔎' : '📭'}</div>
+                                        <div className="db-empty-text">
+                                            {listMode === 'search' ? t('No results found.') : 'This folder is empty'}
+                                        </div>
                                     </div>
                                 ) : visibleMails.length === 0 ? (
                                     <div className="db-empty-state">
@@ -3963,7 +4446,7 @@ function MailSection({
                                                                 </div>
                                                                 <a
                                                                     className="db-attachments__link"
-                                                                    href={attachmentUrl(accountId, mailContent.id, at.id, selectedFolder || 'INBOX', canUseRemoteMail)}
+                                                                    href={attachmentUrl(accountId, mailContent.id, at.id, selectedMail?.mailbox || selectedFolder || 'INBOX', canUseRemoteMail)}
                                                                     download={at.filename}
                                                                 >
                                                                     Download

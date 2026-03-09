@@ -15,7 +15,10 @@ use std::sync::Arc;
 
 use crate::{
     imap_session::{self, ImapState},
-    mail_models::{ConnectImapBody, MailListResponse, MailboxListResponse, merge_mailbox_label_into_preview},
+    mail_models::{
+        AdvancedSearchRequest, AdvancedSearchResponse, ConnectImapBody, MailListResponse,
+        MailboxListResponse, merge_mailbox_label_into_preview,
+    },
 };
 
 // Shared state includes both DB state and IMAP sessions
@@ -250,6 +253,44 @@ pub async fn get_mail_list(
         total_count: total,
         mails,
     })
+}
+
+// ─────────────────────────────────────────────────────────────────
+// POST /mail/:account_id/search-advanced
+// ─────────────────────────────────────────────────────────────────
+pub async fn search_advanced(
+    State(state): State<Arc<MailAppState>>,
+    Path(account_id): Path<i64>,
+    Json(body): Json<AdvancedSearchRequest>,
+) -> impl IntoResponse {
+    if matches!(body.scope, crate::mail_models::SearchScope::Mailboxes) && body.mailboxes.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "mailboxes must be provided when scope=mailboxes" })),
+        )
+            .into_response();
+    }
+
+    let result = tokio::task::spawn_blocking({
+        let imap_state = state.imap.clone();
+        let req = body.clone();
+        move || imap_session::advanced_search(&imap_state, account_id, &req)
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("Task panic: {e}")));
+
+    match result {
+        Ok(mails) => Json(AdvancedSearchResponse {
+            total_count: mails.len(),
+            mails,
+        })
+        .into_response(),
+        Err(error) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": error })),
+        )
+            .into_response(),
+    }
 }
 
 pub async fn create_mailbox(

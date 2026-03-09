@@ -9,16 +9,20 @@ use axum::{
     },
     response::{IntoResponse, Response},
 };
-use chrono::{DateTime, Duration, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use serde::Deserialize;
 use serde_json::{self, json};
-use sqlx::{Row, SqlitePool};
+use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 
 use crate::{
     db::{self, AppState},
     error::AppError,
     imap_session::{self, ImapState},
-    mail_models::{MailContent, MailListResponse, MailPreview, MailboxListResponse, merge_mailbox_label_into_preview},
+    mail_models::{
+        AdvancedSearchRequest, AdvancedSearchResponse, MailContent, MailListResponse, MailPreview,
+        MailSearchPreview, MailboxListResponse, ReadStatus, SearchScope,
+        merge_mailbox_label_into_preview,
+    },
     mail_routes::MailAppState,
     models::{
         DownloadRuleInput, DownloadRuleRecord, InitialSyncPolicyInput, OfflineActionRequest,
@@ -112,6 +116,125 @@ fn parse_labels_json_value(raw: &str) -> Vec<String> {
 
 fn serialize_labels_json_value(labels: &[String]) -> String {
     serde_json::to_string(labels).unwrap_or_else(|_| "[]".to_string())
+}
+
+fn normalize_mailbox_list(values: &[String]) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for value in values {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if normalized
+            .iter()
+            .any(|existing: &String| existing.eq_ignore_ascii_case(trimmed))
+        {
+            continue;
+        }
+        normalized.push(trimmed.to_string());
+    }
+    normalized
+}
+
+fn parse_ymd(value: &str) -> Option<NaiveDate> {
+    NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d").ok()
+}
+
+fn apply_advanced_search_filters(
+    qb: &mut QueryBuilder<Sqlite>,
+    req: &AdvancedSearchRequest,
+    normalized_mailboxes: &[String],
+) {
+    if matches!(req.scope, SearchScope::Mailboxes) {
+        qb.push(" AND folder IN (");
+        let mut separated = qb.separated(", ");
+        for mailbox in normalized_mailboxes {
+            separated.push_bind(mailbox.clone());
+        }
+        qb.push(")");
+    }
+
+    if let Some(value) = req.from.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        let pattern = format!("%{}%", value);
+        qb.push(" AND (LOWER(COALESCE(sender_address, '')) LIKE LOWER(")
+            .push_bind(pattern.clone())
+            .push(") OR LOWER(COALESCE(sender_name, '')) LIKE LOWER(")
+            .push_bind(pattern)
+            .push("))");
+    }
+
+    if let Some(value) = req.to.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        let pattern = format!("%{}%", value);
+        qb.push(" AND LOWER(COALESCE(recipient_to, '')) LIKE LOWER(")
+            .push_bind(pattern)
+            .push(")");
+    }
+
+    if let Some(value) = req.cc.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        let pattern = format!("%{}%", value);
+        qb.push(" AND LOWER(COALESCE(cc_value, '')) LIKE LOWER(")
+            .push_bind(pattern)
+            .push(")");
+    }
+
+    if let Some(value) = req.subject.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        let pattern = format!("%{}%", value);
+        qb.push(" AND LOWER(COALESCE(subject, '')) LIKE LOWER(")
+            .push_bind(pattern)
+            .push(")");
+    }
+
+    if let Some(value) = req.keywords.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+        let pattern = format!("%{}%", value);
+        qb.push(" AND (LOWER(COALESCE(plain_body, '')) LIKE LOWER(")
+            .push_bind(pattern.clone())
+            .push(") OR LOWER(COALESCE(html_body, '')) LIKE LOWER(")
+            .push_bind(pattern)
+            .push("))");
+    }
+
+    if let Some(date) = req
+        .date_start
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .and_then(parse_ymd)
+        .and_then(|d| d.and_hms_opt(0, 0, 0))
+        .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).timestamp_millis())
+    {
+        qb.push(" AND date_ms >= ").push_bind(date);
+    }
+
+    if let Some(date) = req
+        .date_end
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .and_then(parse_ymd)
+        .and_then(|d| d.checked_add_signed(Duration::days(1)))
+        .and_then(|d| d.and_hms_opt(0, 0, 0))
+        .map(|dt| DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc).timestamp_millis())
+    {
+        qb.push(" AND date_ms < ").push_bind(date);
+    }
+
+    match req.read_status.unwrap_or(ReadStatus::All) {
+        ReadStatus::Read => {
+            qb.push(" AND COALESCE(seen, 0) != 0");
+        }
+        ReadStatus::Unread => {
+            qb.push(" AND COALESCE(seen, 0) = 0");
+        }
+        ReadStatus::All => {}
+    }
+
+    if req.has_attachments {
+        qb.push(
+            " AND (LOWER(COALESCE(content_type, '')) LIKE 'multipart/mixed%'\
+             OR LOWER(COALESCE(content_type, '')) LIKE 'multipart/related%'\
+             OR LOWER(COALESCE(content_type, '')) LIKE 'multipart/report%')",
+        );
+    }
 }
 
 fn strip_label_mailbox_prefix(mailbox: &str) -> Option<String> {
@@ -356,6 +479,132 @@ pub async fn get_local_mail_list(
         .collect();
 
     Ok(Json(MailListResponse {
+        total_count: total.max(0) as usize,
+        mails,
+    }))
+}
+
+// ─────────────────────────────────────────────────────────────────
+// POST /offline/:account_id/search-advanced
+// ─────────────────────────────────────────────────────────────────
+pub async fn search_advanced(
+    State(state): State<Arc<MailAppState>>,
+    Path(account_id): Path<i64>,
+    Json(body): Json<AdvancedSearchRequest>,
+) -> Result<Json<AdvancedSearchResponse>, AppError> {
+    let pool = db::get_user_db_pool(&state._db, account_id).await?;
+    let normalized_mailboxes = normalize_mailbox_list(&body.mailboxes);
+
+    if matches!(body.scope, SearchScope::Mailboxes) && normalized_mailboxes.is_empty() {
+        return Err(AppError::BadRequest(
+            "mailboxes must be provided when scope=mailboxes".to_string(),
+        ));
+    }
+
+    let mut count_qb = QueryBuilder::<Sqlite>::new(
+        "SELECT COUNT(1) FROM local_mail_cache WHERE 1=1",
+    );
+    apply_advanced_search_filters(&mut count_qb, &body, &normalized_mailboxes);
+    let (total,): (i64,) = count_qb.build_query_as::<(i64,)>().fetch_one(&pool).await?;
+
+    let mut qb = QueryBuilder::<Sqlite>::new(
+        r#"
+        SELECT uid, sender_name, sender_address, recipient_to, subject, date_value, seen, flagged,
+               size_bytes, importance_value, content_type, category, labels_json, folder
+        FROM local_mail_cache
+        WHERE 1=1
+        "#,
+    );
+    apply_advanced_search_filters(&mut qb, &body, &normalized_mailboxes);
+    qb.push(" ORDER BY date_ms DESC, uid DESC");
+
+    let rows = qb.build().fetch_all(&pool).await?;
+    let mails = rows
+        .into_iter()
+        .map(|r| {
+            let mailbox = r
+                .try_get::<Option<String>, _>("folder")
+                .ok()
+                .flatten()
+                .unwrap_or_default();
+            let mut preview = MailPreview {
+                id: r.try_get::<String, _>("uid").unwrap_or_default(),
+                name: r
+                    .try_get::<Option<String>, _>("sender_name")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                address: r
+                    .try_get::<Option<String>, _>("sender_address")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                recipient_to: r
+                    .try_get::<Option<String>, _>("recipient_to")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                subject: r
+                    .try_get::<Option<String>, _>("subject")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                date: r
+                    .try_get::<Option<String>, _>("date_value")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                seen: r
+                    .try_get::<Option<i64>, _>("seen")
+                    .ok()
+                    .flatten()
+                    .unwrap_or(0)
+                    != 0,
+                flagged: r
+                    .try_get::<Option<i64>, _>("flagged")
+                    .ok()
+                    .flatten()
+                    .unwrap_or(0)
+                    != 0,
+                size: r
+                    .try_get::<Option<i64>, _>("size_bytes")
+                    .ok()
+                    .flatten()
+                    .unwrap_or(0)
+                    .max(0) as usize,
+                importance: r
+                    .try_get::<Option<i64>, _>("importance_value")
+                    .ok()
+                    .flatten()
+                    .unwrap_or(0) as i32,
+                content_type: r
+                    .try_get::<Option<String>, _>("content_type")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                category: r
+                    .try_get::<Option<String>, _>("category")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                labels: r
+                    .try_get::<Option<String>, _>("labels_json")
+                    .ok()
+                    .flatten()
+                    .map(|value| parse_labels_json_value(&value))
+                    .unwrap_or_default(),
+            };
+
+            merge_mailbox_label_into_preview(&mut preview, &mailbox);
+
+            MailSearchPreview {
+                mailbox,
+                mail: preview,
+            }
+        })
+        .collect();
+
+    Ok(Json(AdvancedSearchResponse {
         total_count: total.max(0) as usize,
         mails,
     }))
