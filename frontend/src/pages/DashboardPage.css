@@ -672,7 +672,6 @@ body.resizing * {
   display: flex;
   flex-direction: column;
   padding: 8px 0;
-  border-right: 1px solid #ccc;
   flex-shrink: 0;
   gap: 4px;
 }
@@ -751,7 +750,6 @@ body.resizing * {
   background: #f4f4f4;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid #ccc;
   flex-shrink: 0;
   overflow: hidden;
   min-width: 160px;
@@ -768,7 +766,7 @@ body.resizing * {
 }
 
 .db-folder-title {
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 600;
   color: #333;
   overflow: hidden;
@@ -846,7 +844,7 @@ body.resizing * {
 }
 
 .db-folder-item {
-  margin-bottom: 1px;
+  margin-bottom: 0;
 }
 
 .db-folder-item a {
@@ -855,7 +853,7 @@ body.resizing * {
   padding: 8px 12px;
   text-decoration: none;
   color: #333;
-  font-size: 13px;
+  font-size: 16px;
   transition: background 0.15s;
   cursor: pointer;
   user-select: none;
@@ -887,7 +885,6 @@ body.resizing * {
 .db-folder-node.db-folder-section {
   margin-top: 15px;
   padding-top: 10px;
-  border-top: 1px solid #ddd;
 }
 
 .db-folder-section {
@@ -898,7 +895,6 @@ body.resizing * {
 .db-folder-section--divided {
   margin-top: 15px;
   padding-top: 10px;
-  border-top: 1px solid #ddd;
 }
 
 .db-folder-section__header {
@@ -935,17 +931,16 @@ body.resizing * {
 }
 
 .db-folder-item {
-  margin-bottom: 1px;
+  margin-bottom: 0;
 }
 
 .db-folder-item-content {
   display: flex;
   align-items: center;
   padding: 4px 8px;
-  border-radius: 4px;
   text-decoration: none;
   color: #333;
-  font-size: 13px;
+  font-size: 16px;
   transition: background 0.15s;
   cursor: pointer;
   user-select: none;
@@ -955,10 +950,24 @@ body.resizing * {
   background: #e6e6e6;
 }
 
+.db-folder-item-content.dnd-target {
+  box-shadow: none;
+}
+
+.db-folder-item-content.dnd-target.dnd-over {
+  background: #E8F3FF;
+  box-shadow: inset 0 0 0 2px rgba(38, 132, 255, 0.65);
+}
+
 .db-folder-item.selected .db-folder-item-content {
   background: #FFF7CC;
   font-weight: 700;
   color: #000;
+}
+
+.db-folder-item.selected .db-folder-item-content.dnd-target.dnd-over {
+  background: #E8F3FF;
+  box-shadow: inset 0 0 0 2px rgba(38, 132, 255, 0.65);
 }
 
 .db-folder-chevron {
@@ -1006,7 +1015,6 @@ body.resizing * {
 .db-labels-section {
   margin-top: 15px;
   padding-top: 10px;
-  border-top: 1px solid #ddd;
 }
 
 .db-labels-header {
@@ -1014,7 +1022,7 @@ body.resizing * {
   align-items: center;
   justify-content: space-between;
   padding: 0 14px 6px;
-  font-size: 12px;
+  font-size: 16px;
   font-weight: 700;
   color: #666;
   text-transform: uppercase;
@@ -1142,12 +1150,12 @@ body.resizing * {
   border-bottom-left-radius: 0;
 }
 
-.db-mail-toolbar-split > .db-mail-toolbar-btn:first-child {
+.db-mail-toolbar-split>.db-mail-toolbar-btn:first-child {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
 }
 
-.db-mail-toolbar-split > .db-mail-toolbar-btn.active + .db-mail-toolbar-btn--split {
+.db-mail-toolbar-split>.db-mail-toolbar-btn.active+.db-mail-toolbar-btn--split {
   border-left-color: rgba(0, 0, 0, 0.18);
 }
 

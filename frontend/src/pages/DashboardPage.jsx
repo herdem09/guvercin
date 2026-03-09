@@ -187,6 +187,49 @@ function isMoveTargetMailbox(value) {
     return !isLabelMailbox(mailbox)
 }
 
+const MAIL_IDS_DRAG_MIME = 'application/x-guvercin-mail-ids'
+
+function parseDraggedMailIds(dataTransfer) {
+    if (!dataTransfer) return []
+
+    const normalizeIds = (ids) => Array.from(new Set(
+        (ids || [])
+            .map((id) => (id == null ? '' : String(id)).trim())
+            .filter(Boolean),
+    ))
+
+    const parseJsonPayload = (value) => {
+        try {
+            const parsed = JSON.parse(value)
+            if (!Array.isArray(parsed?.ids)) return []
+            return normalizeIds(parsed.ids)
+        } catch {
+            return []
+        }
+    }
+
+    const mimeValue = (() => {
+        try {
+            return dataTransfer.getData(MAIL_IDS_DRAG_MIME)
+        } catch {
+            return ''
+        }
+    })()
+    const fromMime = mimeValue ? parseJsonPayload(mimeValue) : []
+    if (fromMime.length > 0) return fromMime
+
+    const plainValue = (() => {
+        try {
+            return (dataTransfer.getData('text/plain') || '').trim()
+        } catch {
+            return ''
+        }
+    })()
+    if (!plainValue) return []
+
+    return normalizeIds(plainValue.split(',').map((part) => part.trim()))
+}
+
 const LABEL_NAMESPACE_ROOTS = ['Labels', 'Etiketler', '[Labels]']
 
 function stripLabelMailboxNamespace(value) {
@@ -2159,6 +2202,7 @@ function MailSection({
     const [mailItemMenu, setMailItemMenu] = useState(null)
     const [mailItemMoveMenuStyle, setMailItemMoveMenuStyle] = useState(null)
     const [mailItemLabelMenuStyle, setMailItemLabelMenuStyle] = useState(null)
+    const [dragOverTarget, setDragOverTarget] = useState(null)
     const displayCols = isMailFullscreen ? layoutCols : 1
     const perPageValue = Math.max(1, Number.parseInt(perPage, 10) || 50)
 
@@ -2683,6 +2727,43 @@ function MailSection({
     const isResizingFolder = useRef(false)
     const isResizingList = useRef(false)
     const mailToolbarRef = useRef(null)
+    const isDraggingRef = useRef(false)
+
+    const handleMailDragStart = useCallback((event, mail) => {
+        if (!event?.dataTransfer || !mail?.id) return
+        const draggedId = mail.id
+        const ids = (
+            selectedMailIds.size > 0 && selectedMailIds.has(draggedId)
+                ? Array.from(selectedMailIds)
+                : [draggedId]
+        )
+
+        isDraggingRef.current = true
+        setDragOverTarget(null)
+
+        try {
+            event.dataTransfer.effectAllowed = 'copyMove'
+        } catch {
+            // noop
+        }
+
+        try {
+            event.dataTransfer.setData(MAIL_IDS_DRAG_MIME, JSON.stringify({ ids }))
+        } catch {
+            // noop
+        }
+
+        try {
+            event.dataTransfer.setData('text/plain', ids.join(','))
+        } catch {
+            // noop
+        }
+    }, [selectedMailIds])
+
+    const handleMailDragEnd = useCallback(() => {
+        isDraggingRef.current = false
+        setDragOverTarget(null)
+    }, [])
 
     const syncPopoverPosition = useCallback((menuRef, setStyle, estimatedWidth = 220) => {
         const node = menuRef.current
@@ -3157,13 +3238,64 @@ function MailSection({
         const isSelected = listMode !== 'search' && selectedFolder === node.fullPath
         const isExpanded = expandedFolders.includes(node.fullPath)
         const hasChildren = node.children.length > 0
+        const labelKey = isLabelMailbox(node.fullPath) ? stripLabelMailboxNamespace(node.fullPath) : ''
+        const isDroppableLabel = Boolean(labelKey)
+        const isDroppableFolder = isMoveTargetMailbox(node.fullPath)
+        const isDroppable = isDroppableLabel || isDroppableFolder
 
         return (
             <div key={node.fullPath} className="db-folder-node">
                 <li className={`db-folder-item ${isSelected ? 'selected' : ''}`} style={{ paddingLeft: `${depth * 12}px` }}>
                     <div
-                        className="db-folder-item-content"
+                        className={`db-folder-item-content${isDroppable ? ' dnd-target' : ''}${dragOverTarget === node.fullPath ? ' dnd-over' : ''}`}
                         onClick={() => (onSelectFolder ? onSelectFolder(node.fullPath) : setSelectedFolder(node.fullPath))}
+                        onDragEnter={isDroppable ? (e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            setDragOverTarget(node.fullPath)
+                        } : undefined}
+                        onDragOver={isDroppable ? (e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            try {
+                                e.dataTransfer.dropEffect = isDroppableLabel ? 'copy' : 'move'
+                            } catch {
+                                // noop
+                            }
+                            setDragOverTarget(node.fullPath)
+                        } : undefined}
+                        onDragLeave={isDroppable ? (e) => {
+                            if (e.currentTarget && e.relatedTarget && e.currentTarget.contains(e.relatedTarget)) return
+                            setDragOverTarget((prev) => (prev === node.fullPath ? null : prev))
+                        } : undefined}
+                        onDrop={isDroppable ? async (e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+
+                            setDragOverTarget(null)
+
+                            const ids = parseDraggedMailIds(e.dataTransfer)
+                            if (ids.length === 0) return
+
+                            const isExactSelectionSet = selectedMailIds.size > 0
+                                && selectedMailIds.size === ids.length
+                                && ids.every((id) => selectedMailIds.has(id))
+
+                            let ok = true
+                            try {
+                                if (isDroppableLabel) {
+                                    ok = await toggleLabelsOptimistic(ids, labelKey, true)
+                                } else if (isDroppableFolder) {
+                                    await moveMailsOptimistic(ids, node.fullPath)
+                                }
+                            } catch {
+                                ok = false
+                            }
+
+                            if (ok && isExactSelectionSet) {
+                                resetBulkSelection()
+                            }
+                        } : undefined}
                     >
                         {hasChildren ? (
                             <span className={`db-folder-chevron ${isExpanded ? 'expanded' : ''}`} onClick={(e) => toggleExpand(e, node.fullPath)}>
@@ -4193,8 +4325,14 @@ function MailSection({
                                                     <li
                                                         key={mail.id}
                                                         className={`db-mail-item ${mail.seen !== true ? 'unread' : ''} ${selectedMail?.id === mail.id ? 'selected' : ''} ${selectMode ? 'select-mode' : ''} ${isChecked ? 'checked' : ''}`}
-                                                        onClick={() => openMail(mail)}
+                                                        onClick={() => {
+                                                            if (isDraggingRef.current) return
+                                                            openMail(mail)
+                                                        }}
                                                         onContextMenu={(event) => openMailItemMenuFromContext(event, mail)}
+                                                        draggable
+                                                        onDragStart={(event) => handleMailDragStart(event, mail)}
+                                                        onDragEnd={handleMailDragEnd}
                                                     >
                                                         <div className="db-mail-avatar-wrap">
                                                             <Avatar
