@@ -1,4 +1,4 @@
-/* ===== NotAuthPage Styles ===== */
+
 .not-auth-page {
     display: flex;
     flex-direction: column;
@@ -11,28 +11,28 @@
 }
 
 .not-auth-container {
-    background-color: rgba(255, 255, 255, 0.95);
+    background-color: var(--c-surface-1);
     border-radius: 12px;
     padding: 30px;
     max-width: 500px;
     width: 100%;
     text-align: center;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    box-shadow: var(--shadow-1);
     backdrop-filter: blur(10px);
     animation: slideUp 0.4s ease-out;
 }
 
 .not-auth-container h1 {
     font-size: 1.6rem;
-    color: #343a40;
+    color: var(--c-text-1);
     margin-bottom: 1rem;
     font-weight: 700;
 }
 
 .not-auth-container .message {
-    color: #721c24;
-    background-color: #f8d7da;
-    border: 1px solid #f5c6cb;
+    color: var(--c-danger-text);
+    background-color: var(--c-danger-bg);
+    border: 1px solid var(--c-danger);
     padding: 12px;
     border-radius: 8px;
     margin-bottom: 1.5rem;
@@ -42,7 +42,7 @@
 
 .not-auth-container .prompt {
     font-weight: 600;
-    color: #495057;
+    color: var(--c-text-2);
     margin-bottom: 1.5rem;
     font-size: 0.95rem;
 }
@@ -64,25 +64,25 @@
 }
 
 .not-auth-container .btn.create {
-    background-color: #FFCB08;
-    color: #1a1a1a;
+    background-color: var(--c-primary);
+    color: var(--c-primary-contrast);
 }
 
 .not-auth-container .btn.create:hover {
-    background-color: #f0be00;
+    background-color: var(--c-primary-hover);
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(255, 203, 8, 0.4);
+    box-shadow: var(--shadow-1);
 }
 
 .not-auth-container .btn.back {
-    background-color: #FFF5CA;
-    color: #343a40;
-    border: 1.5px solid #FFCD10;
+    background-color: var(--c-bg);
+    color: var(--c-text-1);
+    border: 1.5px solid var(--c-primary-2);
     margin-top: 10px;
 }
 
 .not-auth-container .btn.back:hover {
-    background-color: #FFD44F;
-    border-color: #FFCB08;
+    background-color: var(--c-primary-hover);
+    border-color: var(--c-primary);
     transform: translateY(-1px);
 }

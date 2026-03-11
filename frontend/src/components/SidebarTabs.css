@@ -1,13 +1,13 @@
 .sidebar-tabs {
   width: 50px;
-  background: #fff3d2;
-  border-right: 1px solid #ddd;
+  background: var(--c-bg);
+  border-right: 1px solid var(--c-border-1);
   display: flex;
   flex-direction: column;
   padding: 10px 4px;
   flex-shrink: 0;
   height: 100%;
-  box-shadow: inset -1px 0 0 #ffe5a0;
+  box-shadow: inset -1px 0 0 var(--c-primary-soft);
 }
 
 .sidebar-tabs ul {
@@ -44,18 +44,18 @@
   font-weight: 600;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-  color: #444;
+  color: var(--c-text-2);
   transition: background 0.2s ease, color 0.2s ease;
 }
 
 .sidebar-tab-btn:hover {
-  background: #ffe8ad;
+  background: var(--c-primary-soft-hover);
 }
 
 .sidebar-tabs li.active .sidebar-tab-btn {
-  background: #ffcb08;
-  color: #1b1b1b;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  background: var(--c-primary);
+  color: var(--c-primary-contrast);
+  box-shadow: var(--shadow-1);
 }
 
 .sidebar-tab-icon {

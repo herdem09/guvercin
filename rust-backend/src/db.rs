@@ -22,7 +22,6 @@ impl AppState {
             detect_databases_dir()?
         };
 
-        // Ensure the databases/ directory exists
         tokio::fs::create_dir_all(&databases_dir).await?;
         tracing::info!("Using databases directory: {:?}", databases_dir);
 
@@ -47,12 +46,11 @@ impl AppState {
 }
 
 fn detect_databases_dir() -> anyhow::Result<PathBuf> {
-    // 1. Check environment variable
+    
     if let Ok(dir) = std::env::var("DATABASE_DIR") {
         return Ok(PathBuf::from(dir));
     }
 
-    // 2. Try home directory (~/.guvercin/databases)
     if let Some(home) = dirs::home_dir() {
         let p = home.join(".guvercin").join("databases");
         if std::fs::create_dir_all(&p).is_ok() {
@@ -60,13 +58,11 @@ fn detect_databases_dir() -> anyhow::Result<PathBuf> {
         }
     }
 
-    // 3. Last fallback: current working directory /databases
     let cwd = std::env::current_dir()?;
     let p = cwd.join("databases");
     Ok(p)
 }
 
-/// Open (or create) a SQLite database at `path`.
 async fn connect_sqlite(path: &Path) -> sqlx::Result<SqlitePool> {
     let opts = SqliteConnectOptions::new()
         .filename(path)
@@ -92,7 +88,7 @@ pub async fn get_user_db_pool(state: &AppState, account_id: i64) -> Result<Sqlit
 }
 
 async fn init_general_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    // accounts table
+    
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS accounts (
@@ -108,7 +104,7 @@ async fn init_general_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             sync_status   BOOLEAN DEFAULT 0,
             last_sync_time DATETIME,
             language      TEXT DEFAULT 'EN',
-            theme         TEXT DEFAULT 'LIGHT',
+            theme         TEXT DEFAULT 'SYSTEM',
             font          TEXT,
             ssl_mode      TEXT DEFAULT 'STARTTLS'
         )
@@ -117,12 +113,17 @@ async fn init_general_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
 
-    // Migration for existing databases
     let _ = sqlx::query("ALTER TABLE accounts ADD COLUMN ssl_mode TEXT DEFAULT 'STARTTLS'")
         .execute(pool)
         .await;
 
-    // avatar cache (shared across all accounts – lives in general DB)
+    let _ = sqlx::query("ALTER TABLE accounts ADD COLUMN theme TEXT DEFAULT 'SYSTEM'")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("UPDATE accounts SET theme = 'SYSTEM' WHERE theme IS NULL OR theme = '' OR theme = 'LIGHT'")
+        .execute(pool)
+        .await;
+
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS avatar_cache (
@@ -152,7 +153,7 @@ async fn init_general_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 }
 
 async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
-    // emails table
+    
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS emails (
@@ -183,7 +184,6 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
 
-    // attachments table
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS attachments (
@@ -206,7 +206,6 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
 
-    // folders table
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS folders (
@@ -225,7 +224,6 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
 
-    // contacts table
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS contacts (
@@ -244,27 +242,12 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
 
-    // Migration: add avatar_data column so contacts can have a locally assigned photo.
     let _ = sqlx::query("ALTER TABLE contacts ADD COLUMN avatar_data BLOB")
         .execute(pool)
         .await;
 
-    // ai configuration table
-    sqlx::query(
-        r#"
-        CREATE TABLE IF NOT EXISTS ai (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            model_name TEXT,
-            type BOOLEAN,
-            api_key_server_url TEXT,
-            base_url_context_window TEXT
-        )
-        "#,
-    )
-    .execute(pool)
-    .await?;
+    let _ = sqlx::query("DROP TABLE IF EXISTS ai").execute(pool).await;
 
-    // offline configuration rules
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS download_mails (
@@ -314,14 +297,12 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
 
-    // Migration: keep a flag for whether we persist raw RFC822 (includes attachments) in the offline cache.
     let _ = sqlx::query(
         "ALTER TABLE offline_config ADD COLUMN cache_raw_rfc822 BOOLEAN NOT NULL DEFAULT 1",
     )
     .execute(pool)
     .await;
 
-    // offline queue for mutation sync
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS offline_sync_queue (
@@ -410,7 +391,6 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .execute(pool)
     .await?;
 
-    // lightweight local cache for offline list/content
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS local_mail_cache (
@@ -487,7 +467,6 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .execute(pool)
         .await;
 
-    // cache for external inline assets referenced by HTML bodies (e.g. <img src="https://...">)
     sqlx::query(
         r#"
         CREATE TABLE IF NOT EXISTS inline_asset_cache (

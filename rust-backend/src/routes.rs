@@ -13,7 +13,7 @@ use crate::{
     i18n::tr,
     imap_client,
     models::{
-        AccountSummary, AccountsResponse, FinalizeAccountBody, FinalizeAccountData,
+        AccountSummary, AccountsResponse, FinalizeAccountBody, FinalizeAccountData, SetThemeBody,
         FinalizeSuccessResponse, MailboxPreviewRequest, MailboxPreviewResponse, SetupAccountForm,
         SetupFailureFormData, SetupFailureResponse, SetupSuccessResponse,
     },
@@ -47,7 +47,6 @@ pub async fn setup_account(
 ) -> impl IntoResponse {
     let email = form.email_address.trim().to_string();
 
-    // Check existing account
     if let Ok(existing) =
         sqlx::query_scalar::<_, i64>("SELECT account_id FROM accounts WHERE email_address = ?")
             .bind(&email)
@@ -156,7 +155,7 @@ pub async fn preview_mailboxes(Json(payload): Json<MailboxPreviewRequest>) -> im
             for mailbox in &mailboxes {
                 let lower = mailbox.to_lowercase();
                 if lower.starts_with("labels/")
-                    || lower.starts_with("etiketler/")
+                    || lower.starts_with("labels/")
                     || lower.starts_with("[labels]/")
                 {
                     labels.push(mailbox.clone());
@@ -199,7 +198,7 @@ pub async fn finalize_account(
 
     let language = payload.language.unwrap_or_else(|| "en".to_string());
     let font = payload.font.unwrap_or_else(|| "Arial".to_string());
-    let ai_config = payload.ai;
+    let theme = payload.theme.unwrap_or_else(|| "SYSTEM".to_string());
     let offline_config = payload.offline;
 
     let email = account.email.trim().to_string();
@@ -240,7 +239,7 @@ pub async fn finalize_account(
             r#"
             UPDATE accounts
             SET display_name = ?, provider_type = 'imap', imap_host = ?, imap_port = ?,
-                smtp_host = ?, smtp_port = ?, language = ?, font = ?, auth_token = ?, ssl_mode = ?
+                smtp_host = ?, smtp_port = ?, language = ?, theme = ?, font = ?, auth_token = ?, ssl_mode = ?
             WHERE email_address = ?
             "#,
         )
@@ -250,6 +249,7 @@ pub async fn finalize_account(
         .bind(&smtp_server)
         .bind(smtp_port)
         .bind(&language)
+        .bind(&theme)
         .bind(&font)
         .bind(password.clone())
         .bind(&ssl_mode)
@@ -262,8 +262,8 @@ pub async fn finalize_account(
             r#"
             INSERT INTO accounts
                 (email_address, display_name, provider_type,
-                 imap_host, imap_port, smtp_host, smtp_port, language, font, auth_token, ssl_mode)
-            VALUES (?, ?, 'imap', ?, ?, ?, ?, ?, ?, ?, ?)
+                 imap_host, imap_port, smtp_host, smtp_port, language, theme, font, auth_token, ssl_mode)
+            VALUES (?, ?, 'imap', ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&email)
@@ -273,6 +273,7 @@ pub async fn finalize_account(
         .bind(&smtp_server)
         .bind(smtp_port)
         .bind(&language)
+        .bind(&theme)
         .bind(&font)
         .bind(password)
         .bind(&ssl_mode)
@@ -283,26 +284,7 @@ pub async fn finalize_account(
 
     tx.commit().await?;
 
-    // Ensure user DB exists, getting its pool so we can write AI settings into it
-    let user_pool = crate::db::get_user_db_pool(&state, account_id).await?;
-
-    // AI config
-    if let Some(ai) = ai_config {
-        let mut user_tx = user_pool.begin().await?;
-        sqlx::query(
-            r#"
-            INSERT INTO ai (model_name, type, api_key_server_url, base_url_context_window)
-            VALUES (?, ?, ?, ?)
-            "#,
-        )
-        .bind(ai.model_name)
-        .bind(ai.r#type)
-        .bind(ai.api_key_server_url)
-        .bind(ai.base_url_context_window)
-        .execute(&mut *user_tx)
-        .await?;
-        user_tx.commit().await?;
-    }
+    let _ = crate::db::get_user_db_pool(&state, account_id).await?;
 
     offline_routes::save_offline_setup(&state, account_id, offline_config).await?;
     offline_routes::spawn_initial_sync(state.clone(), account_id);
@@ -314,4 +296,23 @@ pub async fn finalize_account(
     };
 
     Ok(Json(resp))
+}
+
+pub async fn set_account_theme(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(account_id): axum::extract::Path<i64>,
+    Json(payload): Json<SetThemeBody>,
+) -> Result<impl IntoResponse, AppError> {
+    let theme = payload.theme.trim();
+    if theme.is_empty() {
+        return Err(AppError::BadRequest(tr("No data provided")));
+    }
+
+    sqlx::query("UPDATE accounts SET theme = ? WHERE account_id = ?")
+        .bind(theme)
+        .bind(account_id)
+        .execute(&state.general_pool)
+        .await?;
+
+    Ok((StatusCode::OK, Json(json!({ "status": "success" }))))
 }

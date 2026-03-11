@@ -1,4 +1,4 @@
-/* ===== LoginPage Styles ===== */
+
 .login-page {
     display: flex;
     flex-direction: column;
@@ -11,10 +11,10 @@
 }
 
 .form-container {
-    background-color: rgba(255, 255, 255, 0.95);
+    background-color: var(--c-surface-1);
     padding: 30px;
     border-radius: 12px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    box-shadow: var(--shadow-1);
     width: 100%;
     max-width: 650px;
     position: relative;
@@ -26,20 +26,19 @@
 
 .form-container h2 {
     text-align: center;
-    color: #343a40;
+    color: var(--c-text-1);
     margin-bottom: 25px;
     font-size: 1.5rem;
     font-weight: 700;
 }
 
-/* Loading Overlay */
 .loading-overlay {
     position: absolute;
     top: 0;
     left: 0;
     right: 0;
     bottom: 0;
-    background-color: rgba(255, 255, 255, 0.95);
+    background-color: var(--c-surface-1);
     display: flex;
     justify-content: center;
     align-items: center;
@@ -49,8 +48,8 @@
 }
 
 .spinner {
-    border: 4px solid rgba(0, 0, 0, 0.1);
-    border-top: 4px solid #FFCB08;
+    border: 4px solid var(--spinner-track);
+    border-top: 4px solid var(--c-primary);
     border-radius: 50%;
     width: 40px;
     height: 40px;
@@ -59,12 +58,11 @@
 }
 
 .loading-overlay p {
-    color: #495057;
+    color: var(--c-text-2);
     font-weight: 500;
     animation: pulse 1.5s ease-in-out infinite;
 }
 
-/* Column Layout */
 .column-group {
     display: flex;
     gap: 20px;
@@ -76,7 +74,6 @@
     min-width: 0;
 }
 
-/* Input Groups */
 .input-group {
     margin-bottom: 0;
 }
@@ -85,7 +82,7 @@
     display: block;
     margin-bottom: 5px;
     font-weight: 600;
-    color: #495057;
+    color: var(--c-text-2);
     font-size: 0.9rem;
 }
 
@@ -95,22 +92,21 @@
 .input-group input[type="password"] {
     width: 100%;
     padding: 10px 12px;
-    border: 1.5px solid #FFCD10;
+    border: 1.5px solid var(--c-primary-2);
     border-radius: 8px;
     box-sizing: border-box;
     transition: border-color 0.3s, box-shadow 0.3s;
     font-size: 0.95rem;
     font-family: inherit;
-    background-color: #FFFDF5;
+    background-color: var(--c-surface-3);
 }
 
 .input-group input:focus {
-    border-color: #FFCB08;
+    border-color: var(--c-primary);
     outline: none;
-    box-shadow: 0 0 0 3px rgba(255, 203, 8, 0.3);
+    box-shadow: var(--focus-ring-primary);
 }
 
-/* Radio Group */
 .radio-group {
     display: flex;
     gap: 20px;
@@ -125,21 +121,20 @@
     gap: 6px;
     cursor: pointer;
     font-weight: 500 !important;
-    color: #495057;
+    color: var(--c-text-2);
 }
 
 .radio-group input[type="radio"] {
     width: auto;
     transform: scale(1.1);
-    accent-color: #FFCB08;
+    accent-color: var(--c-primary);
 }
 
-/* Submit Button */
 .form-container button[type="submit"] {
     width: 100%;
     padding: 12px;
-    background-color: #FFCB08;
-    color: #1a1a1a;
+    background-color: var(--c-primary);
+    color: var(--c-primary-contrast);
     border: none;
     border-radius: 8px;
     font-size: 1rem;
@@ -151,9 +146,9 @@
 }
 
 .form-container button[type="submit"]:hover {
-    background-color: #f0be00;
+    background-color: var(--c-primary-hover);
     transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(255, 203, 8, 0.4);
+    box-shadow: var(--shadow-1);
 }
 
 .form-container button[type="submit"]:disabled {
@@ -162,13 +157,12 @@
     transform: none;
 }
 
-/* Shortcut Buttons */
 .shortcut-button {
     width: 100%;
     padding: 12px;
-    background-color: #FFF5CA;
-    color: #343a40;
-    border: 1.5px solid #FFCD10;
+    background-color: var(--c-bg);
+    color: var(--c-text-1);
+    border: 1.5px solid var(--c-primary-2);
     border-radius: 8px;
     font-size: 1rem;
     cursor: pointer;
@@ -182,8 +176,8 @@
 }
 
 .shortcut-button:hover {
-    background-color: #FFD44F;
-    border-color: #FFCB08;
+    background-color: var(--c-primary-hover);
+    border-color: var(--c-primary);
     transform: translateY(-1px);
 }
 
@@ -193,7 +187,6 @@
     margin-right: 10px;
 }
 
-/* Response Messages */
 .response-message {
     text-align: center;
     margin-top: 15px;
@@ -204,20 +197,20 @@
 }
 
 .error-message {
-    color: #721c24;
-    background-color: #f8d7da;
-    border: 1px solid #f5c6cb;
+    color: var(--c-danger-text);
+    background-color: var(--c-danger-bg);
+    border: 1px solid var(--c-danger);
 }
 
 .success-message {
-    color: #495057;
-    background-color: #FFD44F;
-    border: 1px solid #FFCB08;
+    color: var(--c-text-2);
+    background-color: var(--c-primary-hover);
+    border: 1px solid var(--c-primary);
 }
 
 .already-exists-message {
-    background-color: #ff877f;
-    color: black;
+    background-color: var(--c-warning-bg);
+    color: var(--c-warning-text);
     padding: 12px;
     border-radius: 8px;
     text-align: center;
@@ -227,12 +220,11 @@
     font-weight: 500;
 }
 
-/* Registered Accounts */
 .registered-accounts-container {
-    background-color: rgba(255, 255, 255, 0.95);
+    background-color: var(--c-surface-1);
     padding: 20px;
     border-radius: 12px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    box-shadow: var(--shadow-1);
     width: 100%;
     max-width: 650px;
     z-index: 2;
@@ -246,14 +238,14 @@
     justify-content: center;
     align-items: center;
     position: relative;
-    border-bottom: 1px solid #ced4da;
+    border-bottom: 1px solid var(--c-border-1);
     padding-bottom: 10px;
     margin-bottom: 15px;
 }
 
 .container-header h3 {
     font-size: 1.1rem;
-    color: #343a40;
+    color: var(--c-text-1);
 }
 
 .settings-btn {
@@ -289,24 +281,24 @@
     padding: 10px 14px;
     border-radius: 8px;
     margin-bottom: 6px;
-    background-color: #FFF5CA;
-    border: 1.5px solid #FFCD10;
+    background-color: var(--c-bg);
+    border: 1.5px solid var(--c-primary-2);
     transition: all 0.2s ease;
     cursor: pointer;
 }
 
 .account-item:hover {
-    background-color: #FFD44F;
+    background-color: var(--c-primary-hover);
     transform: translateX(3px);
 }
 
 .account-item strong {
     font-weight: 600;
     font-size: 1rem;
-    color: #343a40;
+    color: var(--c-text-1);
 }
 
 .account-item span {
     font-size: 0.9rem;
-    color: #6c757d;
+    color: var(--c-text-3);
 }

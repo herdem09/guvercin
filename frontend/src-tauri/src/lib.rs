@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
+use serde_json::Value;
 
 /// Shared state that maps window labels → mail data JSON.
 /// The new window calls `get_mail_window_data` to consume its entry.
@@ -85,6 +86,114 @@ fn save_export_file_to_path(path: String, bytes: Vec<u8>) -> Result<(), String> 
   Ok(())
 }
 
+fn sanitize_theme_name(input: &str) -> String {
+  let mut out = String::new();
+  for ch in input.trim().to_lowercase().chars() {
+    if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+      out.push(ch);
+    } else if ch.is_whitespace() {
+      out.push('-');
+    }
+  }
+  while out.contains("--") {
+    out = out.replace("--", "-");
+  }
+  out.trim_matches('-').to_string()
+}
+
+fn user_theme_dir(handle: &tauri::AppHandle) -> Result<PathBuf, String> {
+  let base = handle
+    .path()
+    .app_data_dir()
+    .map_err(|e| e.to_string())?;
+  let dir = base.join("themes").join("user");
+  fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+  Ok(dir)
+}
+
+fn validate_theme_json(raw: &str) -> Result<Value, String> {
+  let mut value: Value = serde_json::from_str(raw).map_err(|e| e.to_string())?;
+  let obj = value.as_object_mut().ok_or_else(|| "Theme JSON must be an object".to_string())?;
+
+  let name = obj
+    .get("name")
+    .and_then(|v| v.as_str())
+    .unwrap_or("")
+    .trim();
+  if name.is_empty() {
+    return Err("Theme JSON missing name".to_string());
+  }
+
+  let vars = obj
+    .get("vars")
+    .and_then(|v| v.as_object())
+    .ok_or_else(|| "Theme JSON missing vars".to_string())?;
+  if vars.is_empty() {
+    return Err("Theme JSON vars is empty".to_string());
+  }
+
+  for (k, v) in vars.iter() {
+    if !k.starts_with("--") {
+      return Err("Theme vars keys must start with --".to_string());
+    }
+    if !v.is_string() {
+      return Err("Theme vars values must be strings".to_string());
+    }
+  }
+
+  Ok(value)
+}
+
+#[tauri::command]
+fn list_user_themes(handle: tauri::AppHandle) -> Result<Vec<String>, String> {
+  let dir = user_theme_dir(&handle)?;
+  let mut out: Vec<String> = vec![];
+  for entry in fs::read_dir(dir).map_err(|e| e.to_string())? {
+    let entry = entry.map_err(|e| e.to_string())?;
+    let path = entry.path();
+    if path.extension().and_then(|e| e.to_str()).unwrap_or("") != "json" {
+      continue;
+    }
+    if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+      if !stem.trim().is_empty() {
+        out.push(stem.to_string());
+      }
+    }
+  }
+  out.sort();
+  out.dedup();
+  Ok(out)
+}
+
+#[tauri::command]
+fn read_user_theme(handle: tauri::AppHandle, name: String) -> Result<String, String> {
+  let safe = sanitize_theme_name(&name);
+  if safe.is_empty() {
+    return Err("Invalid theme name".to_string());
+  }
+  let dir = user_theme_dir(&handle)?;
+  let path = dir.join(format!("{safe}.json"));
+  fs::read_to_string(path).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn write_user_theme(handle: tauri::AppHandle, name: String, json: String) -> Result<(), String> {
+  let safe = sanitize_theme_name(&name);
+  if safe.is_empty() {
+    return Err("Invalid theme name".to_string());
+  }
+  let mut value = validate_theme_json(&json)?;
+
+  if let Some(obj) = value.as_object_mut() {
+    obj.insert("name".to_string(), Value::String(safe.clone()));
+  }
+
+  let dir = user_theme_dir(&handle)?;
+  let path = dir.join(format!("{safe}.json"));
+  fs::write(path, serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?)
+    .map_err(|e| e.to_string())?;
+  Ok(())
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -117,7 +226,10 @@ pub fn run() {
       open_mail_window,
       get_mail_window_data,
       close_mail_window,
-      save_export_file_to_path
+      save_export_file_to_path,
+      list_user_themes,
+      read_user_theme,
+      write_user_theme
     ])
     .manage(MailWindowStore::default())
     .run(tauri::generate_context!())

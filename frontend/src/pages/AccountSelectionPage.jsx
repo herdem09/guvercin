@@ -27,7 +27,7 @@ function AccountSelectionPage() {
           return
         }
         setAccounts(Array.isArray(data.accounts) ? data.accounts : [])
-      } catch (err) {
+      } catch {
         if (!active) {
           return
         }

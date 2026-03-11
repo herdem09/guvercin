@@ -41,9 +41,24 @@ export function hydrateAccountSession(account) {
     'language',
     pickFirst(account.language, account.lang) || DEFAULT_LANGUAGE,
   )
-  localStorage.setItem('font', pickFirst(account.font, account.theme) || DEFAULT_FONT)
+
+  localStorage.setItem('font', pickFirst(account.font) || DEFAULT_FONT)
+
+  const themeRaw = pickFirst(account.theme)
+  if (themeRaw) {
+    if (themeRaw.toUpperCase() === 'SYSTEM') {
+      localStorage.setItem('theme_mode', 'system')
+    } else {
+      localStorage.setItem('theme_mode', 'manual')
+      localStorage.setItem('theme_name', themeRaw)
+    }
+  }
+
+  window.dispatchEvent(new Event('guvercin-theme-changed'))
   localStorage.removeItem('temp_account_form')
   localStorage.removeItem('temp_language')
   localStorage.removeItem('temp_font')
+  localStorage.removeItem('temp_theme_mode')
+  localStorage.removeItem('temp_theme_name')
   localStorage.removeItem('temp_offline_config')
 }

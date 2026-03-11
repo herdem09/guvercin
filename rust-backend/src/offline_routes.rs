@@ -244,7 +244,7 @@ fn strip_label_mailbox_prefix(mailbox: &str) -> Option<String> {
     if lower.starts_with("labels/") {
         return Some(trimmed[7..].trim_matches('/').to_string());
     }
-    if lower.starts_with("etiketler/") {
+    if lower.starts_with("labels/") {
         return Some(trimmed[10..].trim_matches('/').to_string());
     }
     if lower.starts_with("[labels]/") {
@@ -484,9 +484,6 @@ pub async fn get_local_mail_list(
     }))
 }
 
-// ─────────────────────────────────────────────────────────────────
-// POST /offline/:account_id/search-advanced
-// ─────────────────────────────────────────────────────────────────
 pub async fn search_advanced(
     State(state): State<Arc<MailAppState>>,
     Path(account_id): Path<i64>,
@@ -649,8 +646,6 @@ pub async fn get_local_mail_content(
                 .flatten()
                 .unwrap_or_default();
 
-            // If we only cached the preview (headers) but not the body yet, treat it as a miss
-            // so the frontend can fall back to the remote endpoint when online.
             if html_body.trim().is_empty() && plain_body.trim().is_empty() {
                 return (
                     StatusCode::NOT_FOUND,
@@ -2133,7 +2128,6 @@ async fn sync_single_mailbox(
         .filter(|_| policy.mode == "by_count")
         .map(|value| value.max(0) as usize);
 
-    // Read checkpoint: the highest UID we last fully synced.
     let last_synced_uid: u32 = sqlx::query_scalar(
         "SELECT last_synced_uid FROM sync_checkpoints WHERE folder_path = ?",
     )
@@ -2143,7 +2137,6 @@ async fn sync_single_mailbox(
     .map(|v: i64| v.max(0) as u32)
     .unwrap_or(0);
 
-    // Ask IMAP for UIDs newer than our checkpoint.
     let (_total, new_uids) = tokio::task::spawn_blocking({
         let imap_state = imap_state.clone();
         let mailbox = mailbox.to_string();
@@ -2152,7 +2145,6 @@ async fn sync_single_mailbox(
     .await
     .unwrap_or((0, vec![]));
 
-    // Apply initial policy limits on the first-ever sync.
     let uids_to_sync: Vec<u32> = if last_synced_uid == 0 {
         let mut filtered = new_uids;
         if let Some(max_count) = limit {
@@ -2230,7 +2222,7 @@ async fn sync_single_mailbox(
             mail.id = uid_str.clone();
 
             cache_mail_preview(pool, mailbox, &mail).await?;
-            // Skip body fetch if already cached — avoids re-downloading on every sync.
+            
             cache_mail_body_if_missing(
                 pool,
                 imap_state,
@@ -2260,7 +2252,6 @@ async fn sync_single_mailbox(
         }
     }
 
-    // Persist checkpoint so next sync starts from here.
     if max_uid_synced > last_synced_uid {
         sqlx::query(
             r#"
@@ -2399,7 +2390,7 @@ mod tests {
         let mut max_uid = 100;
         max_uid = bump_max_uid_synced(max_uid, 101);
         max_uid = bump_max_uid_synced(max_uid, 150);
-        // If we stop early (e.g., due to policy), we must not jump ahead.
+        
         assert_eq!(max_uid, 150);
     }
 
@@ -2502,8 +2493,6 @@ async fn cache_mail_preview(
     .execute(pool)
     .await?;
 
-    // Also store into the legacy `emails` table (account_id.db) so downloads are visible there.
-    // This table isn't currently used by the API, but users may inspect it directly.
     if let Ok(server_uid) = mail.id.parse::<i64>() {
         let folder_id: i64 = sqlx::query_scalar("SELECT folder_id FROM folders WHERE path_by_name = ?")
             .bind(mailbox)
@@ -2555,7 +2544,7 @@ async fn cache_mail_body_if_missing(
     uid: &str,
     cache_raw_rfc822: bool,
 ) -> Result<(), AppError> {
-    // Check if we already have the body cached — skip download if so.
+    
     let already_cached: bool = sqlx::query_scalar(
         "SELECT (plain_body IS NOT NULL OR html_body IS NOT NULL OR raw_rfc822 IS NOT NULL) FROM local_mail_cache WHERE uid = ? AND folder = ?",
     )
@@ -2619,7 +2608,6 @@ async fn cache_mail_body(
     .execute(pool)
     .await?;
 
-    // Mirror into `emails` table (best-effort).
     if let Ok(server_uid) = uid.parse::<i64>() {
         let attach_amount = if cache_raw_rfc822 {
             content.attachments.len() as i64
@@ -2646,8 +2634,7 @@ async fn cache_mail_body(
 }
 
 fn inline_asset_id(url: &str) -> String {
-    // Lightweight stable hash without extra dependencies (FNV-1a 64-bit).
-    // Collision risk is low for this use-case (best-effort offline cache).
+    
     let mut hash: u64 = 0xcbf29ce484222325;
     for &b in url.as_bytes() {
         hash ^= b as u64;
@@ -2664,7 +2651,7 @@ async fn cache_inline_assets_for_html(
     use std::{collections::HashMap, time::Duration};
 
     const MAX_INLINE_IMAGES_PER_MAIL: usize = 20;
-    const MAX_INLINE_ASSET_BYTES: usize = 2 * 1024 * 1024; // 2MB
+    const MAX_INLINE_ASSET_BYTES: usize = 2 * 1024 * 1024; 
 
     if html.is_empty() {
         return HashMap::new();
@@ -2679,7 +2666,6 @@ async fn cache_inline_assets_for_html(
     for url in urls {
         let asset_id = inline_asset_id(&url);
 
-        // Already cached?
         if let Ok(Some(_)) = sqlx::query_scalar::<_, i64>(
             "SELECT 1 FROM inline_asset_cache WHERE asset_id = ? LIMIT 1",
         )
@@ -2691,7 +2677,6 @@ async fn cache_inline_assets_for_html(
             continue;
         }
 
-        // Best-effort download; never fail the mail body cache because of images.
         let url_clone = url.clone();
         let fetched = tokio::task::spawn_blocking(move || {
             fetch_inline_asset_http(&url_clone, MAX_INLINE_ASSET_BYTES, Duration::from_secs(8))
@@ -2741,8 +2726,6 @@ fn rewrite_html_inline_image_srcs(
         return html.to_string();
     }
 
-    // Simple best-effort rewrite: replace exact URL occurrences.
-    // We intentionally keep it dependency-free and tolerant of imperfect HTML.
     let mut out = html.to_string();
     for (url, asset_id) in url_to_asset {
         let local = format!(
@@ -2763,8 +2746,8 @@ fn extract_inline_img_urls(html: &str) -> Vec<String> {
         let tag_end = lower[start..].find('>').map(|i| start + i).unwrap_or(lower.len());
         let tag_lower = &lower[start..tag_end];
         if let Some(src_idx) = tag_lower.find("src=") {
-            let mut i = start + src_idx + 4; // after "src="
-            // skip whitespace
+            let mut i = start + src_idx + 4; 
+            
             while i < tag_end && lower.as_bytes()[i].is_ascii_whitespace() {
                 i += 1;
             }
@@ -2930,7 +2913,7 @@ fn parse_http_response(buf: &[u8], max_bytes: usize) -> HttpFetchResult {
             } else if key == "location" {
                 location = Some(value.to_string());
             } else if key == "content-encoding" {
-                // We don't support decoding; skip.
+                
                 return HttpFetchResult::Other;
             }
         }
@@ -2965,7 +2948,7 @@ fn decode_chunked_body(input: &[u8]) -> Option<Vec<u8>> {
     let mut out = Vec::new();
     let mut i = 0usize;
     while i < input.len() {
-        // read chunk size line
+        
         let line_end = input[i..].windows(2).position(|w| w == b"\r\n")?;
         let line = &input[i..i + line_end];
         let size_str = String::from_utf8_lossy(line);
@@ -2979,7 +2962,7 @@ fn decode_chunked_body(input: &[u8]) -> Option<Vec<u8>> {
         }
         out.extend_from_slice(&input[i..i + size]);
         i += size;
-        // skip trailing CRLF
+        
         if i + 2 <= input.len() && &input[i..i + 2] == b"\r\n" {
             i += 2;
         }

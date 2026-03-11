@@ -87,14 +87,13 @@ function LoginPage() {
 
             setLoading(false)
 
-            // Try to parse as JSON first; if it fails, it's likely HTML (auth failure page)
             const responseText = await response.text()
             let json = null
 
             try {
                 json = JSON.parse(responseText)
             } catch {
-                // Response is not JSON (likely HTML from auth failure)
+                
                 navigate('/not_auth', {
                     state: {
                         formData,
@@ -124,7 +123,6 @@ function LoginPage() {
             setResponseMessage({ type: 'success', text: `✅ ${json.message}` })
 
             localStorage.setItem('temp_account_form', JSON.stringify(formData))
-
 
             setTimeout(() => {
                 navigate('/language')

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { apiUrl } from '../utils/api'
+import { hydrateAccountSession } from '../utils/accountStorage.js'
 import './OfflineSetupPage.css'
 
 function normalizeFolderPath(path) {
@@ -11,7 +12,7 @@ function normalizeFolderPath(path) {
 
 function normalizeLabelPath(path) {
   if (path.startsWith('Labels/')) return path.slice('Labels/'.length)
-  if (path.startsWith('Etiketler/')) return path.slice('Etiketler/'.length)
+  if (path.startsWith('Labels/')) return path.slice('Labels/'.length)
   return path
 }
 
@@ -37,9 +38,9 @@ function buildTreeNodes(paths, nodeType) {
       }
       level = node.children
     }
-    // keep leaf path for clarity
+    
     if (level && fullPath) {
-      // noop but preserves call-site meaning
+      
     }
   }
 
@@ -177,7 +178,7 @@ function OfflineSetupPage() {
     setSelectedPrefixes(next)
   }
 
-  const persistAndContinue = () => {
+  const finalizeAndContinue = async () => {
     const includeRules = []
     const addInclude = (nodePath, nodeType, source = 'user') => {
       includeRules.push({
@@ -220,19 +221,59 @@ function OfflineSetupPage() {
     const downloadRules = Array.from(dedupe.values())
 
     const normalizedValue = policyMode === 'all' ? null : Number(policyValue || 0)
-    localStorage.setItem(
-      'temp_offline_config',
-      JSON.stringify({
-        enabled: true,
-        download_rules: downloadRules,
-        initial_sync_policy: {
-          mode: policyMode,
-          value: normalizedValue && normalizedValue > 0 ? normalizedValue : null,
-        },
-        cache_raw_rfc822: cacheRawRfc822,
-      }),
-    )
-    navigate('/ai_chooser')
+    const offline = {
+      enabled: true,
+      download_rules: downloadRules,
+      initial_sync_policy: {
+        mode: policyMode,
+        value: normalizedValue && normalizedValue > 0 ? normalizedValue : null,
+      },
+      cache_raw_rfc822: cacheRawRfc822,
+    }
+
+    const formData = JSON.parse(localStorage.getItem('temp_account_form') || '{}')
+    const language = localStorage.getItem('temp_language') || 'en'
+    const font = localStorage.getItem('temp_font') || 'Arial'
+    const themeMode = localStorage.getItem('temp_theme_mode') || 'system'
+    const themeName = localStorage.getItem('temp_theme_name') || 'light'
+    const theme = themeMode === 'manual' ? themeName : 'SYSTEM'
+
+    try {
+      const response = await fetch(apiUrl('/api/account/finalize'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          account: formData,
+          language,
+          font,
+          theme,
+          offline,
+        }),
+      })
+      const result = await response.json().catch(() => ({}))
+      if (!response.ok) {
+        throw new Error(result.message || 'Finalize failed')
+      }
+
+      hydrateAccountSession({
+        account_id: result.account_id,
+        email_address: formData.email,
+        display_name: formData.displayName,
+        imap_host: formData.imapServer,
+        imap_port: formData.imapPort,
+        smtp_host: formData.smtpServer,
+        smtp_port: formData.smtpPort,
+        language,
+        font,
+        theme,
+      })
+
+      alert(t('All processes completed successfully, account settings saved!'))
+      navigate('/dashboard')
+    } catch (err) {
+      console.error('Error finalizing account:', err)
+      alert(t('An error occurred during saving.'))
+    }
   }
 
   const toggleExpand = (key) => {
@@ -327,7 +368,7 @@ function OfflineSetupPage() {
           </label>
         </div>
 
-        <button type="button" className="continue-button" onClick={persistAndContinue} disabled={loading}>
+        <button type="button" className="continue-button" onClick={finalizeAndContinue} disabled={loading}>
           {t('Continue')}
         </button>
       </div>

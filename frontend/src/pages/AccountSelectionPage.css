@@ -5,8 +5,7 @@
   align-items: center;
   justify-content: center;
   padding: 2rem 1rem;
-  background: radial-gradient(circle at top, rgba(255, 255, 255, 0.12), transparent 45%),
-    linear-gradient(180deg, #0b1124 0%, #020510 55%, #020510 100%);
+  background: var(--grad-account-selection-bg);
 }
 
 .selection-panel {
@@ -16,15 +15,15 @@
   gap: 1.5rem;
   padding: 2rem;
   border-radius: 1.8rem;
-  background: linear-gradient(145deg, rgba(8, 14, 36, 0.92), rgba(9, 16, 40, 0.95));
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 20px 60px rgba(1, 7, 25, 0.8);
+  background: var(--grad-selection-panel);
+  border: 1px solid var(--border-inverse-1);
+  box-shadow: var(--shadow-panel-strong);
   backdrop-filter: blur(12px);
 }
 
 .heading h1 {
   font-size: clamp(1.9rem, 3vw, 2.4rem);
-  color: #fff;
+  color: var(--c-text-inverse);
   margin-bottom: 0.4rem;
 }
 
@@ -32,18 +31,18 @@
   font-size: 0.85rem;
   letter-spacing: 0.35rem;
   text-transform: uppercase;
-  color: #9ae4ff;
+  color: var(--c-accent-1);
   margin-bottom: 0.6rem;
 }
 
 .heading .subtitle {
-  color: rgba(255, 255, 255, 0.75);
+  color: var(--overlay-inverse-2);
   line-height: 1.6;
   max-width: 28rem;
 }
 
 .status {
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--overlay-inverse-3);
   text-align: center;
   margin-top: 0.5rem;
 }
@@ -62,8 +61,8 @@
   padding: 0.55rem 1.4rem;
   font-weight: 600;
   cursor: pointer;
-  background: #fff;
-  color: #090b1b;
+  background: var(--c-button-inverse-bg);
+  color: var(--c-button-inverse-text);
   transition: transform 0.2s ease;
 }
 
@@ -78,12 +77,12 @@
 }
 
 .account-card {
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.01));
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--grad-account-card);
+  border: 1px solid var(--border-inverse-2);
   border-radius: 1.2rem;
   padding: 1rem 1.25rem;
   text-align: left;
-  color: #fff;
+  color: var(--c-text-inverse);
   display: flex;
   flex-direction: column;
   gap: 0.35rem;
@@ -98,19 +97,19 @@
 
 .account-card__email {
   font-size: 0.9rem;
-  color: rgba(255, 255, 255, 0.75);
+  color: var(--overlay-inverse-2);
 }
 
 .account-card__meta {
   font-size: 0.8rem;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--overlay-inverse-1);
   text-transform: uppercase;
   letter-spacing: 0.1rem;
 }
 
 .account-card:hover {
   transform: translateY(-6px);
-  box-shadow: 0 15px 30px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-3);
 }
 
 .selection-panel__footer {
@@ -121,9 +120,9 @@
 .ghost-btn {
   border-radius: 999px;
   padding: 0.65rem 1.6rem;
-  border: 1px solid rgba(255, 255, 255, 0.4);
+  border: 1px solid var(--border-inverse-3);
   background: transparent;
-  color: #f4f9ff;
+  color: var(--c-text-inverse-soft);
   text-transform: uppercase;
   font-weight: 600;
   letter-spacing: 0.08rem;
@@ -132,11 +131,11 @@
 }
 
 .ghost-btn:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--overlay-inverse-0);
 }
 
 .status-empty button {
   margin-top: 0.5rem;
-  background: #fff;
-  color: #090b1b;
+  background: var(--c-button-inverse-bg);
+  color: var(--c-button-inverse-text);
 }

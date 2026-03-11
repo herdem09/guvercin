@@ -23,15 +23,8 @@
   - `sync_status BOOLEAN DEFAULT 0`
   - `last_sync_time DATETIME`
   - `language TEXT DEFAULT 'EN'`
-  - `theme TEXT DEFAULT 'LIGHT'`
+  - `theme TEXT DEFAULT 'SYSTEM'`
   - `font TEXT`
-
-- **ai** table:
-  - `id INTEGER PRIMARY KEY AUTOINCREMENT`
-  - `model_name TEXT`
-  - `type BOOLEAN`
-  - `api_key_server_url TEXT`
-  - `base_url_context_window TEXT`
 
 ### User Database (`<account_id>.db`)
 
@@ -141,7 +134,7 @@
 
 #### 3. `POST /api/account/finalize`
 
-- **Purpose**: To save account information, language/font preference, and AI configuration, and create the user DB.
+- **Purpose**: To save account information and preferences, and create the user DB.
 - **Request**: `application/json` body:
   - `account`: Object
     - `email`
@@ -152,11 +145,7 @@
     - `smtpPort`
   - `language` (default: `en`)
   - `font` (default: `Arial`)
-  - `ai`: Object (optional)
-    - `type`
-    - `model_name`
-    - `api_key_server_url`
-    - `base_url_context_window`
+  - `theme` (default: `SYSTEM`)
 
 - **Behavior**:
   - If a registration with the same `email` exists:
@@ -165,12 +154,10 @@
     - A new row is added with `INSERT`.
   - `create_user_db(account_id)` is called with the used `account_id`:
     - If necessary, `databases/<account_id>.db` and the tables within it are created.
-  - If the `ai` field is filled:
-    - A new row is added to the `ai` table.
+  - `theme` is stored in `accounts.theme`.
 
 - **Response (200)**:
   - JSON:
     - `status: "success"`
     - `message: "Account finalized successfully."`
     - `account_id`: The `account_id` value of the created or updated account.
-

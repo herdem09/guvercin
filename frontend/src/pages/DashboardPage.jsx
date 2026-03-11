@@ -4,31 +4,31 @@ import { useTranslation } from 'react-i18next'
 import { apiUrl } from '../utils/api'
 import { normalizeMailboxResponse } from '../utils/mailboxes'
 import { useOfflineSync } from '../context/OfflineSyncContext.jsx'
+import { useTheme } from '../context/ThemeContext.jsx'
 import Avatar from '../components/Avatar.jsx'
 import './DashboardPage.css'
 
-// ── Folder mappings ────────────────────
 const FOLDER_MAP = {
     'INBOX': { icon: '📥', label: 'Inbox' },
-    'Gelen Kutusu': { icon: '📥', label: 'Inbox' },
+    'Inbox': { icon: '📥', label: 'Inbox' },
     'Starred': { icon: '⭐', label: 'Starred' },
-    'Yıldızlı': { icon: '⭐', label: 'Starred' },
+    'Starred': { icon: '⭐', label: 'Starred' },
     'Snoozed': { icon: '🕒', label: 'Snoozed' },
-    'Ertelenenler': { icon: '🕒', label: 'Snoozed' },
+    'Snoozed': { icon: '🕒', label: 'Snoozed' },
     'Sent': { icon: '✈️', label: 'Sent Items' },
     'Sent Items': { icon: '✈️', label: 'Sent Items' },
-    'Gönderilmiş Öğeler': { icon: '✈️', label: 'Sent Items' },
+    'Sent Items': { icon: '✈️', label: 'Sent Items' },
     'Drafts': { icon: '📝', label: 'Drafts' },
-    'Taslaklar': { icon: '📝', label: 'Drafts' },
+    'Drafts': { icon: '📝', label: 'Drafts' },
     'Archive': { icon: '📦', label: 'Archive' },
-    'Arşiv': { icon: '📦', label: 'Archive' },
+    'Archive': { icon: '📦', label: 'Archive' },
     'Trash': { icon: '🗑️', label: 'Trash' },
-    'Silinmiş Öğeler': { icon: '🗑️', label: 'Trash' },
+    'Trash': { icon: '🗑️', label: 'Trash' },
     'Spam': { icon: '🚫', label: 'Spam' },
     'Junk': { icon: '🚫', label: 'Spam' },
-    'Önemsiz E-posta': { icon: '🚫', label: 'Spam' },
+    'Spam': { icon: '🚫', label: 'Spam' },
     'All Mail': { icon: '📑', label: 'All Mail' },
-    '[Gmail]/Tüm Postalar': { icon: '📑', label: 'All Mail' },
+    '[Gmail]/All Mail': { icon: '📑', label: 'All Mail' },
     '[Gmail]/All Mail': { icon: '📑', label: 'All Mail' },
 }
 
@@ -36,7 +36,7 @@ function folderInfo(name) {
     const clean = name
         .replace(/^Folders\//i, '')
         .replace(/^Labels\//i, '')
-        .replace(/^Etiketler\//i, '')
+        .replace(/^Labels\//i, '')
         .replace(/^\[Labels\]\//i, '')
     if (isLabelMailbox(name)) {
         return { icon: '🏷️', label: clean }
@@ -61,33 +61,6 @@ function attachmentUrl(accountId, uid, attachmentId, mailbox, online) {
         ? `/api/mail/${accountId}/content/${encodeURIComponent(uid)}/attachments/${attachmentId}`
         : `/api/offline/${accountId}/local-content/${encodeURIComponent(uid)}/attachments/${attachmentId}`
     return apiUrl(`${path}?mailbox=${encodeURIComponent(mailbox)}`)
-}
-
-// ── Avatar utilities ────────────────────
-function getAvatarInitials(name, email) {
-    if (name) {
-        const words = name.trim().split(' ')
-        if (words.length >= 2) {
-            return (words[0][0] + words[words.length - 1][0]).toUpperCase()
-        }
-        return name.substring(0, 2).toUpperCase()
-    }
-    if (email) return email.substring(0, 2).toUpperCase()
-    return '??'
-}
-
-function getAvatarColor(name, email) {
-    const colors = [
-        '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7',
-        '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2',
-        '#F8B739', '#52B788', '#E76F51', '#8E44AD', '#3498DB'
-    ]
-    let seed = name || email || 'unknown'
-    let hash = 0
-    for (let i = 0; i < seed.length; i++) {
-        hash = seed.charCodeAt(i) + ((hash << 5) - hash)
-    }
-    return colors[Math.abs(hash) % colors.length]
 }
 
 function systemHour12Preference() {
@@ -174,11 +147,11 @@ function getSortDirectionLabel(sortBy, direction) {
 }
 
 function isLabelMailbox(value) {
-    return /^(Labels|Etiketler|\[Labels\])(\/|$)/i.test((value || '').trim())
+    return /^(Labels|Labels|\[Labels\])(\/|$)/i.test((value || '').trim())
 }
 
 function isMailboxSectionRoot(value) {
-    return ['Folders', 'Labels', 'Etiketler'].includes((value || '').trim())
+    return ['Folders', 'Labels', 'Labels'].includes((value || '').trim())
 }
 
 function isMoveTargetMailbox(value) {
@@ -230,13 +203,13 @@ function parseDraggedMailIds(dataTransfer) {
     return normalizeIds(plainValue.split(',').map((part) => part.trim()))
 }
 
-const LABEL_NAMESPACE_ROOTS = ['Labels', 'Etiketler', '[Labels]']
+const LABEL_NAMESPACE_ROOTS = ['Labels', 'Labels', '[Labels]']
 
 function stripLabelMailboxNamespace(value) {
     return (value || '')
         .trim()
         .replace(/^Labels\//i, '')
-        .replace(/^Etiketler\//i, '')
+        .replace(/^Labels\//i, '')
         .replace(/^\[Labels\]\//i, '')
 }
 
@@ -302,14 +275,14 @@ function createDefaultAdvancedSearchDraft() {
 function dedupeStringsCaseInsensitive(values) {
     const next = []
     const seen = new Set()
-    ;(values || []).forEach((value) => {
-        const trimmed = (value || '').toString().trim()
-        if (!trimmed) return
-        const key = trimmed.toLowerCase()
-        if (seen.has(key)) return
-        seen.add(key)
-        next.push(trimmed)
-    })
+        ; (values || []).forEach((value) => {
+            const trimmed = (value || '').toString().trim()
+            if (!trimmed) return
+            const key = trimmed.toLowerCase()
+            if (seen.has(key)) return
+            seen.add(key)
+            next.push(trimmed)
+        })
     return next
 }
 
@@ -471,6 +444,10 @@ function buildMailHtmlDocument(mail, content, formatMailDateLong) {
         ? extractHtmlFragment(content.html_body)
         : `<pre>${escapeHtml(content?.plain_body || '(No content)')}</pre>`
 
+    const style = typeof window !== 'undefined' ? window.getComputedStyle(document.documentElement) : null
+    const cssVar = (name) => (style?.getPropertyValue(name)?.trim() || '')
+    const scheme = (document?.documentElement?.dataset?.theme || '') === 'dark' ? 'dark' : 'light'
+
     return `<!doctype html>
 <html lang="en">
 <head>
@@ -479,21 +456,20 @@ function buildMailHtmlDocument(mail, content, formatMailDateLong) {
   <title>${escapeHtml(subject)}</title>
   <style>
     :root {
-      color-scheme: light;
-      --bg: #f4f1ea;
-      --card: #fffdf8;
-      --line: #d6cfc2;
-      --text: #1f1a17;
-      --muted: #6e6259;
-      --accent: #2b5f75;
+      color-scheme: ${scheme};
+      --bg: ${cssVar('--c-bg-alt')};
+      --card: ${cssVar('--c-surface-2')};
+      --line: ${cssVar('--c-border-1')};
+      --text: ${cssVar('--c-text-1')};
+      --muted: ${cssVar('--c-text-2')};
+      --accent: ${cssVar('--c-primary')};
+      --shadow: ${cssVar('--shadow-1')};
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
       padding: 32px;
-      background:
-        radial-gradient(circle at top left, rgba(43, 95, 117, 0.10), transparent 28rem),
-        linear-gradient(180deg, #f6f3ec 0%, #efe9de 100%);
+      background: var(--bg);
       color: var(--text);
       font-family: Georgia, "Times New Roman", serif;
     }
@@ -504,12 +480,12 @@ function buildMailHtmlDocument(mail, content, formatMailDateLong) {
       border: 1px solid var(--line);
       border-radius: 18px;
       overflow: hidden;
-      box-shadow: 0 20px 60px rgba(31, 26, 23, 0.08);
+      box-shadow: var(--shadow);
     }
     .mail-header {
       padding: 28px 32px 22px;
       border-bottom: 1px solid var(--line);
-      background: linear-gradient(180deg, rgba(255,255,255,0.9) 0%, rgba(250,246,239,0.98) 100%);
+      background: var(--card);
     }
     .mail-subject {
       margin: 0 0 18px;
@@ -554,7 +530,7 @@ function buildMailHtmlDocument(mail, content, formatMailDateLong) {
     @media print {
       body {
         padding: 0;
-        background: #fff;
+        background: var(--card);
       }
       .mail-sheet {
         max-width: none;
@@ -757,7 +733,7 @@ async function saveBlobWithPicker(blob, options) {
     } catch (error) {
         if (error?.name === 'AbortError') throw error
         console.error('Native save dialog failed, falling back to browser download:', error)
-        // Fall back to browser-specific save flows.
+
     }
 
     if (typeof window.showSaveFilePicker === 'function') {
@@ -855,6 +831,15 @@ const DashboardPage = () => {
         flushQueue,
     } = useOfflineSync()
 
+    const {
+        themeMode,
+        themeName,
+        availableThemes,
+        refreshThemes,
+        setThemeMode,
+        setThemeName,
+    } = useTheme()
+
     const [activeSection, setActiveSection] = useState('mail')
     const [accountId, setAccountId] = useState(null)
     const [accountForm, setAccountForm] = useState({})
@@ -871,8 +856,6 @@ const DashboardPage = () => {
     const [isAdvancedSearchOpen, setIsAdvancedSearchOpen] = useState(false)
     const [advancedSearchDraft, setAdvancedSearchDraft] = useState(() => createDefaultAdvancedSearchDraft())
     const [mails, setMails] = useState([])
-    const [cacheMailTotal, setCacheMailTotal] = useState(null)
-    const [remoteMailTotal, setRemoteMailTotal] = useState(null)
     const [selectedMail, setSelectedMail] = useState(null)
     const [mailContent, setMailContent] = useState(null)
     const [loadingMails, setLoadingMails] = useState(false)
@@ -887,6 +870,7 @@ const DashboardPage = () => {
     const [loadingTab, setLoadingTab] = useState(false)
 
     const [accountMenuOpen, setAccountMenuOpen] = useState(false)
+    const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
     const [isMailFullscreen, setIsMailFullscreen] = useState(false)
     const [isSyncing, setIsSyncing] = useState(false)
     const [actionNotices, setActionNotices] = useState([])
@@ -894,6 +878,8 @@ const DashboardPage = () => {
 
     const accountButtonRef = useRef(null)
     const accountMenuRef = useRef(null)
+    const settingsButtonRef = useRef(null)
+    const settingsMenuRef = useRef(null)
     const iframeRef = useRef(null)
     const syncAbortRef = useRef(null)
     const isSyncingRef = useRef(false)
@@ -935,7 +921,7 @@ const DashboardPage = () => {
                 setEmail(acc.email_address || '')
             }
         } catch {
-            // noop
+
         }
     }
 
@@ -944,6 +930,7 @@ const DashboardPage = () => {
 
     const handleAccountButtonClick = () => setAccountMenuOpen(!accountMenuOpen)
     const closeAccountMenu = () => setAccountMenuOpen(false)
+    const closeSettingsMenu = () => setSettingsMenuOpen(false)
 
     useEffect(() => {
         if (actionNotices.length === 0) return undefined
@@ -962,10 +949,40 @@ const DashboardPage = () => {
                 accountButtonRef.current && !accountButtonRef.current.contains(event.target)) {
                 closeAccountMenu()
             }
+            if (settingsMenuRef.current && !settingsMenuRef.current.contains(event.target) &&
+                settingsButtonRef.current && !settingsButtonRef.current.contains(event.target)) {
+                closeSettingsMenu()
+            }
         }
         document.addEventListener('mousedown', handleClickOutside)
         return () => document.removeEventListener('mousedown', handleClickOutside)
     }, [])
+
+    const persistThemeToBackend = useCallback(async (themeValue) => {
+        if (!backendReachable || !accountId) return
+        try {
+            await fetch(apiUrl(`/api/account/${accountId}/theme`), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ theme: themeValue }),
+            })
+        } catch {
+
+        }
+    }, [accountId, backendReachable])
+
+    const chooseSystemTheme = useCallback(async () => {
+        closeSettingsMenu()
+        await setThemeMode('system')
+        await persistThemeToBackend('SYSTEM')
+    }, [persistThemeToBackend, setThemeMode])
+
+    const chooseManualTheme = useCallback(async (name) => {
+        closeSettingsMenu()
+        await setThemeMode('manual')
+        await setThemeName(name)
+        await persistThemeToBackend(name)
+    }, [persistThemeToBackend, setThemeMode, setThemeName])
 
     const handleAccountSettings = () => {
         closeAccountMenu()
@@ -1008,7 +1025,7 @@ const DashboardPage = () => {
     const loadFolders = useCallback(async () => {
         if (!accountId || !backendReachable) return
         try {
-            // Offline cache'den hızlıca yükle
+
             let res = await fetch(apiUrl(`/api/offline/${accountId}/local-mailboxes`), { cache: 'no-store' })
             if (res.ok) {
                 const data = await res.json()
@@ -1017,7 +1034,6 @@ const DashboardPage = () => {
                 setLabels(normalized.labels)
             }
 
-            // Eğer online'yız, remote'tan da senkronizasyon yap
             if (networkOnline) {
                 const ok = canUseRemoteMail || (await ensureImapConnected())
                 if (!ok) return
@@ -1044,7 +1060,7 @@ const DashboardPage = () => {
         }
     }, [accountId, backendReachable, connecting, ensureImapConnected, loadFolders, networkOnline, refreshStatus])
 
-    const loadMailsFromCache = useCallback(async (folder, page, limit) => {
+    const loadMailsFromCache = useCallback(async (folder, _page, _limit) => {
         if (listMode === 'search') return false
         if (!accountId || !backendReachable) return
         try {
@@ -1075,7 +1091,6 @@ const DashboardPage = () => {
             }
 
             setMails(allMails)
-            setCacheMailTotal(typeof totalCount === 'number' ? totalCount : allMails.length)
             return true
         } catch {
             setMails([])
@@ -1083,10 +1098,10 @@ const DashboardPage = () => {
         return false
     }, [accountId, backendReachable, listMode])
 
-    const syncMailsFromRemote = useCallback(async (folder, page, limit) => {
+    const syncMailsFromRemote = useCallback(async (folder, _page, _limit) => {
         if (listMode === 'search') return
         if (!accountId || !canUseRemoteMail) return
-        if (isSyncingRef.current) return // prevent concurrent syncs
+        if (isSyncingRef.current) return
         isSyncingRef.current = true
         setIsSyncing(true)
         try {
@@ -1120,7 +1135,6 @@ const DashboardPage = () => {
 
             if (abort.signal.aborted === false) {
                 setMails(allMails)
-                setRemoteMailTotal(typeof totalCount === 'number' ? totalCount : allMails.length)
             }
         } catch (err) {
             if (err.name !== 'AbortError') {
@@ -1139,13 +1153,13 @@ const DashboardPage = () => {
             if (!accountId || !backendReachable) return
             setLoadingMails(true)
             try {
-                // Sync abort işi varsa iptal et
+
                 if (syncAbortRef.current) {
                     syncAbortRef.current.abort()
                 }
 
                 if (forceRemote || canUseRemoteMail) {
-                    // Direkt remote'dan yükle (force refresh)
+
                     const res = await fetch(
                         apiUrl(`/api/mail/${accountId}/list?mailbox=${encodeURIComponent(folder)}&page=${page}&per_page=${limit}`),
                         { cache: 'no-store' },
@@ -1154,13 +1168,12 @@ const DashboardPage = () => {
                         const data = await res.json()
                         const mailList = Array.isArray(data?.mails) ? data.mails : []
                         setMails(mailList.map((mail) => ({ ...mail, mailbox: folder })))
-                        setRemoteMailTotal(typeof data.total_count === 'number' ? data.total_count : null)
                     } else {
                         const loaded = await loadMailsFromCache(folder, page, limit)
                         if (!loaded) setMails([])
                     }
                 } else {
-                    // Offline: cache'den yükle
+
                     await loadMailsFromCache(folder, page, limit)
                 }
             } catch {
@@ -1307,8 +1320,6 @@ const DashboardPage = () => {
 
     useEffect(() => {
         if (activeSection !== 'mail' || !backendReachable || listMode === 'search') return
-        setCacheMailTotal(null)
-        setRemoteMailTotal(null)
         setCurrentPage(1)
     }, [activeSection, backendReachable, listMode, selectedFolder])
 
@@ -1357,11 +1368,9 @@ const DashboardPage = () => {
             const mailbox = mail?.mailbox || selectedFolder || 'INBOX'
             let endpoint
 
-            // Offline endpoint'i dene (cache)
             endpoint = `/api/offline/${accountId}/local-content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
             let res = await fetch(apiUrl(endpoint), { cache: 'no-store' })
 
-            // Eğer offline cache'de yoksa ve online'yız, remote'tan çek
             if (!res.ok && canUseRemoteMail) {
                 endpoint = `/api/mail/${accountId}/content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
                 res = await fetch(apiUrl(endpoint), { cache: 'no-store' })
@@ -1374,14 +1383,13 @@ const DashboardPage = () => {
                     setMailsSeenState([mail.id], true)
                 }
 
-                // Best-effort: cache and rewrite external inline images for offline use.
                 prefetchInlineAssets(mail.id, mailbox).then((html) => {
                     if (!html) return
                     setMailContent((prev) => (prev && prev.id === mail.id ? { ...prev, html_body: html } : prev))
                 })
             }
         } catch {
-            // noop
+
         }
         setLoadingContent(false)
     }
@@ -1616,7 +1624,7 @@ const DashboardPage = () => {
     const detachMailToWindowFromList = async (e, mail) => {
         e.stopPropagation()
         try {
-            // First we need to fetch the content because it's not loaded yet
+
             const mailbox = mail?.mailbox || selectedFolder || 'INBOX'
             let content = null
             let endpoint = `/api/offline/${accountId}/local-content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
@@ -1642,7 +1650,7 @@ const DashboardPage = () => {
                 label: mailWindowLabel,
                 mailDataJson: JSON.stringify(mailData),
             })
-            // Clear selections in the main view if they match this mail
+
             if (selectedMail?.id === mail.id) {
                 setSelectedMail(null)
                 setMailContent(null)
@@ -1662,7 +1670,6 @@ const DashboardPage = () => {
         })
     }
 
-    // ESC key handler
     useEffect(() => {
         const handleKeyDown = (e) => {
             if (e.key === 'Escape' && isMailFullscreen) {
@@ -1800,7 +1807,65 @@ const DashboardPage = () => {
                         </div>
                     </div>
                     <button className="db-icon-btn" title="Notifications">🔔</button>
-                    <button className="db-icon-btn" title="Settings">⚙️</button>
+                    <div className="db-settings-wrapper">
+                        <button
+                            type="button"
+                            className="db-icon-btn"
+                            title="Settings"
+                            ref={settingsButtonRef}
+                            onClick={async () => {
+                                const next = !settingsMenuOpen
+                                setSettingsMenuOpen(next)
+                                if (next) await refreshThemes()
+                            }}
+                        >
+                            ⚙️
+                        </button>
+                        {settingsMenuOpen && (
+                            <div className="db-settings-menu" ref={settingsMenuRef}>
+                                <div className="db-settings-menu__title">{t('Theme')}</div>
+                                <button
+                                    type="button"
+                                    className={`db-settings-menu__item ${themeMode !== 'manual' ? 'active' : ''}`}
+                                    onClick={chooseSystemTheme}
+                                >
+                                    {t('System (default)')}
+                                </button>
+                                <div className="db-settings-menu__divider" />
+                                {['light', 'dark'].filter((n) => availableThemes.includes(n)).map((name) => (
+                                    <button
+                                        key={name}
+                                        type="button"
+                                        className={`db-settings-menu__item ${themeMode === 'manual' && themeName === name ? 'active' : ''}`}
+                                        onClick={() => chooseManualTheme(name)}
+                                    >
+                                        {t(name === 'light' ? 'Light' : 'Dark')}
+                                    </button>
+                                ))}
+                                {availableThemes.filter((n) => n !== 'light' && n !== 'dark').map((name) => (
+                                    <button
+                                        key={name}
+                                        type="button"
+                                        className={`db-settings-menu__item ${themeMode === 'manual' && themeName === name ? 'active' : ''}`}
+                                        onClick={() => chooseManualTheme(name)}
+                                    >
+                                        {name}
+                                    </button>
+                                ))}
+                                <div className="db-settings-menu__divider" />
+                                <button
+                                    type="button"
+                                    className="db-settings-menu__item"
+                                    onClick={() => {
+                                        closeSettingsMenu()
+                                        navigate('/theme-import')
+                                    }}
+                                >
+                                    {t('Import Theme')}
+                                </button>
+                            </div>
+                        )}
+                    </div>
                     <div className="db-account-wrapper">
                         <button className="db-account-btn" ref={accountButtonRef} onClick={handleAccountButtonClick}>
                             <Avatar
@@ -1811,8 +1876,8 @@ const DashboardPage = () => {
                             />
                         </button>
                         {accountMenuOpen && (
-                            <div 
-                                className="account-popover" 
+                            <div
+                                className="account-popover"
                                 ref={accountMenuRef}
                                 onWheel={(e) => e.stopPropagation()}
                             >
@@ -1856,7 +1921,6 @@ const DashboardPage = () => {
                 </div>
 
                 <div className="db-content-area">
-
 
                     <div className="db-section-area">
                         {activeSection === 'mail' && (
@@ -2164,9 +2228,9 @@ function MailSection({
     ensureImapConnected,
     folders, labels, selectedFolder, setSelectedFolder, mails, setMails,
     selectedMail, setSelectedMail, mailContent, setMailContent, loadingMails, loadingContent,
-    connecting, loadMails, loadMailsFromCache, syncMailsFromRemote, prefetchInlineAssets, isSyncing,
+    connecting, loadMailsFromCache, syncMailsFromRemote, prefetchInlineAssets, isSyncing,
     openMail, detachMailToWindow, detachMailToWindowFromList, iframeRef, getShortTime,
-    currentPage, setCurrentPage, maxPage, perPage, setPerPage,
+    currentPage, setCurrentPage, maxPage: _maxPage, perPage, setPerPage,
     isMailFullscreen, toggleMailFullscreen,
     deleteMailsOptimistic, moveMailsOptimistic, setMailsSeenState, queueAction, createMailbox,
     canUseRemoteMail, composeOpen, setComposeOpen, composeForm, setComposeForm, sendComposedMail,
@@ -2319,7 +2383,7 @@ function MailSection({
             timeZoneName: 'short',
         }
         if (typeof hour12 === 'boolean') options.hour12 = hour12
-        // Uses local timezone, but preserves the correct instant from the RFC2822 date (UTC-aware).
+
         return new Intl.DateTimeFormat(undefined, options).format(dt)
     }
 
@@ -2383,7 +2447,7 @@ function MailSection({
                 if (!response.ok) continue
                 return new Uint8Array(await response.arrayBuffer())
             } catch {
-                // Try next source.
+
             }
         }
 
@@ -2664,8 +2728,8 @@ function MailSection({
         const { className = '', style } = options
 
         return (
-            <div 
-                className={`db-submenu-popover db-label-popover ${className}`.trim()} 
+            <div
+                className={`db-submenu-popover db-label-popover ${className}`.trim()}
                 style={style}
                 onWheel={(e) => e.stopPropagation()}
             >
@@ -2744,19 +2808,19 @@ function MailSection({
         try {
             event.dataTransfer.effectAllowed = 'copyMove'
         } catch {
-            // noop
+
         }
 
         try {
             event.dataTransfer.setData(MAIL_IDS_DRAG_MIME, JSON.stringify({ ids }))
         } catch {
-            // noop
+
         }
 
         try {
             event.dataTransfer.setData('text/plain', ids.join(','))
         } catch {
-            // noop
+
         }
     }, [selectedMailIds])
 
@@ -2844,9 +2908,6 @@ function MailSection({
         const el = mailToolbarRef.current
         if (!el) return
 
-        // NOTE: scrollWidth is at least clientWidth. When the panel is wide,
-        // scrollWidth grows with it and causes the "min width" to chase the current
-        // width forever. Instead, measure the real content end via children bounds.
         const rect = el.getBoundingClientRect()
         const style = window.getComputedStyle(el)
         const padRight = parseFloat(style.paddingRight) || 0
@@ -2857,13 +2918,11 @@ function MailSection({
             maxRight = Math.max(maxRight, cr.right - rect.left)
         }
 
-        // Small buffer for borders/subpixel rounding.
         const needed = Math.ceil(maxRight + padRight + 2)
         setMinListWidth((prev) => (prev === needed ? prev : needed))
         setListWidth((prev) => (prev < needed ? needed : prev))
     }, [])
 
-    // ── Tab system ──────────────────────────────────
     const tabIframeRefs = useRef({})
 
     const openMailInTab = async (mail, existingContent) => {
@@ -2888,7 +2947,7 @@ function MailSection({
                     }
                 }
             } catch {
-                // noop
+
             }
             setLoadingTab(false)
         }
@@ -2899,7 +2958,6 @@ function MailSection({
         setTabContents(prev => ({ ...prev, [tabId]: content }))
         setActiveTabId(tabId)
 
-        // Clear selection in main list when opened in tab
         setSelectedMail(null)
         setMailContent(null)
     }
@@ -2914,7 +2972,6 @@ function MailSection({
         if (activeTabId === tabId) setActiveTabId(null)
     }
 
-    // Write html into tab iframes after render
     useEffect(() => {
         if (!activeTabId) return
         const ref = tabIframeRefs.current[activeTabId]
@@ -3057,7 +3114,7 @@ function MailSection({
     useEffect(() => {
         const handleMouseMove = (e) => {
             if (isResizingFolder.current) {
-                // 48 is the app sidebar width.
+
                 const newWidth = Math.max(160, Math.min(500, e.clientX - 48))
                 setFolderWidth(newWidth)
             } else if (isResizingList.current) {
@@ -3078,8 +3135,6 @@ function MailSection({
         }
     }, [folderWidth, minListWidth])
 
-    // Auto-compute the minimum width of the mails panel based on toolbar content,
-    // so the toolbar never needs horizontal scrolling.
     useEffect(() => {
         const el = mailToolbarRef.current
         if (!el || typeof ResizeObserver === 'undefined') return
@@ -3095,7 +3150,6 @@ function MailSection({
         }
     }, [recomputeMinListWidth])
 
-    // Recompute when toolbar content changes without a size change (e.g. fullscreen toggles layout buttons).
     useEffect(() => {
         const frame = window.requestAnimationFrame(recomputeMinListWidth)
         return () => window.cancelAnimationFrame(frame)
@@ -3116,17 +3170,16 @@ function MailSection({
     const handleMailSelectionToggle = (event, mailId) => {
         event.stopPropagation()
         setSelectMode(true)
-        
-        // Handle shift-select for range selection
+
         if (event.shiftKey && lastSelectedMailId && lastSelectedMailId !== mailId) {
             const currentIndex = pagedVisibleMails.findIndex(mail => mail.id === mailId)
             const lastIndex = pagedVisibleMails.findIndex(mail => mail.id === lastSelectedMailId)
-            
+
             if (currentIndex !== -1 && lastIndex !== -1) {
                 const startIndex = Math.min(currentIndex, lastIndex)
                 const endIndex = Math.max(currentIndex, lastIndex)
                 const rangeIds = pagedVisibleMails.slice(startIndex, endIndex + 1).map(mail => mail.id)
-                
+
                 setSelectedMailIds(prev => {
                     const next = new Set(prev)
                     rangeIds.forEach(id => next.add(id))
@@ -3136,8 +3189,7 @@ function MailSection({
                 return
             }
         }
-        
-        // Normal single selection
+
         toggleMailSelected(mailId)
         setLastSelectedMailId(mailId)
     }
@@ -3187,15 +3239,15 @@ function MailSection({
         })
 
         const priorityMap = {
-            'INBOX': 1, 'GELEN KUTUSU': 1,
-            'STARRED': 2, 'YILDIZLI': 2,
-            'SNOOZED': 3, 'ERTELENENLER': 3,
-            'SENT': 4, 'SENT ITEMS': 4, 'GÖNDERİLMİŞ ÖĞELER': 4, 'GÖNDERİLMİŞ POSTALAR': 4,
-            'ALL MAIL': 5, 'TÜM POSTALAR': 5,
-            'DRAFTS': 6, 'TASLAKLAR': 6,
-            'ARCHIVE': 7, 'ARŞİV': 7,
-            'TRASH': 8, 'SILINMIŞ ÖĞELER': 8, 'ÇÖP KUTUSU': 8,
-            'SPAM': 9, 'ÖNEMSIZ E-POSTA': 9, 'JUNK': 9,
+            'INBOX': 1, 'INBOX': 1,
+            'STARRED': 2, 'STARRED': 2,
+            'SNOOZED': 3, 'SNOOZED': 3,
+            'SENT': 4, 'SENT ITEMS': 4, 'SENT ITEMS': 4, 'SENT ITEMS': 4,
+            'ALL MAIL': 5, 'ALL MAIL': 5,
+            'DRAFTS': 6, 'DRAFTS': 6,
+            'ARCHIVE': 7, 'ARCHIVE': 7,
+            'TRASH': 8, 'TRASH': 8, 'TRASH': 8,
+            'SPAM': 9, 'SPAM': 9, 'JUNK': 9,
             'FOLDERS': 10,
             'LABELS': 20,
             'ETIKETLER': 21
@@ -3231,7 +3283,7 @@ function MailSection({
         [folders],
     )
     const folderTree = buildTree(folderMailboxes, ['Folders'])
-    const labelTree = buildTree(labels, ['Labels', 'Etiketler', '[Labels]'])
+    const labelTree = buildTree(labels, ['Labels', 'Labels', '[Labels]'])
 
     const renderFolderItem = (node, depth = 0) => {
         const info = folderInfo(node.fullPath)
@@ -3260,7 +3312,7 @@ function MailSection({
                             try {
                                 e.dataTransfer.dropEffect = isDroppableLabel ? 'copy' : 'move'
                             } catch {
-                                // noop
+
                             }
                             setDragOverTarget(node.fullPath)
                         } : undefined}
@@ -3626,7 +3678,7 @@ function MailSection({
 
     return (
         <div className="mail-section-wrapper">
-            {/* ── Tab Bar ─────────────────────────────── */}
+            { }
             <div className="mail-tab-bar">
                 <button
                     className={`mail-tab-item main-tab ${!activeTabId ? 'active' : ''}`}
@@ -3689,8 +3741,8 @@ function MailSection({
                                     📁 {t('Move')}
                                 </button>
                                 {isMoveMenuOpen && (
-                                    <div 
-                                        className="db-submenu-popover" 
+                                    <div
+                                        className="db-submenu-popover"
                                         style={movePopoverStyle || undefined}
                                         onWheel={(e) => e.stopPropagation()}
                                     >
@@ -3753,8 +3805,8 @@ function MailSection({
                                     📁 {t('Move')}
                                 </button>
                                 {isMoveMenuOpen && (
-                                    <div 
-                                        className="db-submenu-popover" 
+                                    <div
+                                        className="db-submenu-popover"
                                         style={movePopoverStyle || undefined}
                                         onWheel={(e) => e.stopPropagation()}
                                     >
@@ -3854,7 +3906,7 @@ function MailSection({
                 </div>
             </div>
 
-            {/* ── Tab content or normal inbox view ───── */}
+            { }
             {activeTabId ? (
                 <div className="mail-tab-content">
                     {loadingTab ? (
@@ -3953,7 +4005,7 @@ function MailSection({
                                         </ul>
                                     </div>
                                 ) : (
-                                    <div style={{ padding: '20px', color: '#999', fontSize: '13px', textAlign: 'center' }}>
+                                    <div className="db-empty-muted">
                                         {connecting
                                             ? 'Connecting...'
                                             : canUseRemoteMail
@@ -4049,20 +4101,20 @@ function MailSection({
                                             ▾
                                         </button>
                                         {isSelectionMenuOpen && (
-                                            <div 
-                                                className="db-toolbar-dropdown" 
-                                                role="menu" 
+                                            <div
+                                                className="db-toolbar-dropdown"
+                                                role="menu"
                                                 aria-label="Selection options"
                                                 onWheel={(e) => e.stopPropagation()}
                                             >
                                                 <button type="button" className="db-toolbar-dropdown__item" role="menuitem" onClick={() => applyBulkSelection('all')}>
-                                                    Tümünü seç
+                                                    Select all
                                                 </button>
                                                 <button type="button" className="db-toolbar-dropdown__item" role="menuitem" onClick={() => applyBulkSelection('read')}>
-                                                    Tüm okunmuşlar
+                                                    All read
                                                 </button>
                                                 <button type="button" className="db-toolbar-dropdown__item" role="menuitem" onClick={() => applyBulkSelection('unread')}>
-                                                    Tüm okunmamışlar
+                                                    All unread
                                                 </button>
                                             </div>
                                         )}
@@ -4082,9 +4134,9 @@ function MailSection({
                                             🔍
                                         </button>
                                         {isFilterMenuOpen && (
-                                            <div 
-                                                className="db-toolbar-popover" 
-                                                role="menu" 
+                                            <div
+                                                className="db-toolbar-popover"
+                                                role="menu"
                                                 aria-label="Filter mails"
                                                 onWheel={(e) => e.stopPropagation()}
                                             >
@@ -4123,9 +4175,9 @@ function MailSection({
                                             ↕️
                                         </button>
                                         {isSortMenuOpen && (
-                                            <div 
-                                                className="db-toolbar-popover db-toolbar-popover--sort" 
-                                                role="menu" 
+                                            <div
+                                                className="db-toolbar-popover db-toolbar-popover--sort"
+                                                role="menu"
                                                 aria-label="Sort mails"
                                                 onWheel={(e) => e.stopPropagation()}
                                             >
@@ -4212,7 +4264,7 @@ function MailSection({
                                                 placeholder="Count"
                                             />
                                             {isPerPageOpen && (
-                                                <div 
+                                                <div
                                                     className="db-perpage-dropdown"
                                                     onWheel={(e) => e.stopPropagation()}
                                                 >
@@ -4408,8 +4460,8 @@ function MailSection({
                                         </ul>
                                         {mailItemMenuMail && (
                                             <div ref={mailItemMenuRef}>
-                                                <div 
-                                                    className="db-submenu-popover db-mail-item-menu" 
+                                                <div
+                                                    className="db-submenu-popover db-mail-item-menu"
                                                     style={mailItemMenu.style}
                                                     onWheel={(e) => e.stopPropagation()}
                                                 >
@@ -4449,8 +4501,8 @@ function MailSection({
                                                     </button>
                                                 </div>
                                                 {mailItemMenu.moveMenuOpen && (
-                                                    <div 
-                                                        className="db-submenu-popover db-mail-item-menu" 
+                                                    <div
+                                                        className="db-submenu-popover db-mail-item-menu"
                                                         style={mailItemMoveMenuStyle || undefined}
                                                         onWheel={(e) => e.stopPropagation()}
                                                     >

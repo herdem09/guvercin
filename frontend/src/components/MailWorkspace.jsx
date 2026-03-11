@@ -3,16 +3,16 @@ import Avatar from './Avatar.jsx'
 
 const FOLDER_MAP = {
   INBOX: { icon: '✉️', href: '#inbox' },
-  'Gelen Kutusu': { icon: '✉️', href: '#inbox' },
-  'Önemsiz E-posta': { icon: '🚫', href: '#junk' },
+  'Inbox': { icon: '✉️', href: '#inbox' },
+  'Spam': { icon: '🚫', href: '#junk' },
   Spam: { icon: '🚫', href: '#junk' },
-  Taslaklar: { icon: '📝', href: '#drafts' },
   Drafts: { icon: '📝', href: '#drafts' },
-  'Gönderilmiş Öğeler': { icon: '📤', href: '#sent' },
+  Drafts: { icon: '📝', href: '#drafts' },
+  'Sent Items': { icon: '📤', href: '#sent' },
   Sent: { icon: '📤', href: '#sent' },
-  'Silinmiş Öğeler': { icon: '🗑️', href: '#deleted' },
+  'Trash': { icon: '🗑️', href: '#deleted' },
   Trash: { icon: '🗑️', href: '#deleted' },
-  Arşiv: { icon: '🗄️', href: '#archive' },
+  Archive: { icon: '🗄️', href: '#archive' },
   Archive: { icon: '🗄️', href: '#archive' },
 }
 
@@ -20,42 +20,12 @@ function folderIcon(name) {
   return FOLDER_MAP[name]?.icon ?? '✉️'
 }
 
-
 function getShortTime() {
   const now = new Date()
   return `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
 }
 
-function getAvatarInitials(name, email) {
-  if (name) {
-    const words = name.trim().split(' ')
-    if (words.length >= 2) {
-      return (words[0][0] + words[words.length - 1][0]).toUpperCase()
-    } else {
-      return name.substring(0, 2).toUpperCase()
-    }
-  } else if (email) {
-    return email.substring(0, 2).toUpperCase()
-  }
-  return '??'
-}
-
-function getAvatarColor(name, email) {
-  const colors = [
-    '#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7',
-    '#DDA0DD', '#98D8C8', '#F7DC6F', '#BB8FCE', '#85C1E2',
-    '#F8B739', '#52B788', '#E76F51', '#8E44AD', '#3498DB'
-  ]
-
-  let seed = name || email || 'unknown'
-  let hash = 0
-  for (let i = 0; i < seed.length; i++) {
-    hash = seed.charCodeAt(i) + ((hash << 5) - hash)
-  }
-  return colors[Math.abs(hash) % colors.length]
-}
-
-export default function MailWorkspace({ accountId, email, accountForm }) {
+export default function MailWorkspace({ accountId, email }) {
   const [connected, setConnected] = useState(false)
   const [folders, setFolders] = useState([])
   const [selectedFolder, setSelectedFolder] = useState('INBOX')
@@ -65,6 +35,12 @@ export default function MailWorkspace({ accountId, email, accountForm }) {
   const [loadingMails, setLoadingMails] = useState(false)
   const [loadingContent, setLoadingContent] = useState(false)
   const iframeRef = useRef(null)
+
+  useEffect(() => {
+    if (accountId) {
+      setConnected(true)
+    }
+  }, [accountId])
 
   const loadFolders = useCallback(async () => {
     if (!accountId) return

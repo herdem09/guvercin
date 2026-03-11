@@ -4,8 +4,6 @@ use std::io::{Read, Write};
 
 use crate::i18n::tr;
 
-/// Attempts a real IMAP connection and login.
-/// Returns (success, message).
 pub async fn authorize(
     server: &str,
     email: &str,
@@ -14,7 +12,7 @@ pub async fn authorize(
     verify_ssl: bool,
     ssl_mode: &str,
 ) -> (bool, String) {
-    // imap crate is blocking; run in a blocking task.
+    
     let server = server.to_string();
     let email = email.to_string();
     let password = password.to_string();
@@ -81,7 +79,7 @@ fn inner_authorize(
             Err(e) => (false, tr(&format!("Unexpected error: {e}"))),
         },
         _ => {
-            // NONE or fallback
+            
             match std::net::TcpStream::connect((server, port)) {
                 Ok(stream) => {
                     let mut client = imap::Client::new(stream);

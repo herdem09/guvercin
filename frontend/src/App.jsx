@@ -5,7 +5,6 @@ import LoginPage from './pages/LoginPage.jsx'
 import LanguagePage from './pages/LanguagePage.jsx'
 import FontPage from './pages/FontPage.jsx'
 import OfflineSetupPage from './pages/OfflineSetupPage.jsx'
-import AiChooserPage from './pages/AiChooserPage.jsx'
 import NotAuthPage from './pages/NotAuthPage.jsx'
 import DashboardPage from './pages/DashboardPage.jsx'
 import AccountSelectionPage from './pages/AccountSelectionPage.jsx'
@@ -13,6 +12,8 @@ import DetachedMailWindow from './pages/DetachedMailWindow.jsx'
 import i18n from './i18n'
 import { useTranslation } from 'react-i18next'
 import { hydrateAccountSession } from './utils/accountStorage.js'
+import ThemePage from './pages/ThemePage.jsx'
+import ThemeImportPage from './pages/ThemeImportPage.jsx'
 
 function App() {
   const location = useLocation()
@@ -26,7 +27,7 @@ function App() {
         const label = getCurrentWebviewWindow().label
         if (active) setWindowLabel(label)
       } catch {
-        // not running on Tauri
+        
       }
     }
     detectWindowLabel()
@@ -38,18 +39,19 @@ function App() {
   useEffect(() => {
     const path = location.pathname
 
-    // Clear temporary data if we are at the very start of onboarding
     if (path === '/login' || path === '/') {
       localStorage.removeItem('temp_account_form')
       localStorage.removeItem('temp_language')
       localStorage.removeItem('temp_font')
+      localStorage.removeItem('temp_theme_mode')
+      localStorage.removeItem('temp_theme_name')
       localStorage.removeItem('temp_offline_config')
       i18n.changeLanguage('en')
     }
 
     const tempFont = localStorage.getItem('temp_font')
     const savedFont = localStorage.getItem('font')
-    const onboardingPaths = ['/login', '/language', '/font', '/offline-setup', '/ai_chooser', '/not_auth']
+    const onboardingPaths = ['/login', '/language', '/font', '/theme', '/theme-import', '/offline-setup', '/not_auth']
 
     let fontToUse = "'Inter', sans-serif"
 
@@ -61,7 +63,7 @@ function App() {
       if (savedFont) {
         fontToUse = `"${savedFont}", sans-serif`
       }
-      // Dashboard manages its own full-page layout; remove body padding
+      
       document.body.style.padding = '0'
       document.body.style.margin = '0'
       document.body.style.overflow = 'hidden'
@@ -86,8 +88,9 @@ function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/language" element={<LanguagePage />} />
       <Route path="/font" element={<FontPage />} />
+      <Route path="/theme" element={<ThemePage />} />
+      <Route path="/theme-import" element={<ThemeImportPage />} />
       <Route path="/offline-setup" element={<OfflineSetupPage />} />
-      <Route path="/ai_chooser" element={<AiChooserPage />} />
       <Route path="/not_auth" element={<NotAuthPage />} />
       <Route path="/dashboard" element={<DashboardPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
@@ -100,7 +103,6 @@ export default App
 function StartupRouter() {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [retryCount, setRetryCount] = useState(0)
 
@@ -111,7 +113,6 @@ function StartupRouter() {
     const fetchAccounts = async () => {
       try {
         setError(null)
-        setLoading(true)
 
         const response = await fetch(apiUrl('/api/auth/accounts'))
         if (!response.ok) {
@@ -131,7 +132,7 @@ function StartupRouter() {
         } else {
           navigate('/account-select', { replace: true })
         }
-      } catch (err) {
+      } catch {
         if (!active) {
           return
         }
@@ -139,13 +140,10 @@ function StartupRouter() {
         const errorMessage = t('Unable to load accounts. Retrying...')
         setError(errorMessage)
 
-        // Automatic retry after 2 seconds
         setRetryCount(prev => prev + 1)
         retryTimer = setTimeout(fetchAccounts, 2000)
       } finally {
-        if (active) {
-          setLoading(false)
-        }
+        
       }
     }
 

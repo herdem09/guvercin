@@ -12,13 +12,28 @@ function safeParse(json) {
 }
 
 function isLabelMailbox(value) {
-  return /^(Labels|Etiketler)(\/|$)/i.test((value || '').trim())
+  return /^(Labels|Labels)(\/|$)/i.test((value || '').trim())
 }
 
 function isMoveTargetMailbox(value) {
   const mailbox = (value || '').trim()
-  if (!mailbox || ['Folders', 'Labels', 'Etiketler'].includes(mailbox)) return false
+  if (!mailbox || ['Folders', 'Labels', 'Labels'].includes(mailbox)) return false
   return !isLabelMailbox(mailbox)
+}
+
+function getMailboxNamespacePrefix(mailboxes, namespaceRoots) {
+  const root = namespaceRoots.find((candidate) => (
+    Array.isArray(mailboxes)
+    && mailboxes.some((mailbox) => mailbox === candidate || mailbox.startsWith(`${candidate}/`))
+  ))
+  return root ? `${root}/` : ''
+}
+
+function applyMailboxNamespace(name, prefix) {
+  const trimmed = (name || '').trim().replace(/^\/+|\/+$/g, '')
+  if (!trimmed) return ''
+  if (!prefix || trimmed.startsWith(prefix)) return trimmed
+  return `${prefix}${trimmed}`
 }
 
 export default function DetachedMailWindow() {
@@ -103,7 +118,6 @@ export default function DetachedMailWindow() {
     }
   }, [])
 
-  // Step 1: get window label from Tauri
   useEffect(() => {
     let active = true
     const detectLabel = async () => {
@@ -113,14 +127,13 @@ export default function DetachedMailWindow() {
         if (!active) return
         setWindowLabel(label)
       } catch {
-        // not running on Tauri
+        
       }
     }
     detectLabel()
     return () => { active = false }
   }, [])
 
-  // Step 2: once we have the label, fetch mail data from Rust app state
   useEffect(() => {
     if (!windowLabel) return
     let active = true
@@ -135,7 +148,7 @@ export default function DetachedMailWindow() {
           setMailContent(parsed?.mailContent || null)
         }
       } catch {
-        // not running in Tauri or command not available
+        
       }
     }
     fetchData()
@@ -171,7 +184,7 @@ export default function DetachedMailWindow() {
               message = body.error
             }
           } catch {
-            // ignore
+            
           }
           throw new Error(message)
         }
@@ -225,7 +238,7 @@ export default function DetachedMailWindow() {
           setFolders(normalized.allMailboxes)
         }
       } catch {
-        // noop
+        
       }
     }
     loadFolders()

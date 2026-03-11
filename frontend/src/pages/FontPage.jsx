@@ -48,7 +48,7 @@ function FontPage() {
         setSaving(true)
         setBtnText('Saved!')
         setTimeout(() => {
-            navigate('/offline-setup')
+            navigate('/theme')
         }, 500)
     }
 

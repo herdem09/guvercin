@@ -17,13 +17,8 @@ use mailparse::{
     addrparse_header, parse_mail, DispositionType, MailAddr, MailHeaderMap, ParsedMail,
 };
 
-// ─────────────────────────────────────────────────────────────────
-// Public state held per-account IMAP session
-// One session is kept alive as long as the dashboard is open.
-// ─────────────────────────────────────────────────────────────────
-
 pub struct ImapState {
-    /// account_id  →  live session wrapper
+    
     sessions: Mutex<HashMap<i64, ImapSession>>,
 }
 
@@ -34,10 +29,6 @@ impl ImapState {
         }
     }
 }
-
-// ─────────────────────────────────────────────────────────────────
-// Session wrapper – hides the generic type behind trait objects
-// ─────────────────────────────────────────────────────────────────
 
 pub enum ImapSession {
     Plain(imap::Session<TcpStream>),
@@ -113,7 +104,6 @@ impl ImapSession {
                 .iter()
                 .any(|f| matches!(f, imap::types::Flag::Flagged));
 
-            // Extract custom keywords from FLAGS as labels
             let mut labels = Vec::new();
             for f in msg.flags().iter() {
                 if let imap::types::Flag::Custom(s) = f {
@@ -133,7 +123,7 @@ impl ImapSession {
                 let content_type = parse_content_type(&parse_header(&header_str, "Content-Type"));
                 let importance = parse_importance(&header_str);
                 let category = parse_category(&header_str);
-                // Merge labels from headers if any (e.g. Keywords header)
+                
                 for h_label in parse_labels(&header_str) {
                     if !labels.contains(&h_label) {
                         labels.push(h_label);
@@ -212,7 +202,7 @@ impl ImapSession {
     }
 
     fn uid_move_to(&mut self, uid: &str, folder: &str) -> Result<(), String> {
-        // COPY + \Deleted + EXPUNGE fallback that works on common IMAP servers.
+        
         let copied = match self {
             ImapSession::Plain(s) => s.uid_copy(uid, folder),
             ImapSession::Tls(s) => s.uid_copy(uid, folder),
@@ -235,7 +225,6 @@ impl ImapSession {
         expunge.map(|_| ()).map_err(|e| format!("{e}"))
     }
 
-    /// UID SEARCH UID <since_uid>:* — returns UIDs of messages we haven't seen yet.
     fn search_new_uids(&mut self, since_uid: u32) -> Vec<u32> {
         let query = format!("UID {}:*", since_uid + 1);
         let result = match self {
@@ -270,7 +259,6 @@ impl ImapSession {
         }
     }
 
-    /// Fetch headers for an explicit comma-separated UID set (e.g. "101,102,103").
     fn fetch_headers_by_uid_set(&mut self, uid_set: &str, account_id: i64, mailbox: &str) -> Vec<MailPreview> {
         let data = match self {
             ImapSession::Plain(s) => s.uid_fetch(
@@ -314,7 +302,6 @@ impl ImapSession {
                 .iter()
                 .any(|f| matches!(f, imap::types::Flag::Flagged));
 
-            // Extract custom keywords from FLAGS as labels
             let mut labels = Vec::new();
             for f in msg.flags().iter() {
                 if let imap::types::Flag::Custom(s) = f {
@@ -334,7 +321,7 @@ impl ImapSession {
                 let content_type = parse_content_type(&parse_header(&header_str, "Content-Type"));
                 let importance = parse_importance(&header_str);
                 let category = parse_category(&header_str);
-                // Merge labels from headers if any (e.g. Keywords header)
+                
                 for h_label in parse_labels(&header_str) {
                     if !labels.contains(&h_label) {
                         labels.push(h_label);
@@ -363,11 +350,6 @@ impl ImapSession {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────
-// Public API – called from route handlers
-// ─────────────────────────────────────────────────────────────────
-
-/// Connect & login, store session keyed by account_id.
 pub fn connect_and_login(
     state: &Arc<ImapState>,
     account_id: i64,
@@ -400,10 +382,9 @@ pub fn connect_and_login(
             ImapSession::Tls(s)
         }
         _ => {
-            // NONE – plain TCP
+            
             let tcp = TcpStream::connect((imap_host, imap_port)).map_err(|e| format!("{e}"))?;
 
-            // Set timeouts to prevent infinite blocking
             tcp.set_read_timeout(Some(std::time::Duration::from_secs(30)))
                 .ok();
             tcp.set_write_timeout(Some(std::time::Duration::from_secs(30)))
@@ -462,13 +443,11 @@ pub fn fetch_mail_list(
         return (0, vec![]);
     }
 
-    // Newest first: compute reverse-paged sequence set
     let start_from_end = (page.saturating_sub(1)) * per_page;
     if start_from_end >= total {
         return (total, vec![]);
     }
 
-    // e.g. total=100, page=1, per_page=50  → seq 51:100 (newest 50)
     let hi = total - start_from_end;
     let lo = if hi > per_page { hi - per_page + 1 } else { 1 };
     let sequence = format!("{lo}:{hi}");
@@ -484,7 +463,6 @@ pub fn fetch_mail_list(
         id.parse::<u32>().unwrap_or(0)
     }
 
-    // Sort newest-first by sent date. Tie-break by UID (if available).
     previews.sort_by(|a, b| {
         date_ms(&b.date)
             .cmp(&date_ms(&a.date))
@@ -615,7 +593,6 @@ pub fn advanced_search(
         SearchScope::Mailboxes => req.mailboxes.clone(),
     };
 
-    // Normalize + drop empty + de-dupe while keeping order.
     let mut seen = std::collections::HashSet::new();
     mailboxes.retain(|value| {
         let trimmed = value.trim();
@@ -623,7 +600,7 @@ pub fn advanced_search(
             return false;
         }
         let lower = trimmed.to_ascii_lowercase();
-        if matches!(lower.as_str(), "folders" | "labels" | "etiketler" | "[labels]") {
+        if matches!(lower.as_str(), "folders" | "labels" | "labels" | "[labels]") {
             return false;
         }
         if seen.contains(&lower) {
@@ -709,8 +686,6 @@ pub fn fetch_mail_raw_in_mailbox(
     session.fetch_mail_raw(uid)
 }
 
-/// Return UIDs of messages with UID > since_uid in the given mailbox.
-/// Returns (total_count, new_uids). total_count is the current EXISTS count.
 pub fn fetch_new_uids_since(
     state: &Arc<ImapState>,
     account_id: i64,
@@ -742,7 +717,6 @@ pub fn fetch_new_uids_since(
     (total, new_uids)
 }
 
-/// Fetch mail previews (headers) for a specific list of UIDs.
 pub fn fetch_headers_for_uids(
     state: &Arc<ImapState>,
     account_id: i64,
@@ -757,9 +731,9 @@ pub fn fetch_headers_for_uids(
         Some(s) => s,
         None => return vec![],
     };
-    // Select mailbox (already selected from fetch_new_uids_since, but be safe)
+    
     let _ = session.select_mailbox(mailbox);
-    // Build UID set string e.g. "101,102,103"
+    
     let uid_set: String = uids.iter().map(|u| u.to_string()).collect::<Vec<_>>().join(",");
     session.fetch_headers_by_uid_set(&uid_set, account_id, mailbox)
 }
@@ -845,10 +819,8 @@ pub fn set_label(
     session.select_mailbox(mailbox)?;
     session.uid_store_keyword(uid, label, add)?;
 
-    // If adding a label, also search for the corresponding label folder (mailbox)
-    // and copy the mail there so it appears in that folder.
     if add {
-        let label_folders = ["Labels", "Etiketler", "[Labels]"];
+        let label_folders = ["Labels", "Labels", "[Labels]"];
         let mut target_folder = None;
         let mailboxes = session.list_mailboxes();
         
@@ -861,16 +833,14 @@ pub fn set_label(
         }
 
         if let Some(folder) = target_folder {
-            // Copy mail to target label folder (UID COPY)
+            
             let _ = match session {
                 ImapSession::Plain(s) => s.uid_copy(uid, folder),
                 ImapSession::Tls(s) => s.uid_copy(uid, folder),
             };
         }
     } else {
-        // If removing a label, and we have a corresponding folder, it's hard to find
-        // and delete the specific copy in that folder by UID because it's in a different mailbox.
-        // However, the keyword state (flag) is now updated globally on the server.
+        
     }
 
     Ok(())
@@ -1121,7 +1091,7 @@ fn fallback_parse_rfc822(uid: String, raw: &[u8]) -> MailContent {
         cc,
         bcc,
         date,
-        html_body: String::new(), // simplified – full MIME parsing is separate
+        html_body: String::new(), 
         plain_body: body_part.chars().take(10000).collect(),
         attachments: vec![],
     }
@@ -1131,10 +1101,6 @@ struct AttachmentDescriptor {
     info: AttachmentInfo,
     bytes: Option<Vec<u8>>,
 }
-
-// ─────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────
 
 fn parse_header(headers: &str, name: &str) -> String {
     let wanted = name.to_ascii_lowercase();
@@ -1239,7 +1205,7 @@ fn parse_labels(headers: &str) -> Vec<String> {
 }
 
 fn decode_encoded_word(s: &str) -> String {
-    // Minimal RFC 2047 decoder for common =?charset?Q/B?encoded?= patterns
+    
     let mut result = s.to_string();
     let mut search_from = 0;
 
@@ -1250,10 +1216,8 @@ fn decode_encoded_word(s: &str) -> String {
             let encoded = &result[abs_start..abs_end];
             let decoded = decode_rfc2047(encoded);
 
-            // Replace this specific occurrence
             result.replace_range(abs_start..abs_end, &decoded);
 
-            // Advance search_from past the decoded part to avoid re-scanning it
             search_from = abs_start + decoded.len();
         } else {
             break;
@@ -1263,7 +1227,7 @@ fn decode_encoded_word(s: &str) -> String {
 }
 
 fn decode_rfc2047(token: &str) -> String {
-    // token looks like =?UTF-8?B?base64data?= or =?UTF-8?Q?qp_data?=
+    
     let inner = token.trim_start_matches("=?").trim_end_matches("?=");
     let parts: Vec<&str> = inner.splitn(3, '?').collect();
     if parts.len() < 3 {
@@ -1286,7 +1250,7 @@ fn decode_rfc2047(token: &str) -> String {
 }
 
 fn base64_decode(s: &str) -> Result<Vec<u8>, ()> {
-    // Simple base64 decode without external crate
+    
     let alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut buf = Vec::new();
     let chars: Vec<u8> = s
@@ -1330,7 +1294,7 @@ fn qp_decode(s: &str) -> Vec<u8> {
 }
 
 fn split_from(from: &str) -> (String, String) {
-    // "Name <email@example.com>" or just "email@example.com"
+    
     if let (Some(lt), Some(gt)) = (from.find('<'), from.find('>')) {
         let name = from[..lt].trim().trim_matches('"').to_string();
         let address = from[lt + 1..gt].trim().to_string();

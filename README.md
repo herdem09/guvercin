@@ -37,7 +37,7 @@ Notes:
 #### Database
 
 - Database files are kept under the `databases/` folder at the project root:
-  - `general.db`: account and AI configuration tables.
+  - `general.db`: account configuration tables.
   - `<account_id>.db`: separate email/attachment/folder/reference tables for each user.
 - When the Rust backend first runs, it automatically creates the necessary tables (to be compatible with the schema on the Python side).
 

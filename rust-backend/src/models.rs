@@ -93,7 +93,7 @@ pub struct FinalizeAccountBody {
     pub account: Option<FinalizeAccountData>,
     pub language: Option<String>,
     pub font: Option<String>,
-    pub ai: Option<AiConfig>,
+    pub theme: Option<String>,
     pub offline: Option<OfflineSetupPayload>,
 }
 
@@ -111,11 +111,8 @@ pub struct FinalizeAccountData {
 }
 
 #[derive(Deserialize)]
-pub struct AiConfig {
-    pub r#type: Option<bool>,
-    pub model_name: Option<String>,
-    pub api_key_server_url: Option<String>,
-    pub base_url_context_window: Option<String>,
+pub struct SetThemeBody {
+    pub theme: String,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -215,16 +212,16 @@ pub struct TransferSnapshot {
 
 #[derive(Serialize, Clone)]
 pub struct TransferProgress {
-    /// "receiving" or "sending"
+    
     pub direction: String,
-    /// e.g. "emails", "queue"
+    
     pub resource: String,
     pub mailbox: Option<String>,
     pub total: Option<i64>,
     pub done: i64,
     pub remaining: Option<i64>,
-    /// Optional human-friendly detail like "mark_read" or "sync INBOX".
+    
     pub detail: Option<String>,
-    /// Unix epoch milliseconds, for UI "stale" handling.
+    
     pub updated_at_ms: i64,
 }

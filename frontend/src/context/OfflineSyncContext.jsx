@@ -75,7 +75,7 @@ export function OfflineSyncProvider({ children }) {
       }
       await refreshStatus(accountId)
     } catch {
-      // status refresh will capture eventual failures
+      
     }
   }, [refreshStatus, runSyncNow])
 

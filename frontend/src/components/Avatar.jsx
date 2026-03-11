@@ -1,17 +1,3 @@
-/**
- * Avatar.jsx
- *
- * Reusable avatar component for Güvercin.
- * Shows deterministic initials immediately, then smoothly transitions
- * to a real image if one is resolved by the backend worker.
- *
- * Props:
- *   email      (string)  – sender / account email address
- *   name       (string)  – display name (used for initials + color seed)
- *   accountId  (number)  – route param for the avatar API
- *   size       (number)  – pixel diameter, default 36
- *   className  (string)  – extra CSS classes
- */
 
 import React, { useState } from 'react'
 import { useAvatar } from '../utils/avatar'
@@ -49,7 +35,7 @@ const Avatar = React.memo(function Avatar({ email, name, accountId, size = 36, c
             }}
             title={name || email || ''}
         >
-            {/* Initials layer – always rendered, fades out when image loads */}
+            {}
             <span
                 style={{
                     position: 'absolute',
@@ -65,7 +51,7 @@ const Avatar = React.memo(function Avatar({ email, name, accountId, size = 36, c
                 {initials}
             </span>
 
-            {/* Image layer – fades in when src available */}
+            {}
             {src && (
                 <img
                     src={src}

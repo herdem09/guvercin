@@ -6,7 +6,7 @@ function sanitizeMailboxList(value) {
 export function isLabelMailboxPath(value) {
     const mailbox = (value || '').trim()
     return /^Labels\//i.test(mailbox)
-        || /^Etiketler\//i.test(mailbox)
+        || /^Labels\//i.test(mailbox)
         || /^\[Labels\]\//i.test(mailbox)
 }
 

@@ -21,16 +21,11 @@ use crate::{
     },
 };
 
-// Shared state includes both DB state and IMAP sessions
 pub struct MailAppState {
     pub _db: Arc<crate::db::AppState>,
     pub imap: Arc<ImapState>,
 }
 
-// ─────────────────────────────────────────────────────────────────
-// POST /mail/connect
-// Connect & authenticate an IMAP account, keep session alive.
-// ─────────────────────────────────────────────────────────────────
 pub async fn connect_imap(
     State(state): State<Arc<MailAppState>>,
     Json(body): Json<ConnectImapBody>,
@@ -132,9 +127,6 @@ pub async fn connect_imap_stored(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────
-// GET /mail/:account_id/mailboxes
-// ─────────────────────────────────────────────────────────────────
 pub async fn get_mailboxes(
     State(state): State<Arc<MailAppState>>,
     Path(account_id): Path<i64>,
@@ -149,9 +141,6 @@ pub async fn get_mailboxes(
     Json(MailboxListResponse::from_mailboxes(mailboxes))
 }
 
-// ─────────────────────────────────────────────────────────────────
-// GET /mail/:account_id/list?mailbox=INBOX&page=1&per_page=50
-// ─────────────────────────────────────────────────────────────────
 #[derive(Deserialize)]
 pub struct MailListQuery {
     #[serde(default = "default_inbox")]
@@ -255,9 +244,6 @@ pub async fn get_mail_list(
     })
 }
 
-// ─────────────────────────────────────────────────────────────────
-// POST /mail/:account_id/search-advanced
-// ─────────────────────────────────────────────────────────────────
 pub async fn search_advanced(
     State(state): State<Arc<MailAppState>>,
     Path(account_id): Path<i64>,
@@ -324,9 +310,6 @@ pub async fn create_mailbox(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────
-// GET /mail/:account_id/content/:uid
-// ─────────────────────────────────────────────────────────────────
 pub async fn get_mail_content(
     State(state): State<Arc<MailAppState>>,
     Path((account_id, uid)): Path<(i64, String)>,
@@ -477,9 +460,6 @@ pub async fn download_attachment(
         .into_response()
 }
 
-// ─────────────────────────────────────────────────────────────────
-// DELETE /mail/:account_id/disconnect
-// ─────────────────────────────────────────────────────────────────
 pub async fn disconnect_imap(
     State(state): State<Arc<MailAppState>>,
     Path(account_id): Path<i64>,

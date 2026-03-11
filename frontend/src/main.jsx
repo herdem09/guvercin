@@ -5,6 +5,7 @@ import App from './App.jsx'
 import './index.css'
 import './i18n'
 import { OfflineSyncProvider } from './context/OfflineSyncContext.jsx'
+import { ThemeProvider } from './context/ThemeContext.jsx'
 
 function showFatalOverlay(title, details) {
   try {
@@ -36,7 +37,7 @@ function showFatalOverlay(title, details) {
     overlay.appendChild(pre)
     document.body.appendChild(overlay)
   } catch {
-    // ignore
+    
   }
 }
 
@@ -56,11 +57,13 @@ window.addEventListener('unhandledrejection', (event) => {
 try {
   ReactDOM.createRoot(document.getElementById('root')).render(
     <React.StrictMode>
-      <OfflineSyncProvider>
-        <BrowserRouter>
-          <App />
-        </BrowserRouter>
-      </OfflineSyncProvider>
+      <ThemeProvider>
+        <OfflineSyncProvider>
+          <BrowserRouter>
+            <App />
+          </BrowserRouter>
+        </OfflineSyncProvider>
+      </ThemeProvider>
     </React.StrictMode>,
   )
 } catch (err) {

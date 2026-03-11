@@ -51,7 +51,6 @@ pub async fn run(db_dir: Option<PathBuf>) -> anyhow::Result<()> {
         .allow_methods(Any)
         .allow_headers(Any);
 
-    // ── Auth / account routes (use Arc<AppState>) ─────────────────
     let auth_router = Router::new()
         .route("/health", get(routes::health_check))
         .route("/api/auth/accounts", get(routes::get_accounts))
@@ -61,10 +60,10 @@ pub async fn run(db_dir: Option<PathBuf>) -> anyhow::Result<()> {
             post(routes::preview_mailboxes),
         )
         .route("/api/account/finalize", post(routes::finalize_account))
+        .route("/api/account/:account_id/theme", post(routes::set_account_theme))
         .route("/api/avatar/:account_id", get(avatar_routes::get_avatar))
         .with_state(db_state);
 
-    // ── Mail / IMAP routes (use Arc<MailAppState>) ─────────────────
     let mail_router = Router::new()
         .route("/api/mail/connect", post(mail_routes::connect_imap))
         .route(
@@ -146,7 +145,6 @@ pub async fn run(db_dir: Option<PathBuf>) -> anyhow::Result<()> {
         )
         .with_state(mail_state);
 
-    // ── Merge both routers ─────────────────────────────────────────
     let app = auth_router
         .merge(mail_router)
         .layer(cors)
