@@ -480,7 +480,7 @@ fn urlencoding_simple(s: &str) -> String {
 fn resolve_url(href: &str, base: &str) -> String {
     if href.starts_with("http://") || href.starts_with("https://") {
         href.to_string()
-    } else if href.starts_with("
+    } else if href.starts_with("//") {
         format!("https:{href}")
     } else if href.starts_with('/') {
         

@@ -600,7 +600,7 @@ pub fn advanced_search(
             return false;
         }
         let lower = trimmed.to_ascii_lowercase();
-        if matches!(lower.as_str(), "folders" | "labels" | "labels" | "[labels]") {
+        if matches!(lower.as_str(), "folders" | "labels" | "[labels]") {
             return false;
         }
         if seen.contains(&lower) {

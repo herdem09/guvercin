@@ -12,23 +12,15 @@ const FOLDER_MAP = {
     'INBOX': { icon: '📥', label: 'Inbox' },
     'Inbox': { icon: '📥', label: 'Inbox' },
     'Starred': { icon: '⭐', label: 'Starred' },
-    'Starred': { icon: '⭐', label: 'Starred' },
-    'Snoozed': { icon: '🕒', label: 'Snoozed' },
     'Snoozed': { icon: '🕒', label: 'Snoozed' },
     'Sent': { icon: '✈️', label: 'Sent Items' },
     'Sent Items': { icon: '✈️', label: 'Sent Items' },
-    'Sent Items': { icon: '✈️', label: 'Sent Items' },
-    'Drafts': { icon: '📝', label: 'Drafts' },
     'Drafts': { icon: '📝', label: 'Drafts' },
     'Archive': { icon: '📦', label: 'Archive' },
-    'Archive': { icon: '📦', label: 'Archive' },
-    'Trash': { icon: '🗑️', label: 'Trash' },
     'Trash': { icon: '🗑️', label: 'Trash' },
     'Spam': { icon: '🚫', label: 'Spam' },
     'Junk': { icon: '🚫', label: 'Spam' },
-    'Spam': { icon: '🚫', label: 'Spam' },
     'All Mail': { icon: '📑', label: 'All Mail' },
-    '[Gmail]/All Mail': { icon: '📑', label: 'All Mail' },
     '[Gmail]/All Mail': { icon: '📑', label: 'All Mail' },
 }
 
@@ -2792,6 +2784,27 @@ function MailSection({
     const isResizingList = useRef(false)
     const mailToolbarRef = useRef(null)
     const isDraggingRef = useRef(false)
+    const dragPreviewRef = useRef(null)
+
+    useEffect(() => () => {
+        if (dragPreviewRef.current) {
+            dragPreviewRef.current.remove()
+            dragPreviewRef.current = null
+        }
+    }, [])
+
+    const createMailDragPreview = useCallback((count) => {
+        const node = document.createElement('div')
+        node.className = 'db-mail-drag-preview'
+        node.textContent = `📧 ${count} mails`
+        node.style.position = 'fixed'
+        node.style.top = '-1000px'
+        node.style.left = '-1000px'
+        node.style.zIndex = '999999'
+        node.style.pointerEvents = 'none'
+        document.body.appendChild(node)
+        return node
+    }, [])
 
     const handleMailDragStart = useCallback((event, mail) => {
         if (!event?.dataTransfer || !mail?.id) return
@@ -2804,6 +2817,21 @@ function MailSection({
 
         isDraggingRef.current = true
         setDragOverTarget(null)
+
+        if (dragPreviewRef.current) {
+            dragPreviewRef.current.remove()
+            dragPreviewRef.current = null
+        }
+
+        try {
+            if (typeof event.dataTransfer.setDragImage === 'function') {
+                const preview = createMailDragPreview(ids.length)
+                dragPreviewRef.current = preview
+                event.dataTransfer.setDragImage(preview, 14, 14)
+            }
+        } catch {
+
+        }
 
         try {
             event.dataTransfer.effectAllowed = 'copyMove'
@@ -2822,11 +2850,15 @@ function MailSection({
         } catch {
 
         }
-    }, [selectedMailIds])
+    }, [createMailDragPreview, selectedMailIds])
 
     const handleMailDragEnd = useCallback(() => {
         isDraggingRef.current = false
         setDragOverTarget(null)
+        if (dragPreviewRef.current) {
+            dragPreviewRef.current.remove()
+            dragPreviewRef.current = null
+        }
     }, [])
 
     const syncPopoverPosition = useCallback((menuRef, setStyle, estimatedWidth = 220) => {
@@ -3239,15 +3271,17 @@ function MailSection({
         })
 
         const priorityMap = {
-            'INBOX': 1, 'INBOX': 1,
-            'STARRED': 2, 'STARRED': 2,
-            'SNOOZED': 3, 'SNOOZED': 3,
-            'SENT': 4, 'SENT ITEMS': 4, 'SENT ITEMS': 4, 'SENT ITEMS': 4,
-            'ALL MAIL': 5, 'ALL MAIL': 5,
-            'DRAFTS': 6, 'DRAFTS': 6,
-            'ARCHIVE': 7, 'ARCHIVE': 7,
-            'TRASH': 8, 'TRASH': 8, 'TRASH': 8,
-            'SPAM': 9, 'SPAM': 9, 'JUNK': 9,
+            'INBOX': 1,
+            'STARRED': 2,
+            'SNOOZED': 3,
+            'SENT': 4,
+            'SENT ITEMS': 4,
+            'ALL MAIL': 5,
+            'DRAFTS': 6,
+            'ARCHIVE': 7,
+            'TRASH': 8,
+            'SPAM': 9,
+            'JUNK': 9,
             'FOLDERS': 10,
             'LABELS': 20,
             'ETIKETLER': 21

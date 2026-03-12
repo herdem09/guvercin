@@ -1612,6 +1612,21 @@ body.resizing * {
   position: relative;
 }
 
+.db-mail-drag-preview {
+  display: inline-flex;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border-1);
+  color: var(--c-text-1);
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: 0 10px 20px var(--shadow-color-5);
+  user-select: none;
+  white-space: nowrap;
+}
+
 .db-mail-avatar-wrap {
   position: relative;
   width: 32px;
