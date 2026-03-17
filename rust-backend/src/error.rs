@@ -11,6 +11,10 @@ pub enum AppError {
     Database(#[source] sqlx::Error, String),
     #[error("Bad request: {0}")]
     BadRequest(String),
+    #[error("Keyring unavailable: {0}")]
+    KeyringUnavailable(String),
+    #[error("Keyring denied: {0}")]
+    KeyringDenied(String),
 }
 
 impl AppError {
@@ -39,6 +43,8 @@ impl IntoResponse for AppError {
                 format!("Database error (path: {path}): {e}"),
             ),
             AppError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
+            AppError::KeyringUnavailable(msg) => (StatusCode::PRECONDITION_REQUIRED, msg),
+            AppError::KeyringDenied(msg) => (StatusCode::FORBIDDEN, msg),
         };
 
         let body = Json(ErrorBody {

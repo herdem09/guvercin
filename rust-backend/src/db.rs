@@ -1,47 +1,158 @@
 use std::path::{Path, PathBuf};
 use std::{collections::HashMap, sync::Arc};
 
-use sqlx::{sqlite::SqliteConnectOptions, SqlitePool};
-use tokio::sync::Mutex;
+use sqlx::{
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+    Connection, SqliteConnection, SqlitePool,
+};
+use tokio::sync::{Mutex, RwLock};
 
+use crate::crypto::CryptoManager;
 use crate::error::AppError;
+use crate::keystore::{self, KeyStoreError};
 use crate::models::TransferSnapshot;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub general_pool: SqlitePool,
     pub databases_dir: PathBuf,
     pub transfer_progress: Arc<Mutex<HashMap<i64, TransferSnapshot>>>,
+    inner: Arc<RwLock<Option<Arc<AppStateInner>>>>,
+}
+
+#[derive(Clone)]
+pub struct AppStateInner {
+    pub general_pool: SqlitePool,
+    pub crypto: Arc<CryptoManager>,
 }
 
 impl AppState {
-    pub async fn initialize(db_dir: Option<PathBuf>) -> anyhow::Result<Self> {
+    pub async fn initialize(db_dir: Option<PathBuf>) -> Result<Self, AppError> {
         let databases_dir = if let Some(dir) = db_dir {
             dir
         } else {
-            detect_databases_dir()?
+            detect_databases_dir().map_err(|e| AppError::BadRequest(e.to_string()))?
         };
 
-        tokio::fs::create_dir_all(&databases_dir).await?;
+        tokio::fs::create_dir_all(&databases_dir).await.map_err(|e| AppError::BadRequest(format!("Failed to create DB dir: {e}")))?;
         tracing::info!("Using databases directory: {:?}", databases_dir);
 
         let general_db_path = databases_dir.join("general.db");
         let general_db_path_str = general_db_path.to_string_lossy().into_owned();
-        tracing::info!("Connecting to general database: {:?}", general_db_path);
+        tracing::info!("General database path: {:?}", general_db_path);
 
-        let general_pool = connect_sqlite(&general_db_path)
+        let inner = match keystore::load_master_key(crate::crypto::KEYRING_PROMPT).await {
+            Ok(raw) => {
+                let crypto = Arc::new(
+                    CryptoManager::from_raw(raw)
+                        .map_err(|e| AppError::KeyringUnavailable(format!("master key invalid: {e}")))?,
+                );
+                let general_pool = connect_sqlite(&general_db_path, &crypto)
+                    .await
+                    .map_err(|e| AppError::db(e, &general_db_path_str))?;
+                init_general_db(&general_pool)
+                    .await
+                    .map_err(|e| AppError::db(e, &general_db_path_str))?;
+                Some(Arc::new(AppStateInner {
+                    general_pool,
+                    crypto,
+                }))
+            }
+            Err(KeyStoreError::NotFound) => None,
+            Err(KeyStoreError::Denied) => {
+                return Err(AppError::KeyringDenied(
+                    "Keyring access denied. Unlock keyring to continue.".to_string()
+                ))
+            }
+            Err(KeyStoreError::Other(e)) => {
+                return Err(AppError::KeyringUnavailable(format!("keyring error: {e}")))
+            }
+        };
+
+        Ok(Self {
+            databases_dir,
+            transfer_progress: Arc::new(Mutex::new(HashMap::new())),
+            inner: Arc::new(RwLock::new(inner)),
+        })
+    }
+
+    pub async fn ready_or_none(&self) -> Option<Arc<AppStateInner>> {
+        self.inner.read().await.clone()
+    }
+
+    pub async fn ensure_ready(&self, create_if_missing: bool) -> Result<Arc<AppStateInner>, AppError> {
+        if let Some(inner) = self.ready_or_none().await {
+            return Ok(inner);
+        }
+
+        if !create_if_missing {
+            return Err(AppError::KeyringUnavailable(
+                "Encryption key not initialized. Complete setup to create the key.".to_string(),
+            ));
+        }
+
+        let raw = match keystore::load_master_key(crate::crypto::KEYRING_PROMPT).await {
+            Ok(raw) => raw,
+            Err(KeyStoreError::NotFound) => {
+                let crypto = match CryptoManager::create_and_store(crate::crypto::KEYRING_PROMPT)
+                    .await
+                {
+                    Ok(crypto) => crypto,
+                    Err(KeyStoreError::Denied) => {
+                        return Err(AppError::KeyringDenied(
+                            "Keyring access denied".to_string(),
+                        ))
+                    }
+                    Err(KeyStoreError::Other(e)) => {
+                        return Err(AppError::KeyringUnavailable(e));
+                    }
+                    Err(KeyStoreError::NotFound) => {
+                        return Err(AppError::KeyringUnavailable("Master key not found after creation attempt".to_string()));
+                    }
+                };
+                return self.init_with_crypto(Arc::new(crypto)).await;
+            }
+            Err(KeyStoreError::Denied) => {
+                return Err(AppError::KeyringDenied(
+                    "Keyring access denied".to_string(),
+                ))
+            }
+            Err(KeyStoreError::Other(e)) => {
+                return Err(AppError::KeyringUnavailable(e));
+            }
+        };
+
+        let crypto = Arc::new(
+            CryptoManager::from_raw(raw)
+                .map_err(|e| AppError::KeyringUnavailable(e.to_string()))?,
+        );
+        self.init_with_crypto(crypto).await
+    }
+
+    async fn init_with_crypto(&self, crypto: Arc<CryptoManager>) -> Result<Arc<AppStateInner>, AppError> {
+        let mut guard = self.inner.write().await;
+        if let Some(inner) = guard.as_ref() {
+            return Ok(inner.clone());
+        }
+
+        let general_db_path = self.databases_dir.join("general.db");
+        let general_db_path_str = general_db_path.to_string_lossy().into_owned();
+        let general_pool = connect_sqlite(&general_db_path, &crypto)
             .await
             .map_err(|e| AppError::db(e, &general_db_path_str))?;
-
         init_general_db(&general_pool)
             .await
             .map_err(|e| AppError::db(e, &general_db_path_str))?;
 
-        Ok(Self {
+        let inner = Arc::new(AppStateInner {
             general_pool,
-            databases_dir,
-            transfer_progress: Arc::new(Mutex::new(HashMap::new())),
-        })
+            crypto,
+        });
+        *guard = Some(inner.clone());
+        Ok(inner)
+    }
+
+    pub async fn require_general_pool(&self) -> Result<SqlitePool, AppError> {
+        Ok(self.ensure_ready(false).await?.general_pool.clone())
     }
 }
 
@@ -63,20 +174,110 @@ fn detect_databases_dir() -> anyhow::Result<PathBuf> {
     Ok(p)
 }
 
-async fn connect_sqlite(path: &Path) -> sqlx::Result<SqlitePool> {
+async fn connect_sqlite(path: &Path, crypto: &CryptoManager) -> sqlx::Result<SqlitePool> {
+    let key_hex = crypto
+        .sqlcipher_key_hex_for_db(path)
+        .map_err(|e| sqlx::Error::Protocol(e.to_string()))?;
+
+    let attempt = connect_sqlcipher(path, &key_hex).await;
+    if attempt.is_ok() || !path.exists() {
+        return attempt;
+    }
+
+    if is_plaintext_sqlite(path).await {
+        migrate_plaintext_to_sqlcipher(path, &key_hex).await?;
+        return connect_sqlcipher(path, &key_hex).await;
+    }
+
+    attempt
+}
+
+async fn connect_sqlcipher(path: &Path, key_hex: &str) -> sqlx::Result<SqlitePool> {
     let opts = SqliteConnectOptions::new()
         .filename(path)
         .create_if_missing(true)
+        .pragma("key", format!("\"x'{}'\"", key_hex))
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
         .synchronous(sqlx::sqlite::SqliteSynchronous::Normal);
-    SqlitePool::connect_with(opts).await
+
+    SqlitePoolOptions::new()
+        .after_connect(move |conn, _| {
+            Box::pin(async move {
+                let cipher_version: Option<String> = sqlx::query_scalar("PRAGMA cipher_version;")
+                    .fetch_optional(&mut *conn)
+                    .await?;
+                if cipher_version.as_deref().unwrap_or("").is_empty() {
+                    return Err(sqlx::Error::Protocol(
+                        "SQLCipher support not detected. Ensure libsqlite3-sys is built with bundled-sqlcipher."
+                            .to_string(),
+                    ));
+                }
+
+                sqlx::query("PRAGMA foreign_keys = ON;").execute(&mut *conn).await?;
+                Ok(())
+            })
+        })
+        .connect_with(opts)
+        .await
+}
+
+async fn is_plaintext_sqlite(path: &Path) -> bool {
+    let metadata = match tokio::fs::metadata(path).await {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    if metadata.len() == 0 {
+        return false;
+    }
+
+    let opts = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(false);
+    let mut conn = match SqliteConnection::connect_with(&opts).await {
+        Ok(conn) => conn,
+        Err(_) => return false,
+    };
+
+    let res = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM sqlite_master")
+        .fetch_one(&mut conn)
+        .await;
+    res.is_ok()
+}
+
+async fn migrate_plaintext_to_sqlcipher(path: &Path, key_hex: &str) -> sqlx::Result<()> {
+    let tmp_path = path.with_extension("db.enc");
+    let backup_path = path.with_extension("db.bak");
+    let _ = tokio::fs::remove_file(&tmp_path).await;
+
+    {
+        let opts = SqliteConnectOptions::new().filename(path).create_if_missing(false);
+        let mut conn = SqliteConnection::connect_with(&opts).await?;
+        let attach = format!(
+            "ATTACH DATABASE '{}' AS encrypted KEY \"x'{}'\";",
+            tmp_path.to_string_lossy(),
+            key_hex
+        );
+        sqlx::query(&attach).execute(&mut conn).await?;
+        sqlx::query("SELECT sqlcipher_export('encrypted');")
+            .execute(&mut conn)
+            .await?;
+        sqlx::query("DETACH DATABASE encrypted;")
+            .execute(&mut conn)
+            .await?;
+    }
+
+    tokio::fs::rename(path, &backup_path).await?;
+    tokio::fs::rename(&tmp_path, path).await?;
+    Ok(())
 }
 
 pub async fn get_user_db_pool(state: &AppState, account_id: i64) -> Result<SqlitePool, AppError> {
     let user_db_path = state.databases_dir.join(format!("{account_id}.db"));
     let user_db_path_str = user_db_path.to_string_lossy().into_owned();
 
-    let pool = connect_sqlite(&user_db_path)
+    let inner = state.ensure_ready(false).await?;
+
+    let pool = connect_sqlite(&user_db_path, &inner.crypto)
         .await
         .map_err(|e| AppError::db(e, &user_db_path_str))?;
 

@@ -1,7 +1,9 @@
 mod avatar;
 mod avatar_routes;
+mod crypto;
 mod db;
-mod error;
+pub mod error;
+mod keystore;
 mod i18n;
 mod imap_client;
 mod imap_session;
@@ -29,14 +31,14 @@ use crate::mail_routes::MailAppState;
 
 use std::path::PathBuf;
 
-pub async fn run(db_dir: Option<PathBuf>) -> anyhow::Result<()> {
+pub async fn run(db_dir: Option<PathBuf>) -> Result<(), crate::error::AppError> {
     println!("Guvercin Backend v1.1 Starting...");
     dotenvy::dotenv().ok();
 
     let subscriber = FmtSubscriber::builder()
         .with_env_filter(EnvFilter::from_default_env())
         .finish();
-    tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
+    tracing::subscriber::set_global_default(subscriber).ok();
 
     let db_state = Arc::new(AppState::initialize(db_dir).await?);
     let imap_state = Arc::new(ImapState::new());
@@ -153,8 +155,25 @@ pub async fn run(db_dir: Option<PathBuf>) -> anyhow::Result<()> {
     let addr = SocketAddr::from(([0, 0, 0, 0], 5000));
     tracing::info!("Starting Axum server on {}", addr);
 
-    let listener = TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+    let listener = TcpListener::bind(addr).await.map_err(|e| crate::error::AppError::BadRequest(format!("Bind error: {e}")))?;
+    axum::serve(listener, app).await.map_err(|e| crate::error::AppError::BadRequest(format!("Axum error: {e}")))?;
 
+    Ok(())
+}
+
+pub async fn init_keyring() -> anyhow::Result<()> {
+    crypto::CryptoManager::create_and_store(crypto::KEYRING_PROMPT)
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    println!("Keyring initialized.");
+    Ok(())
+}
+
+pub async fn check_keyring() -> anyhow::Result<()> {
+    let raw = crate::keystore::load_master_key(crypto::KEYRING_PROMPT)
+        .await
+        .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+    let _ = crypto::CryptoManager::from_raw(raw)?;
+    println!("Keyring access OK.");
     Ok(())
 }

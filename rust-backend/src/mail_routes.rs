@@ -46,12 +46,16 @@ pub async fn connect_imap(
     .unwrap_or_else(|e| Err(format!("Task panic: {e}")));
 
     if result.is_ok() {
+        let inner = match state._db.ensure_ready(false).await {
+            Ok(inner) => inner,
+            Err(e) => return e.into_response(),
+        };
         let _ =
             sqlx::query("UPDATE accounts SET auth_token = ?, ssl_mode = ? WHERE account_id = ?")
                 .bind(&body.password)
                 .bind(&body.ssl_mode)
                 .bind(body.account_id)
-                .execute(&state._db.general_pool)
+                .execute(&inner.general_pool)
                 .await;
     }
 
@@ -69,7 +73,12 @@ pub async fn connect_imap_stored(
         "SELECT email_address, imap_host, imap_port, auth_token, ssl_mode FROM accounts WHERE account_id = ?",
     )
     .bind(account_id)
-    .fetch_one(&state._db.general_pool)
+    .fetch_one(
+        &match state._db.ensure_ready(false).await {
+            Ok(inner) => inner.general_pool.clone(),
+            Err(e) => return e.into_response(),
+        },
+    )
     .await {
         Ok(a) => a,
         Err(_) => return (StatusCode::NOT_FOUND, Json(json!({"error": "Account not found"}))).into_response(),

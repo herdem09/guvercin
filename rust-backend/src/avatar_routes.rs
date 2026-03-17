@@ -7,9 +7,7 @@ use axum::{
 };
 use serde::Deserialize;
 use std::sync::Arc;
-use tokio::fs;
-
-use crate::{avatar, db::AppState};
+use crate::{avatar, crypto, db::AppState};
 
 #[derive(Deserialize)]
 pub struct AvatarQuery {
@@ -27,14 +25,23 @@ pub async fn get_avatar(
     }
 
     let hash = avatar::email_hash(&email);
-    let pool = &state.general_pool;
+    let inner = match state.ensure_ready(false).await {
+        Ok(inner) => inner,
+        Err(e) => return e.into_response(),
+    };
+    let pool = &inner.general_pool;
 
     if avatar::is_negative_cached(pool, &hash).await {
         return StatusCode::NO_CONTENT.into_response();
     }
 
     if let Ok(Some(cached)) = avatar::query_cache(pool, &hash).await {
-        match fs::read(&cached.file_path).await {
+        let key = match inner.crypto.file_key("avatar-cache") {
+            Ok(k) => k,
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
+
+        match crypto::decrypt_file_to_bytes(&key, cached.file_path.as_ref()).await {
             Ok(data) => {
                 return Response::builder()
                     .status(StatusCode::OK)
@@ -43,9 +50,7 @@ pub async fn get_avatar(
                     .body(Body::from(data))
                     .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
             }
-            Err(_) => {
-                
-            }
+            Err(_) => {}
         }
     }
 

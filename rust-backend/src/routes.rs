@@ -27,6 +27,9 @@ pub async fn health_check() -> impl IntoResponse {
 pub async fn get_accounts(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<AccountsResponse>, AppError> {
+    let Some(inner) = state.ready_or_none().await else {
+        return Ok(Json(AccountsResponse { accounts: vec![] }));
+    };
     let rows = sqlx::query_as::<_, AccountSummary>(
         r#"
         SELECT account_id, email_address, display_name, provider_type,
@@ -35,7 +38,7 @@ pub async fn get_accounts(
         FROM accounts
         "#,
     )
-    .fetch_all(&state.general_pool)
+    .fetch_all(&inner.general_pool)
     .await?;
 
     Ok(Json(AccountsResponse { accounts: rows }))
@@ -47,18 +50,20 @@ pub async fn setup_account(
 ) -> impl IntoResponse {
     let email = form.email_address.trim().to_string();
 
-    if let Ok(existing) =
-        sqlx::query_scalar::<_, i64>("SELECT account_id FROM accounts WHERE email_address = ?")
-            .bind(&email)
-            .fetch_optional(&state.general_pool)
-            .await
-    {
-        if existing.is_some() {
-            let body = json!({
-                "status": "already_exists",
-                "message": tr("This email address is already registered."),
-            });
-            return (StatusCode::CONFLICT, Json(body)).into_response();
+    if let Some(inner) = state.ready_or_none().await {
+        if let Ok(existing) =
+            sqlx::query_scalar::<_, i64>("SELECT account_id FROM accounts WHERE email_address = ?")
+                .bind(&email)
+                .fetch_optional(&inner.general_pool)
+                .await
+        {
+            if existing.is_some() {
+                let body = json!({
+                    "status": "already_exists",
+                    "message": tr("This email address is already registered."),
+                });
+                return (StatusCode::CONFLICT, Json(body)).into_response();
+            }
         }
     }
 
@@ -226,7 +231,8 @@ pub async fn finalize_account(
         .unwrap_or("STARTTLS")
         .to_string();
 
-    let mut tx = state.general_pool.begin().await?;
+    let inner = state.ensure_ready(true).await?;
+    let mut tx = inner.general_pool.begin().await?;
 
     let existing: Option<i64> =
         sqlx::query_scalar("SELECT account_id FROM accounts WHERE email_address = ?")
@@ -311,7 +317,7 @@ pub async fn set_account_theme(
     sqlx::query("UPDATE accounts SET theme = ? WHERE account_id = ?")
         .bind(theme)
         .bind(account_id)
-        .execute(&state.general_pool)
+        .execute(&state.ensure_ready(false).await?.general_pool)
         .await?;
 
     Ok((StatusCode::OK, Json(json!({ "status": "success" }))))

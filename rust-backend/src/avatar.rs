@@ -8,6 +8,7 @@ use std::{
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
+use crate::crypto::{self, CryptoManager};
 use crate::db::AppState;
 
 pub fn email_hash(email: &str) -> String {
@@ -80,6 +81,7 @@ pub async fn cache_avatar(
     content_type: &str,
     source: &str,
     cache_dir: &Path,
+    crypto: &CryptoManager,
 ) -> anyhow::Result<PathBuf> {
     tokio::fs::create_dir_all(cache_dir).await?;
 
@@ -94,7 +96,8 @@ pub async fn cache_avatar(
     };
     let filename = format!("{hash}.{ext}");
     let path = cache_dir.join(&filename);
-    tokio::fs::write(&path, data).await?;
+    let key = crypto.file_key("avatar-cache")?;
+    crypto::encrypt_bytes_to_file(&key, data, &path).await?;
 
     sqlx::query(
         r#"
@@ -386,7 +389,10 @@ pub async fn run_waterfall(
     state: Arc<AppState>,
 ) {
     let hash = email_hash(&email);
-    let pool = &state.general_pool;
+    let Some(inner) = state.ready_or_none().await else {
+        return;
+    };
+    let pool = &inner.general_pool;
 
     if let Ok(Some(_)) = query_cache(pool, &hash).await {
         return;
@@ -409,43 +415,114 @@ pub async fn run_waterfall(
 
     if let Ok(user_pool) = crate::db::get_user_db_pool(&state, account_id).await {
         if let Some((data, ct)) = try_contact(&user_pool, &email).await {
-            let _ = cache_avatar(pool, &email, &hash, &data, &ct, "contact", &cache_dir).await;
+            let _ = cache_avatar(
+                pool,
+                &email,
+                &hash,
+                &data,
+                &ct,
+                "contact",
+                &cache_dir,
+                &inner.crypto,
+            )
+                    .await;
             return;
         }
     }
 
     if let Some((data, ct)) = try_bimi(&client, &domain).await {
-        let _ = cache_avatar(pool, &email, &hash, &data, &ct, "bimi", &cache_dir).await;
+        let _ = cache_avatar(pool, &email, &hash, &data, &ct, "bimi", &cache_dir, &inner.crypto)
+            .await;
         return;
     }
 
     if let Some((data, ct)) = try_google_profile(&client, &email).await {
-        let _ = cache_avatar(pool, &email, &hash, &data, &ct, "google", &cache_dir).await;
+        let _ = cache_avatar(
+            pool,
+            &email,
+            &hash,
+            &data,
+            &ct,
+            "google",
+            &cache_dir,
+            &inner.crypto,
+        )
+                .await;
         return;
     }
 
     if let Some((data, ct)) = try_gravatar(&client, &email).await {
-        let _ = cache_avatar(pool, &email, &hash, &data, &ct, "gravatar", &cache_dir).await;
+        let _ = cache_avatar(
+            pool,
+            &email,
+            &hash,
+            &data,
+            &ct,
+            "gravatar",
+            &cache_dir,
+            &inner.crypto,
+        )
+                .await;
         return;
     }
 
     if let Some((data, ct)) = try_clearbit(&client, &domain).await {
-        let _ = cache_avatar(pool, &email, &hash, &data, &ct, "clearbit", &cache_dir).await;
+        let _ = cache_avatar(
+            pool,
+            &email,
+            &hash,
+            &data,
+            &ct,
+            "clearbit",
+            &cache_dir,
+            &inner.crypto,
+        )
+                .await;
         return;
     }
 
     if let Some((data, ct)) = try_google_favicon(&client, &domain).await {
-        let _ = cache_avatar(pool, &email, &hash, &data, &ct, "google_favicon", &cache_dir).await;
+        let _ = cache_avatar(
+            pool,
+            &email,
+            &hash,
+            &data,
+            &ct,
+            "google_favicon",
+            &cache_dir,
+            &inner.crypto,
+        )
+        .await;
         return;
     }
 
     if let Some((data, ct)) = try_og_image(&client, &domain).await {
-        let _ = cache_avatar(pool, &email, &hash, &data, &ct, "og_image", &cache_dir).await;
+        let _ = cache_avatar(
+            pool,
+            &email,
+            &hash,
+            &data,
+            &ct,
+            "og_image",
+            &cache_dir,
+            &inner.crypto,
+        )
+        .await;
         return;
     }
 
     if let Some((data, ct)) = try_favicon_ico(&client, &domain).await {
-        let _ = cache_avatar(pool, &email, &hash, &data, &ct, "favicon", &cache_dir).await;
+        let _ = cache_avatar(
+            pool,
+            &email,
+            &hash,
+            &data,
+            &ct,
+            "favicon",
+            &cache_dir,
+            &inner.crypto,
+        )
+                .await;
         return;
     }
 

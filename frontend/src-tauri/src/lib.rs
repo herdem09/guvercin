@@ -214,8 +214,39 @@ pub fn run() {
       std::thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-          if let Err(e) = rust_backend::run(db_dir).await {
-            eprintln!("Backend error: {}", e);
+          use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+          
+          loop {
+            match rust_backend::run(db_dir.clone()).await {
+              Ok(_) => break,
+              Err(rust_backend::error::AppError::KeyringDenied(_)) => {
+                let confirmed = _app_handle.dialog()
+                  .message("Access to the secure storage was denied. Guvercin needs this access to protect your account data.")
+                  .title("Keyring Access Required")
+                  .kind(MessageDialogKind::Warning)
+                  .buttons(MessageDialogButtons::OkCancelCustom("Retry".to_string(), "Quit".to_string()))
+                  .blocking_show();
+                
+                if confirmed {
+                    // Retry selected (OkCustom)
+                    continue;
+                } else {
+                    // Quit selected (CancelCustom)
+                    _app_handle.exit(0);
+                    break;
+                }
+              }
+              Err(e) => {
+                eprintln!("Backend error: {}", e);
+                _app_handle.dialog()
+                  .message(format!("The backend failed to start: {}", e))
+                  .title("Initialization Error")
+                  .kind(MessageDialogKind::Error)
+                  .blocking_show();
+                _app_handle.exit(1);
+                break;
+              }
+            }
           }
         });
       });

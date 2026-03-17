@@ -1103,7 +1103,7 @@ pub async fn get_offline_status(
         "SELECT sync_status, last_sync_time, smtp_host FROM accounts WHERE account_id = ?",
     )
     .bind(account_id)
-    .fetch_optional(&state._db.general_pool)
+    .fetch_optional(&state._db.require_general_pool().await?)
     .await?;
 
     let (account_syncing, last_sync_at, smtp_reachable) = if let Some(r) = status_row {
@@ -1503,7 +1503,7 @@ async fn load_account_imap_settings(
         "SELECT email_address, imap_host, imap_port, auth_token, ssl_mode FROM accounts WHERE account_id = ?",
     )
     .bind(account_id)
-    .fetch_optional(&app_state.general_pool)
+    .fetch_optional(&app_state.require_general_pool().await?)
     .await?;
 
     let Some(account_row) = account_row else {
@@ -2978,7 +2978,7 @@ async fn set_account_sync_status(
     sqlx::query("UPDATE accounts SET sync_status = ? WHERE account_id = ?")
         .bind(syncing as i64)
         .bind(account_id)
-        .execute(&app_state.general_pool)
+        .execute(&app_state.require_general_pool().await?)
         .await?;
     Ok(())
 }
@@ -2986,7 +2986,7 @@ async fn set_account_sync_status(
 async fn touch_last_sync_time(app_state: &Arc<AppState>, account_id: i64) -> Result<(), AppError> {
     sqlx::query("UPDATE accounts SET last_sync_time = CURRENT_TIMESTAMP WHERE account_id = ?")
         .bind(account_id)
-        .execute(&app_state.general_pool)
+        .execute(&app_state.require_general_pool().await?)
         .await?;
     Ok(())
 }
