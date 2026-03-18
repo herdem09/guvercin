@@ -15,6 +15,7 @@ mod routes;
 pub mod smtp_send;
 
 use axum::{
+    extract::DefaultBodyLimit,
     routing::{delete, get, post},
     Router,
 };
@@ -112,7 +113,8 @@ pub async fn run(db_dir: Option<PathBuf>) -> Result<(), crate::error::AppError> 
         )
         .route(
             "/api/offline/:account_id/actions",
-            post(offline_routes::post_offline_action),
+            post(offline_routes::post_offline_action)
+                .layer(DefaultBodyLimit::max(32 * 1024 * 1024)),
         )
         .route(
             "/api/offline/:account_id/sync-now",

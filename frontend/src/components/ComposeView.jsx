@@ -236,8 +236,13 @@ export default function ComposeView({ draft, onDraftChange, onSend, onDiscard, a
     const monacoRef = useRef(null)
 
     const patchDraft = useCallback((patch) => {
-        onDraftChange?.({ ...draft, ...patch })
-    }, [draft, onDraftChange])
+        if (!onDraftChange) return
+        if (typeof patch === 'function') {
+            onDraftChange((currentDraft) => patch(currentDraft || {}))
+            return
+        }
+        onDraftChange((currentDraft) => ({ ...(currentDraft || {}), ...patch }))
+    }, [onDraftChange])
 
     const patchRecipients = useCallback((field, recipients) => {
         const nextRecipients = recipients.map((entry) => `${entry || ''}`.trim()).filter(Boolean)
@@ -300,35 +305,40 @@ export default function ComposeView({ draft, onDraftChange, onSend, onDiscard, a
             }
         }))
 
-        patchDraft({
-            attachments: [...(draft?.attachments || []), ...prepared],
-        })
-
-        if (disposition === 'inline') {
-            const snippets = prepared
-                .map((attachment) => `<img src="cid:${attachment.contentId}" alt="${escapeHtml(attachment.name)}">`)
-                .join('\n')
-
-            const editor = monacoRef.current
-            if (editor) {
-                const selection = editor.getSelection()
-                const range = selection || undefined
-                editor.executeEdits('inline-image', [{
-                    range,
-                    text: snippets,
-                    forceMoveMarkers: true,
-                }])
-                editor.focus()
-                patchDraft({
-                    htmlBody: editor.getValue(),
-                })
-            } else {
-                patchDraft({
-                    htmlBody: `${draft?.htmlBody || ''}${draft?.htmlBody ? '\n' : ''}${snippets}`,
-                })
-            }
+        if (disposition !== 'inline') {
+            patchDraft((currentDraft) => ({
+                ...currentDraft,
+                attachments: [...(currentDraft?.attachments || []), ...prepared],
+            }))
+            return
         }
-    }, [draft?.attachments, draft?.htmlBody, patchDraft])
+
+        const snippets = prepared
+            .map((attachment) => `<img src="cid:${attachment.contentId}" alt="${escapeHtml(attachment.name)}">`)
+            .join('\n')
+
+        const editor = monacoRef.current
+        let nextHtmlBody = ''
+        if (editor) {
+            const selection = editor.getSelection()
+            const range = selection || undefined
+            editor.executeEdits('inline-image', [{
+                range,
+                text: snippets,
+                forceMoveMarkers: true,
+            }])
+            editor.focus()
+            nextHtmlBody = editor.getValue()
+        }
+
+        patchDraft((currentDraft) => ({
+            ...currentDraft,
+            attachments: [...(currentDraft?.attachments || []), ...prepared],
+            htmlBody: editor
+                ? nextHtmlBody
+                : `${currentDraft?.htmlBody || ''}${currentDraft?.htmlBody ? '\n' : ''}${snippets}`,
+        }))
+    }, [patchDraft])
 
     const handleAttachmentInput = useCallback(async (event, disposition) => {
         const input = event.target

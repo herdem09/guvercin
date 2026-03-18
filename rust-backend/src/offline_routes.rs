@@ -928,6 +928,35 @@ struct InlinePrefetchResponse {
     cached_count: usize,
 }
 
+fn build_inline_cid_attachment_map(
+    account_id: i64,
+    uid: &str,
+    mailbox: &str,
+    attachments: &[crate::mail_models::AttachmentInfo],
+) -> std::collections::HashMap<String, String> {
+    let encoded_mailbox = percent_encode_filename(mailbox);
+    attachments
+        .iter()
+        .filter_map(|attachment| {
+            let content_id = attachment
+                .content_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())?;
+            Some((
+                format!("cid:{}", content_id),
+                format!(
+                    "http://127.0.0.1:5000/api/offline/{}/local-content/{}/attachments/{}?mailbox={}",
+                    account_id,
+                    uid,
+                    attachment.id,
+                    encoded_mailbox,
+                ),
+            ))
+        })
+        .collect()
+}
+
 pub async fn prefetch_local_inline_assets(
     State(state): State<Arc<MailAppState>>,
     Path((account_id, uid)): Path<(i64, String)>,
@@ -938,7 +967,7 @@ pub async fn prefetch_local_inline_assets(
         Err(e) => return e.into_response(),
     };
 
-    let row = sqlx::query("SELECT html_body FROM local_mail_cache WHERE uid = ? AND folder = ?")
+    let row = sqlx::query("SELECT html_body, raw_rfc822 FROM local_mail_cache WHERE uid = ? AND folder = ?")
         .bind(&uid)
         .bind(&q.mailbox)
         .fetch_optional(&pool)
@@ -957,6 +986,10 @@ pub async fn prefetch_local_inline_assets(
         .ok()
         .flatten()
         .unwrap_or_default();
+    let raw = row
+        .try_get::<Option<Vec<u8>>, _>("raw_rfc822")
+        .ok()
+        .flatten();
     if html.is_empty() {
         return Json(InlinePrefetchResponse {
             html_body: html,
@@ -966,7 +999,14 @@ pub async fn prefetch_local_inline_assets(
     }
 
     let url_to_asset = cache_inline_assets_for_html(&pool, account_id, &html).await;
-    let rewritten = rewrite_html_inline_image_srcs(&html, account_id, &url_to_asset);
+    let cid_to_attachment = raw
+        .as_deref()
+        .map(|raw_bytes| {
+            let content = imap_session::parse_mail_content(uid.clone(), raw_bytes);
+            build_inline_cid_attachment_map(account_id, &uid, &q.mailbox, &content.attachments)
+        })
+        .unwrap_or_default();
+    let rewritten = rewrite_html_inline_image_srcs(&html, account_id, &url_to_asset, &cid_to_attachment);
 
     if rewritten != html {
         let _ = sqlx::query(
@@ -981,7 +1021,7 @@ pub async fn prefetch_local_inline_assets(
 
     Json(InlinePrefetchResponse {
         html_body: rewritten,
-        cached_count: url_to_asset.len(),
+        cached_count: url_to_asset.len() + cid_to_attachment.len(),
     })
     .into_response()
 }
@@ -3023,7 +3063,8 @@ async fn cache_mail_body(
     };
     let content = imap_session::parse_mail_content(uid.to_string(), &raw);
     let url_to_asset = cache_inline_assets_for_html(pool, account_id, &content.html_body).await;
-    let rewritten_html = rewrite_html_inline_image_srcs(&content.html_body, account_id, &url_to_asset);
+    let cid_to_attachment = build_inline_cid_attachment_map(account_id, uid, mailbox, &content.attachments);
+    let rewritten_html = rewrite_html_inline_image_srcs(&content.html_body, account_id, &url_to_asset, &cid_to_attachment);
     let date_ms: i64 = DateTime::parse_from_rfc2822(&content.date)
         .map(|dt| dt.timestamp_millis())
         .unwrap_or(0);
@@ -3160,8 +3201,9 @@ fn rewrite_html_inline_image_srcs(
     html: &str,
     account_id: i64,
     url_to_asset: &std::collections::HashMap<String, String>,
+    cid_to_attachment: &std::collections::HashMap<String, String>,
 ) -> String {
-    if html.is_empty() || url_to_asset.is_empty() {
+    if html.is_empty() || (url_to_asset.is_empty() && cid_to_attachment.is_empty()) {
         return html.to_string();
     }
 
@@ -3172,6 +3214,13 @@ fn rewrite_html_inline_image_srcs(
             account_id, asset_id
         );
         out = out.replace(url, &local);
+    }
+    for (cid_src, local_url) in cid_to_attachment {
+        out = out.replace(cid_src, local_url);
+        let lower = cid_src.to_ascii_lowercase();
+        if lower != *cid_src {
+            out = out.replace(&lower, local_url);
+        }
     }
     out
 }

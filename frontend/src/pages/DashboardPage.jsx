@@ -2520,7 +2520,12 @@ function MailSection({
     const updateComposeTabDraft = useCallback((tabId, nextDraft) => {
         setTabs((prev) => prev.map((tab) => (
             tab.id === tabId && tab.kind === 'compose'
-                ? { ...tab, draft: normalizeComposeDraft(nextDraft) }
+                ? {
+                    ...tab,
+                    draft: normalizeComposeDraft(
+                        typeof nextDraft === 'function' ? nextDraft(tab.draft) : nextDraft,
+                    ),
+                }
                 : tab
         )))
     }, [setTabs])
@@ -4106,7 +4111,14 @@ function MailSection({
 
     const updateInlineComposeDraft = useCallback((nextDraft) => {
         setInlineComposeSession((prev) => (
-            prev ? { ...prev, draft: normalizeComposeDraft(nextDraft) } : prev
+            prev
+                ? {
+                    ...prev,
+                    draft: normalizeComposeDraft(
+                        typeof nextDraft === 'function' ? nextDraft(prev.draft) : nextDraft,
+                    ),
+                }
+                : prev
         ))
     }, [setInlineComposeSession])
 
