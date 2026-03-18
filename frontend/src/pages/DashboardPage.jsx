@@ -11,6 +11,7 @@ import {
     buildDraftSavePayload,
     getComposeTitle,
     isComposeDraftDirty,
+    isComposeDraftModified,
     normalizeComposeDraft,
     parseComposeBody,
     parseComposeRecipients,
@@ -2488,6 +2489,7 @@ function MailSection({
                     id: tabId,
                     kind: 'compose',
                     source: target.source || normalizedDraft.source || 'new',
+                    baselineDraft: normalizedDraft,
                     draft: { ...normalizedDraft, composeSurface: 'tab' },
                 }]
             })
@@ -2499,6 +2501,7 @@ function MailSection({
             id: target?.id || createComposeSessionId(),
             kind: 'compose',
             source: target?.source || normalizedDraft.source || 'new',
+            baselineDraft: normalizedDraft,
             draft: { ...normalizedDraft, composeSurface: 'inline' },
         })
         setActiveTabId(null)
@@ -2532,12 +2535,13 @@ function MailSection({
 
     const openComposeInTab = useCallback((sessionOrDraft, fallbackSource = 'new') => {
         const source = sessionOrDraft?.source || fallbackSource
-        const draft = { ...createEmptyComposeDraft(sessionOrDraft?.draft || sessionOrDraft), composeSurface: 'tab' }
+        const normalizedDraft = createEmptyComposeDraft(sessionOrDraft?.draft || sessionOrDraft)
+        const draft = { ...normalizedDraft, composeSurface: 'tab' }
         const sourceId = sessionOrDraft?.id || null
         nextTabId.current += 1
         const tabId = `tab-${nextTabId.current}`
 
-        setTabs((prev) => [...prev, { id: tabId, kind: 'compose', source, draft }])
+        setTabs((prev) => [...prev, { id: tabId, kind: 'compose', source, baselineDraft: normalizedDraft, draft }])
         setActiveTabId(tabId)
         setSelectedMail(null)
         setMailContent(null)
@@ -2554,7 +2558,8 @@ function MailSection({
             nextComposeWindowId.current += 1
             const label = `compose-${nextComposeWindowId.current}`
             const source = sessionOrDraft?.source || fallbackSource
-            const draft = { ...createEmptyComposeDraft(sessionOrDraft?.draft || sessionOrDraft), composeSurface: 'window' }
+            const normalizedDraft = createEmptyComposeDraft(sessionOrDraft?.draft || sessionOrDraft)
+            const draft = { ...normalizedDraft, composeSurface: 'window' }
 
             await invoke('open_compose_window', {
                 label,
@@ -2563,6 +2568,7 @@ function MailSection({
                     accountEmail,
                     source,
                     draft,
+                    baselineDraft: normalizedDraft,
                 }),
             })
 
@@ -2590,11 +2596,13 @@ function MailSection({
             openComposeInTab(inlineComposeSession, inlineComposeSession.source)
         }
 
+        const normalizedDraft = createEmptyComposeDraft(draft)
         setInlineComposeSession({
             id: createComposeSessionId(),
             kind: 'compose',
             source,
-            draft: { ...createEmptyComposeDraft(draft), composeSurface: 'inline' },
+            baselineDraft: normalizedDraft,
+            draft: { ...normalizedDraft, composeSurface: 'inline' },
         })
         setActiveTabId(null)
         setSelectedMail(null)
@@ -2650,8 +2658,11 @@ function MailSection({
         return true
     }, [accountEmail, closeComposeTarget, enqueueUndoableAction, restoreComposeTarget, sendComposedMail])
 
-    const requestComposeExit = useCallback(({ target, draft, intent = 'discard', pendingMail = null }) => {
-        if (!isComposeDraftDirty(draft)) {
+    const requestComposeExit = useCallback(({ target, draft, intent = 'discard', pendingMail = null, baselineDraft = null }) => {
+        const hasMeaningfulChanges = baselineDraft
+            ? isComposeDraftModified(draft, baselineDraft)
+            : isComposeDraftDirty(draft)
+        if (!hasMeaningfulChanges) {
             closeComposeTarget(target)
             if (intent === 'open_mail' && pendingMail) {
                 openMailOrDraft(pendingMail)
@@ -2726,7 +2737,10 @@ function MailSection({
             return
         }
 
-        if (!isComposeDraftDirty(inlineComposeSession.draft)) {
+        const hasMeaningfulChanges = inlineComposeSession?.baselineDraft
+            ? isComposeDraftModified(inlineComposeSession.draft, inlineComposeSession.baselineDraft)
+            : isComposeDraftDirty(inlineComposeSession.draft)
+        if (!hasMeaningfulChanges) {
             setInlineComposeSession(null)
             await openMailOrDraft(mail)
             return
@@ -3341,6 +3355,7 @@ function MailSection({
             requestComposeExit({
                 target: { type: 'tab', id: tabId, source: tab.source },
                 draft: tab.draft,
+                baselineDraft: tab.baselineDraft,
                 intent: 'discard',
             })
             return
@@ -4098,6 +4113,7 @@ function MailSection({
         requestComposeExit({
             target: { type: 'tab', id: activeComposeTab.id, source: activeComposeTab.source },
             draft: activeComposeTab.draft,
+            baselineDraft: activeComposeTab.baselineDraft,
             intent: 'discard',
         })
         closeActionMenus()
@@ -4135,6 +4151,7 @@ function MailSection({
         requestComposeExit({
             target: { type: 'inline', id: inlineComposeSession.id, source: inlineComposeSession.source },
             draft: inlineComposeSession.draft,
+            baselineDraft: inlineComposeSession.baselineDraft,
             intent: 'discard',
         })
     }, [inlineComposeSession, requestComposeExit])
@@ -4393,6 +4410,7 @@ function MailSection({
                             onDiscard={() => requestComposeExit({
                                 target: { type: 'tab', id: activeComposeTab.id, source: activeComposeTab.source },
                                 draft: activeComposeTab.draft,
+                                baselineDraft: activeComposeTab.baselineDraft,
                                 intent: 'discard',
                             })}
                             onOpenInWindow={() => openComposeWindow(activeComposeTab, activeComposeTab.source)}

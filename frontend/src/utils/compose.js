@@ -217,6 +217,41 @@ export function isComposeDraftDirty(draft = {}) {
   )
 }
 
+function stableAttachmentSignature(attachment = {}) {
+  return {
+    name: `${attachment?.name || ''}`.trim(),
+    mimeType: `${attachment?.mimeType || ''}`.trim(),
+    base64: `${attachment?.base64 || ''}`,
+    disposition: attachment?.disposition === 'inline' ? 'inline' : 'attachment',
+    contentId: typeof attachment?.contentId === 'string' && attachment.contentId.trim()
+      ? attachment.contentId.trim()
+      : null,
+  }
+}
+
+function composeDraftSignature(draft = {}) {
+  const normalized = normalizeComposeDraft(draft)
+  const attachments = (normalized.attachments || [])
+    .map(stableAttachmentSignature)
+    .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
+
+  return {
+    format: normalized.format,
+    toRecipients: normalized.toRecipients,
+    ccRecipients: normalized.ccRecipients,
+    bccRecipients: normalized.bccRecipients,
+    subject: `${normalized.subject || ''}`.trim(),
+    plainBody: `${normalized.plainBody || ''}`.trim(),
+    htmlBody: `${normalized.htmlBody || ''}`.trim(),
+    attachments,
+  }
+}
+
+export function isComposeDraftModified(draft = {}, baselineDraft = {}) {
+  // Compare stable content only (ignores view state like htmlMode/composeSurface).
+  return JSON.stringify(composeDraftSignature(draft)) !== JSON.stringify(composeDraftSignature(baselineDraft))
+}
+
 export function ensureHtmlDraftSeed(draft = {}) {
   const normalized = normalizeComposeDraft(draft)
   if (normalized.htmlBody.trim()) {

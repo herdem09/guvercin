@@ -2420,15 +2420,59 @@ async fn apply_local_action_side_effects(
                 .get("destination")
                 .and_then(|value| value.as_str())
                 .unwrap_or(folder);
-            upsert_folder_metadata(pool, destination).await?;
+            if destination == folder {
+                return Ok(());
+            }
+
+            let mut tx = pool.begin().await?;
+
+            let destination_has_same_uid: bool = sqlx::query(
+                "SELECT 1 FROM local_mail_cache WHERE uid = ? AND folder = ? LIMIT 1",
+            )
+            .bind(uid)
+            .bind(destination)
+            .fetch_optional(&mut *tx)
+            .await?
+            .is_some();
+
+            if destination_has_same_uid {
+                // IMAP UIDs are scoped to a mailbox; reusing the same UID in another mailbox is common.
+                // If the destination already has a row with the same UID, don't try to "move" by changing
+                // the folder key (it violates UNIQUE(uid, folder) and may overwrite another message).
+                // Instead, remove the message from the source view and let the next sync populate the
+                // destination mailbox with its new UID.
+                sqlx::query("DELETE FROM local_mail_cache WHERE uid = ? AND folder = ?")
+                    .bind(uid)
+                    .bind(folder)
+                    .execute(&mut *tx)
+                    .await?;
+                tx.commit().await?;
+                return Ok(());
+            }
+
+            sqlx::query(
+                r#"
+                INSERT INTO folders (path_by_name, path_by_id, name, type, is_visible)
+                VALUES (?, ?, ?, 'USER', 1)
+                ON CONFLICT(path_by_name) DO UPDATE SET name = excluded.name
+                "#,
+            )
+            .bind(destination)
+            .bind(destination)
+            .bind(destination)
+            .execute(&mut *tx)
+            .await?;
+
             sqlx::query(
                 "UPDATE local_mail_cache SET folder = ?, updated_at = CURRENT_TIMESTAMP WHERE uid = ? AND folder = ?",
             )
             .bind(destination)
             .bind(uid)
             .bind(folder)
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
+
+            tx.commit().await?;
         }
         "label_add" => {
             let label = payload
@@ -2796,6 +2840,7 @@ fn mail_date_before_threshold(date_value: &str, threshold: &DateTime<Utc>) -> bo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::sqlite::SqlitePoolOptions;
 
     fn preview(id: &str) -> MailPreview {
         MailPreview {
@@ -2915,6 +2960,89 @@ mod tests {
         assert_eq!(attachments.len(), 1);
         assert_eq!(attachments[0].filename, "image.png");
         assert_eq!(attachments[0].content_id.as_deref(), Some("cid-1"));
+    }
+
+    #[tokio::test]
+    async fn apply_local_action_move_deletes_source_on_uid_collision() {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+
+        sqlx::query(
+            r#"
+            CREATE TABLE folders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path_by_name TEXT UNIQUE NOT NULL,
+                path_by_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                is_visible BOOLEAN NOT NULL DEFAULT 1
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query(
+            r#"
+            CREATE TABLE local_mail_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                uid TEXT NOT NULL,
+                folder TEXT NOT NULL,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(uid, folder)
+            )
+            "#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        sqlx::query("INSERT INTO local_mail_cache (uid, folder) VALUES (?, ?)")
+            .bind("123")
+            .bind("INBOX")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO local_mail_cache (uid, folder) VALUES (?, ?)")
+            .bind("123")
+            .bind("Trash")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        apply_local_action_side_effects(
+            &pool,
+            "move",
+            Some("123"),
+            Some("INBOX"),
+            &serde_json::json!({ "destination": "Trash" }),
+        )
+        .await
+        .unwrap();
+
+        let inbox_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(1) FROM local_mail_cache WHERE uid = ? AND folder = ?",
+        )
+        .bind("123")
+        .bind("INBOX")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(inbox_count, 0);
+
+        let trash_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(1) FROM local_mail_cache WHERE uid = ? AND folder = ?",
+        )
+        .bind("123")
+        .bind("Trash")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(trash_count, 1);
     }
 }
 

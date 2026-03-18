@@ -9,6 +9,7 @@ const {
   composeRecipientsToString,
   ensureHtmlDraftSeed,
   isComposeDraftDirty,
+  isComposeDraftModified,
   normalizeComposeDraft,
   normalizeComposeRecipients,
   parseComposeBody,
@@ -96,4 +97,18 @@ test('isComposeDraftDirty ignores empty mode-only changes and detects content', 
   assert.equal(isComposeDraftDirty({ format: 'html', htmlMode: 'preview' }), false)
   assert.equal(isComposeDraftDirty({ subject: 'Hello' }), true)
   assert.equal(isComposeDraftDirty({ attachments: [{ filename: 'a.txt', data_base64: 'QQ==' }] }), true)
+})
+
+test('isComposeDraftModified only prompts when draft differs from baseline', () => {
+  const baseline = normalizeComposeDraft({
+    draftId: 'draft-1',
+    toRecipients: ['a@example.com'],
+    subject: 'Hello',
+    plainBody: 'Body',
+    attachments: [{ filename: 'a.txt', data_base64: 'QQ==' }],
+  })
+
+  assert.equal(isComposeDraftModified(baseline, baseline), false)
+  assert.equal(isComposeDraftModified({ ...baseline, htmlMode: 'preview' }, baseline), false)
+  assert.equal(isComposeDraftModified({ ...baseline, subject: 'Changed' }, baseline), true)
 })

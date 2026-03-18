@@ -1,4 +1,5 @@
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 use std::{collections::HashMap, sync::Arc};
 
 use sqlx::{
@@ -16,6 +17,7 @@ use crate::models::TransferSnapshot;
 pub struct AppState {
     pub databases_dir: PathBuf,
     pub transfer_progress: Arc<Mutex<HashMap<i64, TransferSnapshot>>>,
+    user_db_pools: Arc<Mutex<HashMap<i64, SqlitePool>>>,
     inner: Arc<RwLock<Option<Arc<AppStateInner>>>>,
 }
 
@@ -71,6 +73,7 @@ impl AppState {
         Ok(Self {
             databases_dir,
             transfer_progress: Arc::new(Mutex::new(HashMap::new())),
+            user_db_pools: Arc::new(Mutex::new(HashMap::new())),
             inner: Arc::new(RwLock::new(inner)),
         })
     }
@@ -196,11 +199,14 @@ async fn connect_sqlcipher(path: &Path, key_hex: &str) -> sqlx::Result<SqlitePoo
     let opts = SqliteConnectOptions::new()
         .filename(path)
         .create_if_missing(true)
+        .busy_timeout(Duration::from_secs(10))
         .pragma("key", format!("\"x'{}'\"", key_hex))
         .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
         .synchronous(sqlx::sqlite::SqliteSynchronous::Normal);
 
     SqlitePoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(Duration::from_secs(30))
         .after_connect(move |conn, _| {
             Box::pin(async move {
                 let cipher_version: Option<String> = sqlx::query_scalar("PRAGMA cipher_version;")
@@ -214,6 +220,9 @@ async fn connect_sqlcipher(path: &Path, key_hex: &str) -> sqlx::Result<SqlitePoo
                 }
 
                 sqlx::query("PRAGMA foreign_keys = ON;").execute(&mut *conn).await?;
+                sqlx::query("PRAGMA busy_timeout = 10000;")
+                    .execute(&mut *conn)
+                    .await?;
                 Ok(())
             })
         })
@@ -272,6 +281,10 @@ async fn migrate_plaintext_to_sqlcipher(path: &Path, key_hex: &str) -> sqlx::Res
 }
 
 pub async fn get_user_db_pool(state: &AppState, account_id: i64) -> Result<SqlitePool, AppError> {
+    if let Some(pool) = state.user_db_pools.lock().await.get(&account_id).cloned() {
+        return Ok(pool);
+    }
+
     let user_db_path = state.databases_dir.join(format!("{account_id}.db"));
     let user_db_path_str = user_db_path.to_string_lossy().into_owned();
 
@@ -285,6 +298,7 @@ pub async fn get_user_db_pool(state: &AppState, account_id: i64) -> Result<Sqlit
         .await
         .map_err(|e| AppError::db(e, &user_db_path_str))?;
 
+    state.user_db_pools.lock().await.insert(account_id, pool.clone());
     Ok(pool)
 }
 

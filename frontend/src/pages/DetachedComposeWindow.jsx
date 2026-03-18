@@ -4,6 +4,7 @@ import ComposeMailContent from '../components/ComposeMailContent.jsx'
 import {
     buildDraftSavePayload,
     isComposeDraftDirty,
+    isComposeDraftModified,
     normalizeComposeDraft,
     parseComposeBody,
 } from '../utils/compose.js'
@@ -20,6 +21,7 @@ function safeParse(json) {
 export default function DetachedComposeWindow() {
     const [windowLabel, setWindowLabel] = useState('')
     const [data, setData] = useState(null)
+    const [baselineDraft, setBaselineDraft] = useState(() => normalizeComposeDraft())
     const [draft, setDraft] = useState(() => normalizeComposeDraft())
     const [sending, setSending] = useState(false)
     const [sent, setSent] = useState(false)
@@ -79,6 +81,8 @@ export default function DetachedComposeWindow() {
     }, [windowLabel])
 
     useEffect(() => {
+        const nextBaseline = normalizeComposeDraft(data?.baselineDraft ?? data?.draft)
+        setBaselineDraft(nextBaseline)
         setDraft(normalizeComposeDraft(data?.draft))
     }, [data])
 
@@ -203,12 +207,15 @@ export default function DetachedComposeWindow() {
     }, [startDelayedSend])
 
     const handleDiscard = useCallback(() => {
-        if (!isComposeDraftDirty(draft)) {
+        const hasMeaningfulChanges = data?.baselineDraft
+            ? isComposeDraftModified(draft, baselineDraft)
+            : isComposeDraftDirty(draft)
+        if (!hasMeaningfulChanges) {
             closeWindow()
             return
         }
         setExitPromptOpen(true)
-    }, [closeWindow, draft])
+    }, [baselineDraft, closeWindow, data?.baselineDraft, draft])
 
     const handleExitAction = useCallback(async (action) => {
         if (action === 'cancel') {
