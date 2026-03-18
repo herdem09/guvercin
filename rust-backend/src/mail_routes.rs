@@ -336,7 +336,15 @@ pub async fn get_mail_content(
     .flatten();
 
     if let Some(raw_bytes) = raw {
-        let content = imap_session::parse_mail_content(uid_for_response, &raw_bytes);
+        let is_drafts_mailbox = {
+            let lower = q.mailbox.trim().to_ascii_lowercase();
+            lower == "drafts" || lower.ends_with("/drafts") || lower.ends_with(".drafts") || lower.contains("drafts")
+        };
+        let content = if is_drafts_mailbox {
+            imap_session::parse_mail_content_with_attachment_data(uid_for_response, &raw_bytes)
+        } else {
+            imap_session::parse_mail_content(uid_for_response, &raw_bytes)
+        };
         if let Ok(pool) = crate::db::get_user_db_pool(&state._db, account_id).await {
             let date_ms: i64 = DateTime::parse_from_rfc2822(&content.date)
                 .map(|dt| dt.timestamp_millis())

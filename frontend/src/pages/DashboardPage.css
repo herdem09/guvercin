@@ -44,7 +44,7 @@
   cursor: pointer;
   padding: 0;
   flex-shrink: 0;
-  order: -1;
+  border-radius: 999px;
 }
 
 .db-action-notice__text {
@@ -69,6 +69,7 @@
   cursor: pointer;
   padding: 0;
   flex-shrink: 0;
+  border-radius: 999px;
 }
 
 .db-action-notice__commit:hover,
@@ -86,6 +87,29 @@
   height: 100%;
   background: var(--c-primary);
   transition: width 0.1s linear;
+}
+
+.db-action-notice--warning {
+  background: linear-gradient(180deg, #ffe6a7 0%, #ffd569 100%);
+  color: #3d2600;
+}
+
+.db-action-notice--warning .db-action-notice__commit,
+.db-action-notice--warning .db-action-notice__undo {
+  color: #6a4300;
+}
+
+.db-action-notice--warning .db-action-notice__commit:hover,
+.db-action-notice--warning .db-action-notice__undo:hover {
+  color: #3d2600;
+}
+
+.db-action-notice--warning .db-action-notice__progress {
+  background: rgba(106, 67, 0, 0.16);
+}
+
+.db-action-notice--warning .db-action-notice__progress-bar {
+  background: #c88200;
 }
 
 body.resizing * {
@@ -2321,6 +2345,60 @@ body.resizing * {
   color: var(--c-text-1);
 }
 
+.db-compose-exit-panel {
+  width: min(560px, 94vw);
+  background: var(--c-surface-2);
+  border-radius: 12px;
+  box-shadow: 0 22px 46px var(--shadow-color-6);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.db-compose-exit-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--c-border-1);
+}
+
+.db-compose-exit-panel__title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--c-text-1);
+}
+
+.db-compose-exit-panel__body {
+  padding: 18px 16px 10px;
+  font-size: 14px;
+  color: var(--c-text-2);
+  line-height: 1.5;
+}
+
+.db-compose-exit-panel__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 0 16px 16px;
+}
+
+.db-compose-exit-panel__btn {
+  min-width: 120px;
+}
+
+.db-compose-exit-panel__btn--send {
+  background: linear-gradient(180deg, #ffd45e 0%, #ffbe24 100%);
+  color: #3d2600;
+  border-color: #d89900;
+}
+
+.db-compose-exit-panel__btn--save {
+  color: var(--c-text-inverse);
+}
+
 .db-advanced-search-panel__close {
   background: none;
   border: none;
@@ -2454,5 +2532,13 @@ body.resizing * {
 @media (max-width: 720px) {
   .db-advanced-search-grid {
     grid-template-columns: 1fr;
+  }
+
+  .db-compose-exit-panel__actions {
+    flex-direction: column;
+  }
+
+  .db-compose-exit-panel__btn {
+    width: 100%;
   }
 }

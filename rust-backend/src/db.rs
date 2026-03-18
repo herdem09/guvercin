@@ -542,8 +542,10 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             to_addrs TEXT,
             cc_addrs TEXT,
             bcc_addrs TEXT,
+            format_value TEXT NOT NULL DEFAULT 'plain',
             subject TEXT,
             body_text TEXT,
+            body_html TEXT,
             attachments_json TEXT,
             status TEXT NOT NULL DEFAULT 'pending',
             attempt_count INTEGER NOT NULL DEFAULT 0,
@@ -556,6 +558,16 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     )
     .execute(pool)
     .await?;
+
+    let _ = sqlx::query("ALTER TABLE outbox_mails ADD COLUMN format_value TEXT NOT NULL DEFAULT 'plain'")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("ALTER TABLE outbox_mails ADD COLUMN body_html TEXT")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("ALTER TABLE outbox_mails ADD COLUMN attachments_json TEXT")
+        .execute(pool)
+        .await;
 
     sqlx::query(
         r#"
@@ -687,6 +699,35 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         r#"
         CREATE INDEX IF NOT EXISTS idx_inline_asset_cache_updated
         ON inline_asset_cache(updated_at)
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS draft_attachments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            draft_uid TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            content_type TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL DEFAULT 0,
+            data_base64 TEXT NOT NULL,
+            disposition TEXT NOT NULL DEFAULT 'attachment',
+            content_id TEXT,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE INDEX IF NOT EXISTS idx_draft_attachments_uid_sort
+        ON draft_attachments(draft_uid, sort_order, id)
         "#,
     )
     .execute(pool)

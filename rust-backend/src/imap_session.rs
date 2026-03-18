@@ -4,6 +4,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use chrono::{DateTime, Datelike, Duration, NaiveDate};
 use imap;
 use native_tls::TlsConnector;
@@ -748,6 +749,16 @@ pub fn parse_mail_content(uid: String, raw: &[u8]) -> MailContent {
     }
 }
 
+pub fn parse_mail_content_with_attachment_data(uid: String, raw: &[u8]) -> MailContent {
+    match parse_mail(raw) {
+        Ok(parsed) => build_mail_content_with_options(uid, &parsed, true),
+        Err(err) => {
+            warn!(error = %err, "mailparse failed, falling back to basic parser");
+            fallback_parse_rfc822(uid, raw)
+        }
+    }
+}
+
 pub fn find_attachment_bytes(
     raw: &[u8],
     attachment_index: usize,
@@ -891,7 +902,52 @@ pub fn delete_mail(
     session.uid_delete(uid)
 }
 
+pub fn append_draft(
+    state: &Arc<ImapState>,
+    account_id: i64,
+    mailbox: &str,
+    raw: &[u8],
+    tracking_key: &str,
+) -> Result<String, String> {
+    let mut sessions = state.sessions.lock().unwrap();
+    let session = sessions
+        .get_mut(&account_id)
+        .ok_or_else(|| format!("No IMAP session for account {account_id}"))?;
+
+    let flags = [imap::types::Flag::Draft, imap::types::Flag::Seen];
+    let append_result = match session {
+        ImapSession::Plain(s) => s.append_with_flags(mailbox, raw, &flags),
+        ImapSession::Tls(s) => s.append_with_flags(mailbox, raw, &flags),
+    };
+    append_result.map_err(|e| format!("{e}"))?;
+
+    session.select_mailbox(mailbox)?;
+    let query = format!(
+        "HEADER X-GUVERCIN-DRAFT-KEY {}",
+        quote_imap_string(tracking_key),
+    );
+    let tracked_uids = session.uid_search_query(&query).unwrap_or_default();
+    if let Some(uid) = tracked_uids.into_iter().max() {
+        return Ok(uid.to_string());
+    }
+
+    let all_uids = session.uid_search_query("ALL")?;
+    all_uids
+        .into_iter()
+        .max()
+        .map(|uid| uid.to_string())
+        .ok_or_else(|| "Draft append succeeded but appended UID could not be resolved".to_string())
+}
+
 fn build_mail_content(uid: String, parsed: &ParsedMail) -> MailContent {
+    build_mail_content_with_options(uid, parsed, false)
+}
+
+fn build_mail_content_with_options(
+    uid: String,
+    parsed: &ParsedMail,
+    include_attachment_data: bool,
+) -> MailContent {
     let headers = parsed.get_headers();
     let subject = headers.get_first_value("Subject").unwrap_or_default();
     let date = headers.get_first_value("Date").unwrap_or_default();
@@ -913,7 +969,7 @@ fn build_mail_content(uid: String, parsed: &ParsedMail) -> MailContent {
         date,
         html_body: html.unwrap_or_default(),
         plain_body: plain.unwrap_or_default(),
-        attachments: collect_attachment_infos(parsed),
+        attachments: collect_attachment_infos(parsed, include_attachment_data),
     }
 }
 
@@ -953,10 +1009,13 @@ fn extract_sender(parsed: &ParsedMail) -> (String, String) {
     (String::new(), String::new())
 }
 
-fn collect_attachment_infos(parsed: &ParsedMail) -> Vec<AttachmentInfo> {
+fn collect_attachment_infos(parsed: &ParsedMail, include_bytes: bool) -> Vec<AttachmentInfo> {
     let mut attachments = Vec::new();
     iterate_attachment_parts(parsed, &mut |part, idx| {
-        if let Some(desc) = build_attachment_descriptor(part, idx, false) {
+        if let Some(mut desc) = build_attachment_descriptor(part, idx, include_bytes) {
+            if include_bytes {
+                desc.info.data_base64 = desc.bytes.map(|bytes| BASE64_STANDARD.encode(bytes));
+            }
             attachments.push(desc.info);
         }
         false
@@ -1052,6 +1111,11 @@ fn build_attachment_descriptor(
     let size = body.len();
     let content_type = part.ctype.mimetype.clone();
     let is_inline = matches!(disposition.disposition, DispositionType::Inline);
+    let content_id = part
+        .get_headers()
+        .get_first_value("Content-ID")
+        .map(|value| value.trim().trim_matches('<').trim_matches('>').to_string())
+        .filter(|value| !value.is_empty());
     let bytes = if include_bytes { Some(body) } else { None };
 
     Some(AttachmentDescriptor {
@@ -1061,6 +1125,8 @@ fn build_attachment_descriptor(
             content_type,
             size,
             is_inline,
+            data_base64: None,
+            content_id,
         },
         bytes,
     })

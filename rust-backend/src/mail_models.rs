@@ -134,6 +134,10 @@ pub struct AttachmentInfo {
     pub content_type: String,
     pub size: usize,
     pub is_inline: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data_base64: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]

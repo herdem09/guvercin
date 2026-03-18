@@ -7,7 +7,14 @@ import { useOfflineSync } from '../context/OfflineSyncContext.jsx'
 import { useTheme } from '../context/ThemeContext.jsx'
 import Avatar from '../components/Avatar.jsx'
 import ComposeMailContent from '../components/ComposeMailContent.jsx'
-import { getComposeTitle, normalizeComposeDraft, parseComposeRecipients } from '../utils/compose.js'
+import {
+    buildDraftSavePayload,
+    getComposeTitle,
+    isComposeDraftDirty,
+    normalizeComposeDraft,
+    parseComposeBody,
+    parseComposeRecipients,
+} from '../utils/compose.js'
 import './DashboardPage.css'
 
 const FOLDER_MAP = {
@@ -1407,24 +1414,26 @@ const DashboardPage = () => {
             const errorBody = await response.json().catch(() => null)
             throw new Error(errorBody?.error || errorBody?.message || `Failed to queue ${actionType}`)
         }
+        const responseBody = await response.json().catch(() => null)
         refreshStatus(accountId)
         if (networkOnline) {
             flushQueue(accountId)
         }
+        return responseBody
     }
 
     const dismissActionNotice = useCallback((noticeId) => {
         setActionNotices((prev) => prev.filter((notice) => notice.id !== noticeId))
     }, [])
 
-    const enqueueUndoableAction = useCallback(({ label, apply, undo, commit }) => {
+    const enqueueUndoableAction = useCallback(({ label, apply, undo, commit, variant = 'default', commitLabel = 'Apply now', undoLabel = 'Undo' }) => {
         nextNoticeIdRef.current += 1
         const id = nextNoticeIdRef.current
         const durationMs = 10_000
         const expiresAt = Date.now() + durationMs
 
         apply()
-        setActionNotices((prev) => [...prev, { id, label, durationMs, expiresAt }])
+        setActionNotices((prev) => [...prev, { id, label, durationMs, expiresAt, variant, commitLabel, undoLabel }])
 
         const timeoutId = window.setTimeout(async () => {
             const pending = pendingNoticeActionsRef.current.get(id)
@@ -1579,27 +1588,30 @@ const DashboardPage = () => {
     }
 
     const sendComposedMail = async (composed) => {
-        const toList = parseComposeRecipients(composed?.to)
-        if (toList.length === 0) return false
-        const htmlBody = composed?.htmlBody || ''
-        const plainBody = (() => {
-            if (!htmlBody) return composed?.body?.trim() || ''
-            const tmp = document.createElement('div')
-            tmp.innerHTML = htmlBody
-            const normalized = (tmp.textContent || tmp.innerText || '').trim()
-            return normalized || composed?.body?.trim() || ''
-        })()
-        await queueAction('send', null, {
-            from: composed?.from || email || accountEmailLabel,
-            to: toList,
-            cc: parseComposeRecipients(composed?.cc),
-            bcc: parseComposeRecipients(composed?.bcc),
-            subject: composed?.subject || '',
-            html_body: htmlBody,
-            body: plainBody,
-        })
-        return true
+        try {
+            const payload = parseComposeBody(composed, email || accountEmailLabel)
+            if (payload.to.length === 0) {
+                window.alert('Please add at least one recipient.')
+                return false
+            }
+            await queueAction('send', null, payload)
+            return true
+        } catch (error) {
+            console.error('Failed to queue send action:', error)
+            window.alert(error?.message || 'Failed to send email.')
+            return false
+        }
     }
+
+    const saveComposeDraft = useCallback(async (composed) => {
+        const payload = buildDraftSavePayload(composed, email || accountEmailLabel)
+        const response = await queueAction('save_draft', payload.draft_id, payload, 'Drafts')
+        await loadFolders()
+        if (folderInfo(selectedFolder || '').label === 'Drafts') {
+            await loadMailsFromCache(selectedFolder || 'Drafts', 1, perPage)
+        }
+        return response?.draft_id || payload.draft_id || null
+    }, [accountEmailLabel, email, loadFolders, loadMailsFromCache, perPage, queueAction, selectedFolder])
 
     const detachMailToWindow = async () => {
         if (!selectedMail) return
@@ -1979,6 +1991,8 @@ const DashboardPage = () => {
                                 inlineComposeSession={inlineComposeSession}
                                 setInlineComposeSession={setInlineComposeSession}
                                 sendComposedMail={sendComposedMail}
+                                saveComposeDraft={saveComposeDraft}
+                                enqueueUndoableAction={enqueueUndoableAction}
                                 tabs={tabs}
                                 setTabs={setTabs}
                                 activeTabId={activeTabId}
@@ -2002,7 +2016,7 @@ const DashboardPage = () => {
                         const remaining = Math.max(0, notice.expiresAt - noticeNow)
                         const progress = notice.durationMs > 0 ? (remaining / notice.durationMs) * 100 : 0
                         return (
-                            <div key={notice.id} className="db-action-notice">
+                            <div key={notice.id} className={`db-action-notice ${notice.variant === 'warning' ? 'db-action-notice--warning' : ''}`}>
                                 <div className="db-action-notice__body">
                                     <span className="db-action-notice__text">{notice.label}</span>
                                     <div className="db-action-notice__actions">
@@ -2010,17 +2024,17 @@ const DashboardPage = () => {
                                             type="button"
                                             className="db-action-notice__commit"
                                             onClick={() => commitActionNotice(notice.id)}
-                                            aria-label="Apply now"
-                                            title="Apply now"
+                                            aria-label={notice.commitLabel || 'Apply now'}
+                                            title={notice.commitLabel || 'Apply now'}
                                         >
-                                            ✓
+                                            {notice.commitLabel || 'Apply now'}
                                         </button>
                                         <button
                                             type="button"
                                             className="db-action-notice__undo"
                                             onClick={() => undoActionNotice(notice.id)}
                                         >
-                                            Undo
+                                            {notice.undoLabel || 'Undo'}
                                         </button>
                                     </div>
                                 </div>
@@ -2237,7 +2251,7 @@ function MailSection({
     currentPage, setCurrentPage, maxPage: _maxPage, perPage, setPerPage,
     isMailFullscreen, toggleMailFullscreen,
     deleteMailsOptimistic, moveMailsOptimistic, setMailsSeenState, queueAction, createMailbox,
-    canUseRemoteMail, inlineComposeSession, setInlineComposeSession, sendComposedMail,
+    canUseRemoteMail, inlineComposeSession, setInlineComposeSession, sendComposedMail, saveComposeDraft, enqueueUndoableAction,
     tabs, setTabs, activeTabId, setActiveTabId, tabContents, setTabContents, loadingTab, setLoadingTab, nextTabId,
 }) {
     const { t } = useTranslation()
@@ -2271,6 +2285,8 @@ function MailSection({
     const [mailItemMoveMenuStyle, setMailItemMoveMenuStyle] = useState(null)
     const [mailItemLabelMenuStyle, setMailItemLabelMenuStyle] = useState(null)
     const [dragOverTarget, setDragOverTarget] = useState(null)
+    const [composeExitPrompt, setComposeExitPrompt] = useState(null)
+    const [composeActionBusy, setComposeActionBusy] = useState(false)
     const displayCols = isMailFullscreen ? layoutCols : 1
     const perPageValue = Math.max(1, Number.parseInt(perPage, 10) || 50)
 
@@ -2392,6 +2408,10 @@ function MailSection({
     }
 
     const createEmptyComposeDraft = useCallback((draft = {}) => normalizeComposeDraft(draft), [])
+    const closeComposeExitPrompt = useCallback(() => {
+        setComposeActionBusy(false)
+        setComposeExitPrompt(null)
+    }, [])
 
     const prefixSubject = (prefix, subject) => {
         const baseSubject = (subject || '(No Subject)').trim()
@@ -2422,12 +2442,80 @@ function MailSection({
         return null
     }, [accountId, canUseRemoteMail, mailContent, selectedFolder, selectedMail])
 
+    const hydrateComposeDraftFromSavedMail = useCallback((mail, content) => createEmptyComposeDraft({
+        draftId: content?.id || mail?.id,
+        source: 'draft',
+        composeSurface: 'inline',
+        from: content?.from_address || accountEmail || '',
+        toRecipients: parseComposeRecipients(mail?.recipient_to || ''),
+        ccRecipients: parseComposeRecipients(content?.cc || ''),
+        bccRecipients: parseComposeRecipients(content?.bcc || ''),
+        subject: content?.subject || mail?.subject || '',
+        plainBody: content?.plain_body || '',
+        htmlBody: content?.html_body || '',
+        format: (content?.html_body || '').trim() ? 'html' : 'plain',
+        attachments: Array.isArray(content?.attachments)
+            ? content.attachments.map((attachment) => ({
+                id: attachment.id,
+                name: attachment.filename,
+                mimeType: attachment.content_type,
+                size: attachment.size,
+                base64: attachment.data_base64 || '',
+                disposition: attachment.is_inline ? 'inline' : 'attachment',
+                contentId: attachment.content_id || undefined,
+                source: attachment.is_inline ? 'html-inline' : 'manual',
+            }))
+            : [],
+        showCc: !!(content?.cc || '').trim(),
+        showBcc: !!(content?.bcc || '').trim(),
+    }), [accountEmail, createEmptyComposeDraft])
+
     const closeComposeTab = useCallback((tabId) => {
         setTabs((prev) => prev.filter((tab) => tab.id !== tabId))
         if (activeTabId === tabId) {
             setActiveTabId(null)
         }
     }, [activeTabId, setActiveTabId, setTabs])
+
+    const restoreComposeTarget = useCallback((target, nextDraft) => {
+        const normalizedDraft = createEmptyComposeDraft(nextDraft)
+
+        if (target?.type === 'tab') {
+            const tabId = target.id || `tab-${Date.now()}`
+            setTabs((prev) => {
+                const withoutExisting = prev.filter((tab) => tab.id !== tabId)
+                return [...withoutExisting, {
+                    id: tabId,
+                    kind: 'compose',
+                    source: target.source || normalizedDraft.source || 'new',
+                    draft: { ...normalizedDraft, composeSurface: 'tab' },
+                }]
+            })
+            setActiveTabId(tabId)
+            return
+        }
+
+        setInlineComposeSession({
+            id: target?.id || createComposeSessionId(),
+            kind: 'compose',
+            source: target?.source || normalizedDraft.source || 'new',
+            draft: { ...normalizedDraft, composeSurface: 'inline' },
+        })
+        setActiveTabId(null)
+        setSelectedMail(null)
+        setMailContent(null)
+        if (isMailFullscreen) {
+            toggleMailFullscreen()
+        }
+    }, [createEmptyComposeDraft, isMailFullscreen, setActiveTabId, setInlineComposeSession, setMailContent, setSelectedMail, setTabs, toggleMailFullscreen])
+
+    const closeComposeTarget = useCallback((target) => {
+        if (target?.type === 'tab') {
+            closeComposeTab(target.id)
+            return
+        }
+        setInlineComposeSession(null)
+    }, [closeComposeTab, setInlineComposeSession])
 
     const updateComposeTabDraft = useCallback((tabId, nextDraft) => {
         setTabs((prev) => prev.map((tab) => (
@@ -2439,7 +2527,7 @@ function MailSection({
 
     const openComposeInTab = useCallback((sessionOrDraft, fallbackSource = 'new') => {
         const source = sessionOrDraft?.source || fallbackSource
-        const draft = createEmptyComposeDraft(sessionOrDraft?.draft || sessionOrDraft)
+        const draft = { ...createEmptyComposeDraft(sessionOrDraft?.draft || sessionOrDraft), composeSurface: 'tab' }
         const sourceId = sessionOrDraft?.id || null
         nextTabId.current += 1
         const tabId = `tab-${nextTabId.current}`
@@ -2461,7 +2549,7 @@ function MailSection({
             nextComposeWindowId.current += 1
             const label = `compose-${nextComposeWindowId.current}`
             const source = sessionOrDraft?.source || fallbackSource
-            const draft = createEmptyComposeDraft(sessionOrDraft?.draft || sessionOrDraft)
+            const draft = { ...createEmptyComposeDraft(sessionOrDraft?.draft || sessionOrDraft), composeSurface: 'window' }
 
             await invoke('open_compose_window', {
                 label,
@@ -2491,8 +2579,9 @@ function MailSection({
         }
     }, [accountEmail, accountId, closeComposeTab, createEmptyComposeDraft, inlineComposeSession, setInlineComposeSession, setMailContent, setSelectedMail, tabs])
 
-    const openInlineCompose = useCallback(({ source = 'new', draft = {} }) => {
-        if (inlineComposeSession) {
+    const openInlineCompose = useCallback(({ source = 'new', draft = {} }, options = {}) => {
+        const preserveExisting = options?.preserveExisting !== false
+        if (inlineComposeSession && preserveExisting) {
             openComposeInTab(inlineComposeSession, inlineComposeSession.source)
         }
 
@@ -2500,7 +2589,7 @@ function MailSection({
             id: createComposeSessionId(),
             kind: 'compose',
             source,
-            draft: createEmptyComposeDraft(draft),
+            draft: { ...createEmptyComposeDraft(draft), composeSurface: 'inline' },
         })
         setActiveTabId(null)
         setSelectedMail(null)
@@ -2509,6 +2598,146 @@ function MailSection({
             toggleMailFullscreen()
         }
     }, [createEmptyComposeDraft, inlineComposeSession, isMailFullscreen, openComposeInTab, setActiveTabId, setInlineComposeSession, setMailContent, setSelectedMail, toggleMailFullscreen])
+
+    const openMailOrDraft = useCallback(async (mail) => {
+        if (!mail) return
+        const mailbox = mail?.mailbox || selectedFolder || 'INBOX'
+        const isDraftMailbox = folderInfo(mailbox).label === 'Drafts'
+        if (isDraftMailbox) {
+            const content = await loadMailContentForDraft(mail)
+            openInlineCompose({
+                source: 'draft',
+                draft: hydrateComposeDraftFromSavedMail(mail, content),
+            }, { preserveExisting: false })
+            return
+        }
+        await openMail(mail)
+    }, [hydrateComposeDraftFromSavedMail, loadMailContentForDraft, openInlineCompose, openMail, selectedFolder])
+
+    const enqueueDelayedSend = useCallback(({ draft, target, onAfterClose, onUndoRestore, onCommitted }) => {
+        const payload = parseComposeBody(draft, accountEmail)
+        if (payload.to.length === 0) {
+            window.alert('Please add at least one recipient.')
+            return false
+        }
+        enqueueUndoableAction({
+            label: 'Mail will be sent in 10 seconds',
+            variant: 'warning',
+            commitLabel: 'Send now',
+            undoLabel: 'Undo',
+            apply: () => {
+                closeComposeTarget(target)
+                onAfterClose?.()
+            },
+            undo: () => {
+                restoreComposeTarget(target, draft)
+                onUndoRestore?.()
+            },
+            commit: async () => {
+                const sentOk = await sendComposedMail(draft)
+                if (!sentOk) {
+                    restoreComposeTarget(target, draft)
+                    return
+                }
+                await onCommitted?.()
+            },
+        })
+        return true
+    }, [accountEmail, closeComposeTarget, enqueueUndoableAction, restoreComposeTarget, sendComposedMail])
+
+    const requestComposeExit = useCallback(({ target, draft, intent = 'discard', pendingMail = null }) => {
+        if (!isComposeDraftDirty(draft)) {
+            closeComposeTarget(target)
+            if (intent === 'open_mail' && pendingMail) {
+                openMailOrDraft(pendingMail)
+            }
+            return
+        }
+
+        setComposeExitPrompt({
+            target,
+            draft,
+            intent,
+            pendingMail,
+        })
+    }, [closeComposeTarget, openMailOrDraft])
+
+    const continueComposeExitIntent = useCallback(async (prompt) => {
+        if (prompt?.intent === 'open_mail' && prompt.pendingMail) {
+            await openMailOrDraft(prompt.pendingMail)
+        }
+    }, [openMailOrDraft])
+
+    const handleComposeExitAction = useCallback(async (action) => {
+        if (!composeExitPrompt) return
+        if (action === 'cancel') {
+            setComposeActionBusy(false)
+            closeComposeExitPrompt()
+            return
+        }
+
+        const prompt = composeExitPrompt
+        setComposeActionBusy(true)
+        try {
+            if (action === 'send') {
+                const queued = enqueueDelayedSend({
+                    draft: prompt.draft,
+                    target: prompt.target,
+                    onAfterClose: () => {
+                        void continueComposeExitIntent(prompt)
+                    },
+                })
+                if (queued) {
+                    closeComposeExitPrompt()
+                }
+                return
+            }
+
+            if (action === 'discard') {
+                closeComposeTarget(prompt.target)
+                closeComposeExitPrompt()
+                await continueComposeExitIntent(prompt)
+                return
+            }
+
+            if (action === 'save') {
+                await saveComposeDraft(prompt.draft)
+                closeComposeTarget(prompt.target)
+                closeComposeExitPrompt()
+                await continueComposeExitIntent(prompt)
+            }
+        } catch (error) {
+            console.error('Failed to finish compose exit action:', error)
+            window.alert(error?.message || 'Failed to complete compose action.')
+        } finally {
+            setComposeActionBusy(false)
+        }
+    }, [closeComposeExitPrompt, closeComposeTarget, composeExitPrompt, continueComposeExitIntent, enqueueDelayedSend, saveComposeDraft])
+
+    const attemptOpenMail = useCallback(async (mail) => {
+        if (!mail) return
+        if (!inlineComposeSession) {
+            await openMailOrDraft(mail)
+            return
+        }
+
+        if (!isComposeDraftDirty(inlineComposeSession.draft)) {
+            setInlineComposeSession(null)
+            await openMailOrDraft(mail)
+            return
+        }
+
+        setComposeExitPrompt({
+            target: {
+                type: 'inline',
+                id: inlineComposeSession.id,
+                source: inlineComposeSession.source,
+            },
+            draft: inlineComposeSession.draft,
+            intent: 'open_mail',
+            pendingMail: mail,
+        })
+    }, [inlineComposeSession, openMailOrDraft, setInlineComposeSession])
 
     const composeDraft = useCallback((draft, source = 'new') => {
         openInlineCompose({ source, draft })
@@ -2571,19 +2800,6 @@ function MailSection({
             '',
             body,
         ].join('\n')
-    }
-
-    const buildQuotedHtmlBlock = (mail, content) => {
-        const fromLabel = content?.from_name
-            ? `${content.from_name} &lt;${content.from_address}&gt;`
-            : (mail.name ? `${mail.name} &lt;${mail.address}&gt;` : mail.address || 'Unknown')
-        const subject = content?.subject || mail.subject || '(No Subject)'
-        const date = content?.date || mail.date
-        const htmlBody = content?.html_body || `<p>${(content?.plain_body || '(No content)').replace(/\n/g, '<br>')}</p>`
-        return `<br><br><div style="border-left:2px solid #3b82f6;padding-left:12px;margin-left:4px;color:#555">
-            <p><strong>From:</strong> ${fromLabel}<br><strong>Date:</strong> ${formatMailDateLong(date) || ''}<br><strong>Subject:</strong> ${subject}</p>
-            ${htmlBody}
-        </div>`
     }
 
     const runFileAction = useCallback(async (actionKey, action) => {
@@ -3067,13 +3283,23 @@ function MailSection({
     const tabIframeRefs = useRef({})
 
     const openMailInTab = async (mail, existingContent) => {
+        const mailbox = mail?.mailbox || selectedFolder || 'INBOX'
+        const isDraftMailbox = folderInfo(mailbox).label === 'Drafts'
+        if (isDraftMailbox) {
+            const content = existingContent || await loadMailContentForDraft(mail)
+            openComposeInTab({
+                source: 'draft',
+                draft: hydrateComposeDraftFromSavedMail(mail, content),
+            }, 'draft')
+            return
+        }
+
         nextTabId.current += 1
         const tabId = `tab-${nextTabId.current}`
         let content = existingContent
         if (!content) {
             setLoadingTab(true)
             try {
-                const mailbox = mail?.mailbox || selectedFolder || 'INBOX'
                 let endpoint = `/api/offline/${accountId}/local-content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
                 let res = await fetch(apiUrl(endpoint), { cache: 'no-store' })
                 if (!res.ok && canUseRemoteMail) {
@@ -3105,6 +3331,15 @@ function MailSection({
 
     const closeTab = (e, tabId) => {
         e.stopPropagation()
+        const tab = tabs.find((item) => item.id === tabId)
+        if (tab?.kind === 'compose') {
+            requestComposeExit({
+                target: { type: 'tab', id: tabId, source: tab.source },
+                draft: tab.draft,
+                intent: 'discard',
+            })
+            return
+        }
         setTabs(prev => {
             const remaining = prev.filter(t => t.id !== tabId)
             return remaining
@@ -3613,7 +3848,9 @@ function MailSection({
             composeDraft({
                 to: recipients.join(', '),
                 subject: 'Re: Selected mails',
-                body: `\n\n${buildMultiMailSummary(replyMails)}`,
+                plainBody: `\n\n${buildMultiMailSummary(replyMails)}`,
+                format: 'plain',
+                htmlBody: '',
             }, 'reply')
             return
         }
@@ -3625,8 +3862,9 @@ function MailSection({
             cc: dedupeEmails(parseEmailList(content?.cc || '')).join(', '),
             showCc: !!(content?.cc || '').trim(),
             subject: prefixSubject('Re:', content?.subject || mail.subject),
-            body: `\n\n${buildQuotedMailBlock(mail, content)}`,
-            htmlBody: buildQuotedHtmlBlock(mail, content),
+            plainBody: `\n\n${buildQuotedMailBlock(mail, content)}`,
+            format: 'plain',
+            htmlBody: '',
         }, 'reply')
     }
 
@@ -3638,7 +3876,9 @@ function MailSection({
             composeDraft({
                 to: '',
                 subject: `Fwd: ${forwardMails.length} mails`,
-                body: buildMultiMailSummary(forwardMails),
+                plainBody: buildMultiMailSummary(forwardMails),
+                format: 'plain',
+                htmlBody: '',
             }, 'forward')
             return
         }
@@ -3648,8 +3888,9 @@ function MailSection({
         composeDraft({
             to: '',
             subject: prefixSubject('Fwd:', content?.subject || mail.subject),
-            body: buildQuotedMailBlock(mail, content),
-            htmlBody: buildQuotedHtmlBlock(mail, content),
+            plainBody: buildQuotedMailBlock(mail, content),
+            format: 'plain',
+            htmlBody: '',
         }, 'forward')
     }
 
@@ -3792,8 +4033,9 @@ function MailSection({
             cc: dedupeEmails(parseEmailList(content?.cc || '')).join(', '),
             showCc: !!(content?.cc || '').trim(),
             subject: prefixSubject('Re:', content?.subject || activeTabMail.subject),
-            body: `\n\n${buildQuotedMailBlock(activeTabMail, content)}`,
-            htmlBody: buildQuotedHtmlBlock(activeTabMail, content),
+            plainBody: `\n\n${buildQuotedMailBlock(activeTabMail, content)}`,
+            format: 'plain',
+            htmlBody: '',
         }, 'reply')
     }
 
@@ -3803,8 +4045,9 @@ function MailSection({
         composeDraft({
             to: '',
             subject: prefixSubject('Fwd:', content?.subject || activeTabMail.subject),
-            body: buildQuotedMailBlock(activeTabMail, content),
-            htmlBody: buildQuotedHtmlBlock(activeTabMail, content),
+            plainBody: buildQuotedMailBlock(activeTabMail, content),
+            format: 'plain',
+            htmlBody: '',
         }, 'forward')
     }
 
@@ -3838,16 +4081,20 @@ function MailSection({
 
     const handleActiveComposeTabSend = async () => {
         if (!activeComposeTab) return
-        const sentOk = await sendComposedMail(activeComposeTab.draft)
-        if (sentOk) {
-            closeComposeTab(activeComposeTab.id)
-        }
+        enqueueDelayedSend({
+            draft: activeComposeTab.draft,
+            target: { type: 'tab', id: activeComposeTab.id, source: activeComposeTab.source },
+        })
         closeActionMenus()
     }
 
     const handleActiveComposeTabDiscard = () => {
         if (!activeComposeTab) return
-        closeComposeTab(activeComposeTab.id)
+        requestComposeExit({
+            target: { type: 'tab', id: activeComposeTab.id, source: activeComposeTab.source },
+            draft: activeComposeTab.draft,
+            intent: 'discard',
+        })
         closeActionMenus()
     }
 
@@ -3865,15 +4112,20 @@ function MailSection({
 
     const handleInlineComposeSend = async (draft) => {
         if (!inlineComposeSession) return
-        const sentOk = await sendComposedMail(draft || inlineComposeSession.draft)
-        if (sentOk) {
-            setInlineComposeSession(null)
-        }
+        enqueueDelayedSend({
+            draft: draft || inlineComposeSession.draft,
+            target: { type: 'inline', id: inlineComposeSession.id, source: inlineComposeSession.source },
+        })
     }
 
     const handleInlineComposeDiscard = useCallback(() => {
-        setInlineComposeSession(null)
-    }, [setInlineComposeSession])
+        if (!inlineComposeSession) return
+        requestComposeExit({
+            target: { type: 'inline', id: inlineComposeSession.id, source: inlineComposeSession.source },
+            draft: inlineComposeSession.draft,
+            intent: 'discard',
+        })
+    }, [inlineComposeSession, requestComposeExit])
 
     return (
         <div className="mail-section-wrapper">
@@ -4122,13 +4374,15 @@ function MailSection({
                         <ComposeMailContent
                             draft={activeComposeTab.draft}
                             onDraftChange={(nextDraft) => updateComposeTabDraft(activeComposeTab.id, nextDraft)}
-                            onSend={async (draft) => {
-                                const sentOk = await sendComposedMail(draft)
-                                if (sentOk) {
-                                    closeComposeTab(activeComposeTab.id)
-                                }
-                            }}
-                            onDiscard={() => closeComposeTab(activeComposeTab.id)}
+                            onSend={(draft) => enqueueDelayedSend({
+                                draft,
+                                target: { type: 'tab', id: activeComposeTab.id, source: activeComposeTab.source },
+                            })}
+                            onDiscard={() => requestComposeExit({
+                                target: { type: 'tab', id: activeComposeTab.id, source: activeComposeTab.source },
+                                draft: activeComposeTab.draft,
+                                intent: 'discard',
+                            })}
                             onOpenInWindow={() => openComposeWindow(activeComposeTab, activeComposeTab.source)}
                             accountEmail={accountEmail}
                         />
@@ -4600,7 +4854,7 @@ function MailSection({
                                                         className={`db-mail-item ${mail.seen !== true ? 'unread' : ''} ${selectedMail?.id === mail.id ? 'selected' : ''} ${selectMode ? 'select-mode' : ''} ${isChecked ? 'checked' : ''}`}
                                                         onClick={() => {
                                                             if (isDraggingRef.current) return
-                                                            openMail(mail)
+                                                            attemptOpenMail(mail)
                                                         }}
                                                         onContextMenu={(event) => openMailItemMenuFromContext(event, mail)}
                                                         draggable
@@ -4882,6 +5136,69 @@ function MailSection({
                                 )}
                             </div>
                         )}
+                    </div>
+                </div>
+            )}
+            {composeExitPrompt && (
+                <div className="db-advanced-search-modal" onMouseDown={() => handleComposeExitAction('cancel')}>
+                    <div
+                        className="db-compose-exit-panel"
+                        onMouseDown={(event) => event.stopPropagation()}
+                        role="dialog"
+                        aria-modal="true"
+                        aria-label="Leave message"
+                    >
+                        <div className="db-compose-exit-panel__header">
+                            <div className="db-compose-exit-panel__title">Do you want to leave this message?</div>
+                            <button
+                                type="button"
+                                className="db-advanced-search-panel__close"
+                                onClick={() => handleComposeExitAction('cancel')}
+                                aria-label="Close"
+                                title="Close"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        <div className="db-compose-exit-panel__body">
+                            {composeExitPrompt.intent === 'open_mail'
+                                ? 'Opening another mail will close the current compose.'
+                                : 'This message has unsaved changes.'}
+                        </div>
+                        <div className="db-compose-exit-panel__actions">
+                            <button
+                                type="button"
+                                className="db-advanced-search-btn db-compose-exit-panel__btn db-compose-exit-panel__btn--send"
+                                onClick={() => handleComposeExitAction('send')}
+                                disabled={composeActionBusy}
+                            >
+                                {composeActionBusy ? 'Working...' : 'Send'}
+                            </button>
+                            <button
+                                type="button"
+                                className="db-advanced-search-btn db-advanced-search-btn--secondary db-compose-exit-panel__btn"
+                                onClick={() => handleComposeExitAction('discard')}
+                                disabled={composeActionBusy}
+                            >
+                                Discard
+                            </button>
+                            <button
+                                type="button"
+                                className="db-advanced-search-btn db-advanced-search-btn--secondary db-compose-exit-panel__btn"
+                                onClick={() => handleComposeExitAction('cancel')}
+                                disabled={composeActionBusy}
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="button"
+                                className="db-advanced-search-btn db-compose-exit-panel__btn db-compose-exit-panel__btn--save"
+                                onClick={() => handleComposeExitAction('save')}
+                                disabled={composeActionBusy}
+                            >
+                                Save to Drafts
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}

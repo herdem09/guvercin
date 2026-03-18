@@ -29,6 +29,7 @@ use crate::{
         OfflineActionResponse, OfflineConfigResponse, OfflineSetupPayload, OfflineStatusResponse,
         SyncNowResponse, TransferProgress, TransferSnapshot,
     },
+    smtp_send::{build_rfc822_message, OutgoingAttachment, OutgoingMailFormat},
 };
 
 #[derive(Deserialize)]
@@ -116,6 +117,199 @@ fn parse_labels_json_value(raw: &str) -> Vec<String> {
 
 fn serialize_labels_json_value(labels: &[String]) -> String {
     serde_json::to_string(labels).unwrap_or_else(|_| "[]".to_string())
+}
+
+fn parse_send_format(payload: &serde_json::Value) -> OutgoingMailFormat {
+    match payload
+        .get("format")
+        .and_then(|value| value.as_str())
+        .unwrap_or("plain")
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "html" => OutgoingMailFormat::Html,
+        _ => OutgoingMailFormat::Plain,
+    }
+}
+
+fn parse_send_attachments(payload: &serde_json::Value) -> Vec<OutgoingAttachment> {
+    payload
+        .get("attachments")
+        .cloned()
+        .and_then(|value| serde_json::from_value::<Vec<OutgoingAttachment>>(value).ok())
+        .unwrap_or_default()
+}
+
+fn parse_address_list(payload: &serde_json::Value, key: &str) -> Vec<String> {
+    payload
+        .get(key)
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn resolve_drafts_mailbox_name(mailboxes: &[String]) -> Option<String> {
+    for mailbox in mailboxes {
+        if mailbox.eq_ignore_ascii_case("Drafts") {
+            return Some(mailbox.clone());
+        }
+    }
+    for mailbox in mailboxes {
+        let lower = mailbox.to_ascii_lowercase();
+        if lower.ends_with("/drafts") || lower.ends_with(".drafts") || lower.contains("drafts") {
+            return Some(mailbox.clone());
+        }
+    }
+    None
+}
+
+fn is_drafts_mailbox_name(mailbox: &str) -> bool {
+    let lower = mailbox.trim().to_ascii_lowercase();
+    lower == "drafts" || lower.ends_with("/drafts") || lower.ends_with(".drafts") || lower.contains("drafts")
+}
+
+async fn cache_remote_draft_to_local_cache(
+    pool: &SqlitePool,
+    mailbox: &str,
+    uid: &str,
+    payload: &serde_json::Value,
+    default_from: &str,
+    raw_rfc822: &[u8],
+) -> Result<(), AppError> {
+    let now = Utc::now();
+    let from_addr = payload
+        .get("from")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(default_from)
+        .to_string();
+    let to_addrs = parse_address_list(payload, "to");
+    let cc_addrs = parse_address_list(payload, "cc");
+    let bcc_addrs = parse_address_list(payload, "bcc");
+    let subject = payload
+        .get("subject")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let plain_body = payload
+        .get("body_text")
+        .or_else(|| payload.get("body"))
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let html_body = payload
+        .get("body_html")
+        .or_else(|| payload.get("html_body"))
+        .and_then(|value| value.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let format = parse_send_format(payload);
+    let content_type = if matches!(format, OutgoingMailFormat::Html) && !html_body.trim().is_empty() {
+        "text/html"
+    } else {
+        "text/plain"
+    };
+
+    sqlx::query(
+        r#"
+        INSERT INTO local_mail_cache (
+            uid, folder, sender_name, sender_address, recipient_to, subject, seen, flagged,
+            date_value, date_ms, size_bytes, importance_value, content_type, category, labels_json,
+            cc_value, bcc_value, plain_body, html_body, raw_rfc822, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?, ?, 0, ?, '', '[]', ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(uid, folder) DO UPDATE SET
+            sender_name = excluded.sender_name,
+            sender_address = excluded.sender_address,
+            recipient_to = excluded.recipient_to,
+            subject = excluded.subject,
+            seen = excluded.seen,
+            flagged = 0,
+            date_value = excluded.date_value,
+            date_ms = excluded.date_ms,
+            size_bytes = excluded.size_bytes,
+            content_type = excluded.content_type,
+            cc_value = excluded.cc_value,
+            bcc_value = excluded.bcc_value,
+            plain_body = excluded.plain_body,
+            html_body = excluded.html_body,
+            raw_rfc822 = excluded.raw_rfc822,
+            updated_at = CURRENT_TIMESTAMP
+        "#,
+    )
+    .bind(uid)
+    .bind(mailbox)
+    .bind("")
+    .bind(&from_addr)
+    .bind(to_addrs.join(", "))
+    .bind(&subject)
+    .bind(now.to_rfc2822())
+    .bind(now.timestamp_millis())
+    .bind(raw_rfc822.len() as i64)
+    .bind(content_type)
+    .bind(cc_addrs.join(", "))
+    .bind(bcc_addrs.join(", "))
+    .bind(&plain_body)
+    .bind(&html_body)
+    .bind(raw_rfc822)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+async fn delete_cached_local_draft(pool: &SqlitePool, draft_uid: &str) -> Result<(), AppError> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM draft_attachments WHERE draft_uid = ?")
+        .bind(draft_uid)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM local_mail_cache WHERE uid = ? AND folder = 'Drafts'")
+        .bind(draft_uid)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+async fn load_draft_attachments(pool: &SqlitePool, draft_uid: &str) -> Result<Vec<crate::mail_models::AttachmentInfo>, AppError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT id, filename, content_type, size_bytes, disposition, data_base64, content_id
+        FROM draft_attachments
+        WHERE draft_uid = ?
+        ORDER BY sort_order ASC, id ASC
+        "#,
+    )
+    .bind(draft_uid)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| crate::mail_models::AttachmentInfo {
+            id: row.try_get::<i64, _>("id").unwrap_or_default().to_string(),
+            filename: row.try_get::<String, _>("filename").unwrap_or_default(),
+            content_type: row.try_get::<String, _>("content_type").unwrap_or_else(|_| "application/octet-stream".to_string()),
+            size: row.try_get::<i64, _>("size_bytes").unwrap_or_default().max(0) as usize,
+            is_inline: row
+                .try_get::<String, _>("disposition")
+                .map(|value| value.eq_ignore_ascii_case("inline"))
+                .unwrap_or(false),
+            data_base64: row.try_get::<Option<String>, _>("data_base64").ok().flatten(),
+            content_id: row.try_get::<Option<String>, _>("content_id").ok().flatten(),
+        })
+        .collect())
 }
 
 fn normalize_mailbox_list(values: &[String]) -> Vec<String> {
@@ -368,6 +562,22 @@ pub async fn get_local_mailboxes(
         )
         .fetch_all(&pool)
         .await?;
+    } else {
+        let cached_mailboxes = sqlx::query_scalar::<_, String>(
+            r#"
+            SELECT DISTINCT folder
+            FROM local_mail_cache
+            ORDER BY CASE WHEN UPPER(folder) = 'INBOX' THEN 0 ELSE 1 END, folder ASC
+            "#,
+        )
+        .fetch_all(&pool)
+        .await?;
+
+        for mailbox in cached_mailboxes {
+            if !mailboxes.iter().any(|existing| existing.eq_ignore_ascii_case(&mailbox)) {
+                mailboxes.push(mailbox);
+            }
+        }
     }
 
     Ok(Json(MailboxListResponse::from_mailboxes(mailboxes)))
@@ -632,7 +842,12 @@ pub async fn get_local_mail_content(
     match row {
         Ok(Some(r)) => {
             if let Some(raw) = r.try_get::<Option<Vec<u8>>, _>("raw_rfc822").ok().flatten() {
-                return Json(imap_session::parse_mail_content(uid, &raw)).into_response();
+                let content = if is_drafts_mailbox_name(&q.mailbox) {
+                    imap_session::parse_mail_content_with_attachment_data(uid, &raw)
+                } else {
+                    imap_session::parse_mail_content(uid, &raw)
+                };
+                return Json(content).into_response();
             }
 
             let html_body = r
@@ -653,6 +868,8 @@ pub async fn get_local_mail_content(
                 )
                     .into_response();
             }
+
+            let attachments = load_draft_attachments(&pool, &uid).await.unwrap_or_default();
 
             Json(MailContent {
                 id: r.try_get::<String, _>("uid").unwrap_or(uid),
@@ -688,7 +905,7 @@ pub async fn get_local_mail_content(
                     .unwrap_or_default(),
                 html_body,
                 plain_body,
-                attachments: vec![],
+                attachments,
             })
             .into_response()
         }
@@ -1176,9 +1393,129 @@ pub async fn post_offline_action(
         .map(|p| p.to_string())
         .unwrap_or_else(|| "{}".to_string());
     let payload_value = payload.payload.clone().unwrap_or_else(|| json!({}));
+
+    if payload.action_type == "save_draft" {
+        let general_pool = state._db.require_general_pool().await?;
+        let account_email = sqlx::query_scalar::<_, Option<String>>(
+            "SELECT email_address FROM accounts WHERE account_id = ?",
+        )
+        .bind(account_id)
+        .fetch_optional(&general_pool)
+        .await?
+        .flatten()
+        .unwrap_or_default();
+
+        ensure_imap_connected(&state._db, &state.imap, account_id).await?;
+        let mut drafts_mailbox = resolve_drafts_mailbox_name(&imap_session::list_mailboxes(&state.imap, account_id))
+            .unwrap_or_else(|| "Drafts".to_string());
+        if !imap_session::list_mailboxes(&state.imap, account_id)
+            .iter()
+            .any(|mailbox| mailbox.eq_ignore_ascii_case(&drafts_mailbox))
+        {
+            let _ = imap_session::create_mailbox(&state.imap, account_id, &drafts_mailbox);
+            drafts_mailbox = resolve_drafts_mailbox_name(&imap_session::list_mailboxes(&state.imap, account_id))
+                .unwrap_or(drafts_mailbox);
+        }
+
+        let existing_draft_id = payload_value
+            .get("draft_id")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string);
+
+        let from_addr = payload_value
+            .get("from")
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or(&account_email)
+            .to_string();
+        let to_addrs = parse_address_list(&payload_value, "to");
+        let cc_addrs = parse_address_list(&payload_value, "cc");
+        let bcc_addrs = parse_address_list(&payload_value, "bcc");
+        let subject = payload_value
+            .get("subject")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let format = parse_send_format(&payload_value);
+        let plain_body = payload_value
+            .get("body_text")
+            .or_else(|| payload_value.get("body"))
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let html_body = payload_value
+            .get("body_html")
+            .or_else(|| payload_value.get("html_body"))
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let attachments = parse_send_attachments(&payload_value);
+        let tracking_key = format!("draft-{}-{:08x}", now_ms(), rand::random::<u32>());
+        let raw_rfc822 = build_rfc822_message(
+            &from_addr,
+            to_addrs,
+            cc_addrs,
+            bcc_addrs,
+            &subject,
+            format,
+            &html_body,
+            &plain_body,
+            &attachments,
+            &[("X-Guvercin-Draft-Key".to_string(), tracking_key.clone())],
+        )
+        .map_err(AppError::BadRequest)?;
+        let draft_uid = imap_session::append_draft(
+            &state.imap,
+            account_id,
+            &drafts_mailbox,
+            &raw_rfc822,
+            &tracking_key,
+        )
+        .map_err(AppError::BadRequest)?;
+
+        if let Some(previous_draft_id) = existing_draft_id {
+            if previous_draft_id.starts_with("draft-") {
+                let _ = delete_cached_local_draft(&pool, &previous_draft_id).await;
+            } else if previous_draft_id != draft_uid {
+                let _ = imap_session::delete_mail(&state.imap, account_id, &drafts_mailbox, &previous_draft_id);
+                let _ = sqlx::query("DELETE FROM local_mail_cache WHERE uid = ? AND folder = ?")
+                    .bind(&previous_draft_id)
+                    .bind(&drafts_mailbox)
+                    .execute(&pool)
+                    .await;
+            }
+        }
+
+        cache_remote_draft_to_local_cache(
+            &pool,
+            &drafts_mailbox,
+            &draft_uid,
+            &payload_value,
+            &account_email,
+            &raw_rfc822,
+        )
+        .await?;
+
+        return Ok(Json(OfflineActionResponse {
+            status: "saved",
+            queued_id: draft_uid.parse::<i64>().unwrap_or(0),
+            draft_id: Some(draft_uid),
+        }));
+    }
+
     let mut tx = pool.begin().await?;
 
     if payload.action_type == "send" {
+        let format_value = payload
+            .payload
+            .as_ref()
+            .and_then(|p| p.get("format"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("plain")
+            .to_string();
         let from_addr = payload
             .payload
             .as_ref()
@@ -1214,23 +1551,41 @@ pub async fn post_offline_action(
         let body_text = payload
             .payload
             .as_ref()
-            .and_then(|p| p.get("body"))
+            .and_then(|p| p.get("body_text").or_else(|| p.get("body")))
             .and_then(|v| v.as_str())
             .unwrap_or_default()
             .to_string();
+        let body_html = payload
+            .payload
+            .as_ref()
+            .and_then(|p| p.get("body_html").or_else(|| p.get("html_body")))
+            .and_then(|v| v.as_str())
+            .unwrap_or_default()
+            .to_string();
+        let attachments_json = payload
+            .payload
+            .as_ref()
+            .and_then(|p| p.get("attachments"))
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "[]".to_string());
 
         sqlx::query(
             r#"
-            INSERT INTO outbox_mails (from_addr, to_addrs, cc_addrs, bcc_addrs, subject, body_text, status)
-            VALUES (?, ?, ?, ?, ?, ?, 'pending')
+            INSERT INTO outbox_mails (
+                from_addr, to_addrs, cc_addrs, bcc_addrs, format_value, subject, body_text, body_html, attachments_json, status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
             "#,
         )
         .bind(from_addr)
         .bind(to_addrs)
         .bind(cc_addrs)
         .bind(bcc_addrs)
+        .bind(format_value)
         .bind(subject)
         .bind(body_text)
+        .bind(body_html)
+        .bind(attachments_json)
         .execute(&mut *tx)
         .await?;
     }
@@ -1262,6 +1617,7 @@ pub async fn post_offline_action(
     Ok(Json(OfflineActionResponse {
         status: "queued",
         queued_id: res.last_insert_rowid(),
+        draft_id: None,
     }))
 }
 
@@ -1426,10 +1782,36 @@ pub async fn process_queue_once(
                             let cc = parsed.get("cc").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
                             let bcc = parsed.get("bcc").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
                             let subject = parsed.get("subject").and_then(|v| v.as_str()).unwrap_or_default();
-                            let html_body = parsed.get("html_body").and_then(|v| v.as_str()).unwrap_or_default();
-                            let plain_body = parsed.get("body").and_then(|v| v.as_str()).unwrap_or_default();
+                            let format = parse_send_format(&parsed);
+                            let html_body = parsed
+                                .get("body_html")
+                                .or_else(|| parsed.get("html_body"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default();
+                            let plain_body = parsed
+                                .get("body_text")
+                                .or_else(|| parsed.get("body"))
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default();
+                            let attachments = parse_send_attachments(&parsed);
 
-                            crate::smtp_send::send_mail(&smtp_host, smtp_port, &ssl_mode, &email, &password, from, to, cc, bcc, subject, html_body, plain_body).await
+                            crate::smtp_send::send_mail(
+                                &smtp_host,
+                                smtp_port,
+                                &ssl_mode,
+                                &email,
+                                &password,
+                                from,
+                                to,
+                                cc,
+                                bcc,
+                                subject,
+                                format,
+                                html_body,
+                                plain_body,
+                                &attachments,
+                            )
+                            .await
                         }
                     } else {
                         Err("Account not found".to_string())
@@ -2468,6 +2850,31 @@ mod tests {
         assert_eq!(mutation.labels_json, "[\"Urgent\"]");
         assert_eq!(mutation.next_category.as_deref(), Some("Urgent"));
         assert!(mutation.delete_row);
+    }
+
+    #[test]
+    fn parse_send_format_defaults_to_plain() {
+        assert_eq!(parse_send_format(&serde_json::json!({})), OutgoingMailFormat::Plain);
+        assert_eq!(parse_send_format(&serde_json::json!({ "format": "html" })), OutgoingMailFormat::Html);
+    }
+
+    #[test]
+    fn parse_send_attachments_reads_attachment_payloads() {
+        let attachments = parse_send_attachments(&serde_json::json!({
+            "attachments": [
+                {
+                    "filename": "image.png",
+                    "content_type": "image/png",
+                    "data_base64": "SGVsbG8=",
+                    "disposition": "inline",
+                    "content_id": "cid-1"
+                }
+            ]
+        }));
+
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].filename, "image.png");
+        assert_eq!(attachments[0].content_id.as_deref(), Some("cid-1"));
     }
 }
 
