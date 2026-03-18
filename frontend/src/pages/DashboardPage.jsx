@@ -2023,19 +2023,21 @@ const DashboardPage = () => {
                                     <div className="db-action-notice__actions">
                                         <button
                                             type="button"
-                                            className="db-action-notice__commit"
+                                            className="db-action-notice__icon-btn db-action-notice__icon-btn--confirm"
                                             onClick={() => commitActionNotice(notice.id)}
                                             aria-label={notice.commitLabel || 'Apply now'}
                                             title={notice.commitLabel || 'Apply now'}
                                         >
-                                            {notice.commitLabel || 'Apply now'}
+                                            ✓
                                         </button>
                                         <button
                                             type="button"
-                                            className="db-action-notice__undo"
+                                            className="db-action-notice__icon-btn db-action-notice__icon-btn--cancel"
                                             onClick={() => undoActionNotice(notice.id)}
+                                            aria-label={notice.undoLabel || 'Cancel'}
+                                            title={notice.undoLabel || 'Cancel'}
                                         >
-                                            {notice.undoLabel || 'Undo'}
+                                            ✕
                                         </button>
                                     </div>
                                 </div>
