@@ -6,6 +6,7 @@ import { normalizeMailboxResponse } from '../utils/mailboxes'
 import { useOfflineSync } from '../context/OfflineSyncContext.jsx'
 import { useTheme } from '../context/ThemeContext.jsx'
 import Avatar from '../components/Avatar.jsx'
+import ComposeView from '../components/ComposeView.jsx'
 import './DashboardPage.css'
 
 const FOLDER_MAP = {
@@ -855,7 +856,7 @@ const DashboardPage = () => {
     const [currentPage, setCurrentPage] = useState(1)
     const [perPage, setPerPage] = useState(50)
     const [composeOpen, setComposeOpen] = useState(false)
-    const [composeForm, setComposeForm] = useState({ to: '', cc: '', bcc: '', subject: '', body: '' })
+    const [composeForm, setComposeForm] = useState({ to: '', cc: '', bcc: '', subject: '', body: '', htmlBody: '' })
     const [tabs, setTabs] = useState([])
     const [activeTabId, setActiveTabId] = useState(null)
     const [tabContents, setTabContents] = useState({})
@@ -877,6 +878,7 @@ const DashboardPage = () => {
     const isSyncingRef = useRef(false)
     const nextMailWindowId = useRef(0)
     const nextTabId = useRef(0)
+    const nextComposeWindowId = useRef(0)
     const nextNoticeIdRef = useRef(0)
     const pendingNoticeActionsRef = useRef(new Map())
     const prevCanUseRemoteMailRef = useRef(false)
@@ -1573,18 +1575,28 @@ const DashboardPage = () => {
         }
     }
 
-    const sendComposedMail = async () => {
-        if (!composeForm.to.trim()) return
+    const sendComposedMail = async (composed) => {
+        const toList = composed?.to || (composeForm.to ? composeForm.to.split(',').map((s) => s.trim()).filter(Boolean) : [])
+        if (toList.length === 0) return
+        const htmlBody = composed?.htmlBody || composeForm.htmlBody || ''
+        const plainBody = (() => {
+            if (composeForm.body?.trim()) return composeForm.body
+            if (!htmlBody) return ''
+            const tmp = document.createElement('div')
+            tmp.innerHTML = htmlBody
+            return (tmp.textContent || tmp.innerText || '').trim()
+        })()
         await queueAction('send', null, {
-            from: email || accountEmailLabel,
-            to: composeForm.to.split(',').map((s) => s.trim()).filter(Boolean),
-            cc: composeForm.cc.split(',').map((s) => s.trim()).filter(Boolean),
-            bcc: composeForm.bcc.split(',').map((s) => s.trim()).filter(Boolean),
-            subject: composeForm.subject,
-            body: composeForm.body,
+            from: composed?.from || email || accountEmailLabel,
+            to: toList,
+            cc: composed?.cc || composeForm.cc.split(',').map((s) => s.trim()).filter(Boolean),
+            bcc: composed?.bcc || composeForm.bcc.split(',').map((s) => s.trim()).filter(Boolean),
+            subject: composed?.subject || composeForm.subject,
+            html_body: htmlBody,
+            body: plainBody,
         })
         setComposeOpen(false)
-        setComposeForm({ to: '', cc: '', bcc: '', subject: '', body: '' })
+        setComposeForm({ to: '', cc: '', bcc: '', subject: '', body: '', htmlBody: '' })
     }
 
     const detachMailToWindow = async () => {
@@ -2380,13 +2392,15 @@ function MailSection({
     }
 
     const composeDraft = useCallback((draft) => {
-        setComposeForm({
+        const draftData = {
             to: draft.to || '',
             cc: draft.cc || '',
             bcc: draft.bcc || '',
             subject: draft.subject || '',
             body: draft.body || '',
-        })
+            htmlBody: draft.htmlBody || '',
+        }
+        setComposeForm(draftData)
         setComposeOpen(true)
     }, [setComposeForm, setComposeOpen])
 
@@ -2476,6 +2490,19 @@ function MailSection({
             '',
             body,
         ].join('\n')
+    }
+
+    const buildQuotedHtmlBlock = (mail, content) => {
+        const fromLabel = content?.from_name
+            ? `${content.from_name} &lt;${content.from_address}&gt;`
+            : (mail.name ? `${mail.name} &lt;${mail.address}&gt;` : mail.address || 'Unknown')
+        const subject = content?.subject || mail.subject || '(No Subject)'
+        const date = content?.date || mail.date
+        const htmlBody = content?.html_body || `<p>${(content?.plain_body || '(No content)').replace(/\n/g, '<br>')}</p>`
+        return `<br><br><div style="border-left:2px solid #3b82f6;padding-left:12px;margin-left:4px;color:#555">
+            <p><strong>From:</strong> ${fromLabel}<br><strong>Date:</strong> ${formatMailDateLong(date) || ''}<br><strong>Subject:</strong> ${subject}</p>
+            ${htmlBody}
+        </div>`
     }
 
     const runFileAction = useCallback(async (actionKey, action) => {
@@ -3441,8 +3468,24 @@ function MailSection({
         </div>
     )
 
-    const handleNewMail = () => {
-        composeDraft({ to: '', cc: '', bcc: '', subject: '', body: '' })
+    const handleNewMail = async () => {
+        try {
+            const { invoke } = await import('@tauri-apps/api/core')
+            nextComposeWindowId.current += 1
+            const label = `compose-${nextComposeWindowId.current}`
+            const composeData = {
+                accountId,
+                accountEmail,
+                draft: { to: '', cc: '', bcc: '', subject: '', htmlBody: '' },
+            }
+            await invoke('open_compose_window', {
+                label,
+                composeDataJson: JSON.stringify(composeData),
+            })
+        } catch (error) {
+            console.error('Failed to open compose window, falling back to inline:', error)
+            composeDraft({ to: '', cc: '', bcc: '', subject: '', body: '', htmlBody: '' })
+        }
     }
 
     const handleDeleteAction = async () => {
@@ -3516,6 +3559,7 @@ function MailSection({
             cc: dedupeEmails(parseEmailList(content?.cc || '')).join(', '),
             subject: prefixSubject('Re:', content?.subject || mail.subject),
             body: `\n\n${buildQuotedMailBlock(mail, content)}`,
+            htmlBody: buildQuotedHtmlBlock(mail, content),
         })
     }
 
@@ -3538,6 +3582,7 @@ function MailSection({
             to: '',
             subject: prefixSubject('Fwd:', content?.subject || mail.subject),
             body: buildQuotedMailBlock(mail, content),
+            htmlBody: buildQuotedHtmlBlock(mail, content),
         })
     }
 
@@ -3669,6 +3714,7 @@ function MailSection({
             cc: dedupeEmails(parseEmailList(content?.cc || '')).join(', '),
             subject: prefixSubject('Re:', content?.subject || activeTabMail.subject),
             body: `\n\n${buildQuotedMailBlock(activeTabMail, content)}`,
+            htmlBody: buildQuotedHtmlBlock(activeTabMail, content),
         })
     }
 
@@ -3679,6 +3725,7 @@ function MailSection({
             to: '',
             subject: prefixSubject('Fwd:', content?.subject || activeTabMail.subject),
             body: buildQuotedMailBlock(activeTabMail, content),
+            htmlBody: buildQuotedHtmlBlock(activeTabMail, content),
         })
     }
 
@@ -4690,41 +4737,21 @@ function MailSection({
             )}
             {composeOpen && (
                 <div className="db-compose-modal">
-                    <div className="db-compose-card">
-                        <h3>{t('Compose Mail')}</h3>
-                        <input
-                            type="text"
-                            placeholder="To"
-                            value={composeForm.to}
-                            onChange={(e) => setComposeForm((prev) => ({ ...prev, to: e.target.value }))}
+                    <div className="db-compose-card" style={{ width: '720px', maxWidth: '90vw', height: '80vh', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+                        <ComposeView
+                            initialDraft={{
+                                to: composeForm.to,
+                                cc: composeForm.cc,
+                                bcc: composeForm.bcc,
+                                subject: composeForm.subject,
+                                htmlBody: composeForm.htmlBody || '',
+                            }}
+                            onSend={async (composed) => {
+                                await sendComposedMail(composed)
+                            }}
+                            onDiscard={() => setComposeOpen(false)}
+                            accountEmail={accountEmail}
                         />
-                        <input
-                            type="text"
-                            placeholder="CC"
-                            value={composeForm.cc}
-                            onChange={(e) => setComposeForm((prev) => ({ ...prev, cc: e.target.value }))}
-                        />
-                        <input
-                            type="text"
-                            placeholder="BCC"
-                            value={composeForm.bcc}
-                            onChange={(e) => setComposeForm((prev) => ({ ...prev, bcc: e.target.value }))}
-                        />
-                        <input
-                            type="text"
-                            placeholder="Subject"
-                            value={composeForm.subject}
-                            onChange={(e) => setComposeForm((prev) => ({ ...prev, subject: e.target.value }))}
-                        />
-                        <textarea
-                            placeholder="Message"
-                            value={composeForm.body}
-                            onChange={(e) => setComposeForm((prev) => ({ ...prev, body: e.target.value }))}
-                        />
-                        <div className="db-compose-actions">
-                            <button type="button" onClick={sendComposedMail}>Send</button>
-                            <button type="button" onClick={() => setComposeOpen(false)}>Close</button>
-                        </div>
                     </div>
                 </div>
             )}

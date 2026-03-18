@@ -31,7 +31,7 @@ export function hydrateAccountSession(account) {
     imapPort: formatPort(pickFirst(account.imap_port, account.imapPort)),
     smtpServer: pickFirst(account.smtp_host, account.smtpHost),
     smtpPort: formatPort(pickFirst(account.smtp_port, account.smtpPort)),
-    sslMode: 'STARTTLS',
+    sslMode: pickFirst(account.ssl_mode, account.sslMode) || 'STARTTLS',
   }
 
   localStorage.setItem('current_account_id', accountId.toString())

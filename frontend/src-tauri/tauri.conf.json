@@ -5,7 +5,7 @@
   "identifier": "com.guvercin.app",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://127.0.0.1:5173",
     "beforeDevCommand": "if [ -f package.json ]; then npm run dev; else npm --prefix .. run dev; fi",
     "beforeBuildCommand": "if [ -f package.json ]; then npm run build; else npm --prefix .. run build; fi"
   },

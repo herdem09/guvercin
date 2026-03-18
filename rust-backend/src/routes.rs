@@ -34,7 +34,7 @@ pub async fn get_accounts(
         r#"
         SELECT account_id, email_address, display_name, provider_type,
                imap_host, imap_port, smtp_host, smtp_port, sync_status,
-               last_sync_time, language, theme, font
+               last_sync_time, language, theme, font, ssl_mode
         FROM accounts
         "#,
     )

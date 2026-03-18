@@ -1285,10 +1285,11 @@ async fn sync_now_impl(
     state: &Arc<MailAppState>,
     account_id: i64,
 ) -> Result<(usize, usize), AppError> {
-    ensure_imap_connected(&state._db, &state.imap, account_id).await?;
     let (processed, failed) = process_queue_once(state, account_id, 200).await?;
-    sync_cached_mailboxes(&state._db, &state.imap, account_id).await?;
-    touch_last_sync_time(&state._db, account_id).await?;
+    if ensure_imap_connected(&state._db, &state.imap, account_id).await.is_ok() {
+        sync_cached_mailboxes(&state._db, &state.imap, account_id).await?;
+        touch_last_sync_time(&state._db, account_id).await?;
+    }
     Ok((processed, failed))
 }
 
@@ -1402,7 +1403,38 @@ pub async fn process_queue_once(
                         .unwrap_or_default();
                     imap_session::set_label(&state.imap, account_id, &target_folder, &target_uid, label, false)
                 }
-                "send" => Err("Queued send is not implemented on the backend yet".to_string()),
+                "send" => {
+                    let account_row = sqlx::query(
+                        "SELECT email_address, auth_token, smtp_host, smtp_port, ssl_mode FROM accounts WHERE account_id = ?"
+                    )
+                    .bind(account_id)
+                    .fetch_optional(&state._db.require_general_pool().await?)
+                    .await?;
+
+                    if let Some(row) = account_row {
+                        let email = row.try_get::<Option<String>, _>("email_address").ok().flatten().unwrap_or_default();
+                        let password = row.try_get::<Option<String>, _>("auth_token").ok().flatten().unwrap_or_default();
+                        let smtp_host = row.try_get::<Option<String>, _>("smtp_host").ok().flatten().unwrap_or_default();
+                        let smtp_port = row.try_get::<Option<i64>, _>("smtp_port").ok().flatten().unwrap_or(465) as u16;
+                        let ssl_mode = row.try_get::<Option<String>, _>("ssl_mode").ok().flatten().unwrap_or_else(|| "STARTTLS".to_string());
+
+                        if smtp_host.is_empty() || password.is_empty() {
+                            Err("Missing SMTP configuration for account".to_string())
+                        } else {
+                            let from = parsed.get("from").and_then(|v| v.as_str()).unwrap_or(&email);
+                            let to = parsed.get("to").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
+                            let cc = parsed.get("cc").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
+                            let bcc = parsed.get("bcc").and_then(|v| v.as_array()).map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
+                            let subject = parsed.get("subject").and_then(|v| v.as_str()).unwrap_or_default();
+                            let html_body = parsed.get("html_body").and_then(|v| v.as_str()).unwrap_or_default();
+                            let plain_body = parsed.get("body").and_then(|v| v.as_str()).unwrap_or_default();
+
+                            crate::smtp_send::send_mail(&smtp_host, smtp_port, &ssl_mode, &email, &password, from, to, cc, bcc, subject, html_body, plain_body).await
+                        }
+                    } else {
+                        Err("Account not found".to_string())
+                    }
+                }
                 _ => Err(format!("Unsupported action type: {action_type}")),
             }
         };
@@ -2729,7 +2761,7 @@ fn rewrite_html_inline_image_srcs(
     let mut out = html.to_string();
     for (url, asset_id) in url_to_asset {
         let local = format!(
-            "http://localhost:5000/api/offline/{}/inline-assets/{}",
+            "http://127.0.0.1:5000/api/offline/{}/inline-assets/{}",
             account_id, asset_id
         );
         out = out.replace(url, &local);

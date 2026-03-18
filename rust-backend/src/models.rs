@@ -16,6 +16,7 @@ pub struct AccountSummary {
     pub language: Option<String>,
     pub theme: Option<String>,
     pub font: Option<String>,
+    pub ssl_mode: Option<String>,
 }
 
 #[derive(Serialize)]

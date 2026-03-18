@@ -8,5 +8,5 @@ async fn main() -> anyhow::Result<()> {
         return rust_backend::check_keyring().await;
     }
 
-    rust_backend::run(None).await
+    rust_backend::run(None).await.map_err(|e| anyhow::anyhow!(e.to_string()))
 }

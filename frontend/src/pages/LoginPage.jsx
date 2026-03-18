@@ -54,7 +54,7 @@ function LoginPage() {
             smtpServer: account.smtp_host || '',
             smtpPort: account.smtp_port || '',
             password: '',
-            sslMode: 'STARTTLS',
+            sslMode: account.ssl_mode || 'STARTTLS',
         })
     }
 

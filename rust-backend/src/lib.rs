@@ -12,6 +12,7 @@ mod mail_routes;
 mod models;
 mod offline_routes;
 mod routes;
+pub mod smtp_send;
 
 use axum::{
     routing::{delete, get, post},

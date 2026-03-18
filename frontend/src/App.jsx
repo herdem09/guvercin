@@ -9,6 +9,7 @@ import NotAuthPage from './pages/NotAuthPage.jsx'
 import DashboardPage from './pages/DashboardPage.jsx'
 import AccountSelectionPage from './pages/AccountSelectionPage.jsx'
 import DetachedMailWindow from './pages/DetachedMailWindow.jsx'
+import DetachedComposeWindow from './pages/DetachedComposeWindow.jsx'
 import i18n from './i18n'
 import { useTranslation } from 'react-i18next'
 import { hydrateAccountSession } from './utils/accountStorage.js'
@@ -78,6 +79,10 @@ function App() {
 
   if (windowLabel === 'mail' || windowLabel.startsWith('mail-')) {
     return <DetachedMailWindow />
+  }
+
+  if (windowLabel === 'compose' || windowLabel.startsWith('compose-')) {
+    return <DetachedComposeWindow />
   }
 
   return (

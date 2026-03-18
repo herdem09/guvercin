@@ -27,6 +27,7 @@ hkdf = "0.12"
 libsqlite3-sys = { version = "0.27", features = ["bundled-sqlcipher"] }
 rand = "0.8"
 zeroize = "1.7"
+lettre = { version = "0.11.19", features = ["tokio1-rustls-tls", "smtp-transport", "builder"], default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation = "0.10"

@@ -11,6 +11,10 @@ use serde_json::Value;
 #[derive(Default)]
 struct MailWindowStore(Mutex<HashMap<String, String>>);
 
+/// Shared state that maps window labels → compose data JSON.
+#[derive(Default)]
+struct ComposeWindowStore(Mutex<HashMap<String, String>>);
+
 #[tauri::command]
 async fn open_mail_window(
   handle: tauri::AppHandle,
@@ -69,6 +73,66 @@ fn close_mail_window(handle: tauri::AppHandle, label: String) -> Result<(), Stri
     label
   };
 
+  if let Some(window) = handle.get_webview_window(&label) {
+    let _ = window.close();
+  }
+  Ok(())
+}
+
+#[tauri::command]
+async fn open_compose_window(
+  handle: tauri::AppHandle,
+  label: String,
+  compose_data_json: String,
+) -> Result<(), String> {
+  let label = if label.trim().is_empty() {
+    "compose".to_string()
+  } else {
+    label
+  };
+
+  if let Some(window) = handle.get_webview_window(&label) {
+    window.show().map_err(|e| e.to_string())?;
+    let _ = window.set_focus();
+    return Ok(());
+  }
+
+  {
+    let store = handle.state::<ComposeWindowStore>();
+    let mut map = store.0.lock().unwrap();
+    map.insert(label.clone(), compose_data_json);
+  }
+
+  WebviewWindowBuilder::new(
+    &handle,
+    &label,
+    WebviewUrl::App(PathBuf::from("index.html")),
+  )
+  .title("Guvercin - Compose")
+  .visible(true)
+  .inner_size(800.0, 650.0)
+  .build()
+  .map_err(|e| e.to_string())?;
+
+  Ok(())
+}
+
+#[tauri::command]
+fn get_compose_window_data(
+  label: String,
+  store: State<'_, ComposeWindowStore>,
+) -> Option<String> {
+  let mut map = store.0.lock().unwrap();
+  map.remove(&label)
+}
+
+#[tauri::command]
+fn close_compose_window(handle: tauri::AppHandle, label: String) -> Result<(), String> {
+  let label = if label.trim().is_empty() {
+    "compose".to_string()
+  } else {
+    label
+  };
   if let Some(window) = handle.get_webview_window(&label) {
     let _ = window.close();
   }
@@ -257,12 +321,16 @@ pub fn run() {
       open_mail_window,
       get_mail_window_data,
       close_mail_window,
+      open_compose_window,
+      get_compose_window_data,
+      close_compose_window,
       save_export_file_to_path,
       list_user_themes,
       read_user_theme,
       write_user_theme
     ])
     .manage(MailWindowStore::default())
+    .manage(ComposeWindowStore::default())
     .run(tauri::generate_context!())
     .expect("error while running tauri application");
 }

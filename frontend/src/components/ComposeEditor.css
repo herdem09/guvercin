@@ -1,0 +1,315 @@
+/* ─── ComposeEditor.css ─── */
+
+.compose-editor {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    border: 1px solid var(--c-border-1, #d0d0d0);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--c-surface-2, #fff);
+}
+
+/* ── Toolbar ── */
+.ce-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 2px;
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--c-border-1, #e0e0e0);
+    background: var(--c-surface-1, #f8f8f8);
+    user-select: none;
+}
+
+.ce-toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 1px;
+}
+
+.ce-toolbar-group + .ce-toolbar-group {
+    margin-left: 4px;
+    padding-left: 6px;
+    border-left: 1px solid var(--c-border-1, #d8d8d8);
+}
+
+.ce-toolbar button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 28px;
+    height: 28px;
+    padding: 2px 5px;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--c-text-1, #333);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s;
+}
+
+.ce-toolbar button:hover {
+    background: var(--c-surface-3, #e8e8e8);
+    border-color: var(--c-border-1, #d0d0d0);
+}
+
+.ce-toolbar button.active {
+    background: var(--c-primary-bg, #dbeafe);
+    border-color: var(--c-primary, #3b82f6);
+    color: var(--c-primary, #3b82f6);
+}
+
+.ce-toolbar button:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.ce-toolbar select {
+    height: 28px;
+    padding: 2px 4px;
+    border: 1px solid var(--c-border-1, #d0d0d0);
+    border-radius: 4px;
+    background: var(--c-surface-2, #fff);
+    color: var(--c-text-1, #333);
+    font-size: 12px;
+    cursor: pointer;
+    outline: none;
+}
+
+.ce-toolbar select:focus {
+    border-color: var(--c-primary, #3b82f6);
+}
+
+/* Color input wrapper */
+.ce-color-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+}
+
+.ce-color-wrap input[type="color"] {
+    position: absolute;
+    bottom: -4px;
+    left: 0;
+    width: 100%;
+    height: 5px;
+    padding: 0;
+    border: none;
+    cursor: pointer;
+    opacity: 0.8;
+}
+
+.ce-color-wrap input[type="color"]::-webkit-color-swatch-wrapper {
+    padding: 0;
+}
+
+.ce-color-wrap input[type="color"]::-webkit-color-swatch {
+    border: none;
+    border-radius: 0 0 3px 3px;
+}
+
+/* ── Emoji picker popup ── */
+.ce-emoji-popup {
+    position: absolute;
+    z-index: 1000;
+    background: var(--c-surface-2, #fff);
+    border: 1px solid var(--c-border-1, #d0d0d0);
+    border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+    padding: 6px;
+    max-width: 280px;
+    max-height: 200px;
+    overflow-y: auto;
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 2px;
+}
+
+.ce-emoji-popup button {
+    width: 30px;
+    height: 30px;
+    font-size: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.ce-emoji-popup button:hover {
+    background: var(--c-surface-3, #e8e8e8);
+}
+
+/* ── Link dialog ── */
+.ce-link-dialog {
+    position: absolute;
+    z-index: 1000;
+    background: var(--c-surface-2, #fff);
+    border: 1px solid var(--c-border-1, #d0d0d0);
+    border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    min-width: 280px;
+}
+
+.ce-link-dialog input {
+    height: 30px;
+    padding: 4px 8px;
+    border: 1px solid var(--c-border-1, #d0d0d0);
+    border-radius: 4px;
+    font-size: 13px;
+    background: var(--c-surface-2, #fff);
+    color: var(--c-text-1, #333);
+}
+
+.ce-link-dialog input:focus {
+    border-color: var(--c-primary, #3b82f6);
+    outline: none;
+}
+
+.ce-link-dialog-actions {
+    display: flex;
+    gap: 6px;
+    justify-content: flex-end;
+}
+
+.ce-link-dialog-actions button {
+    height: 28px;
+    padding: 4px 12px;
+    border: 1px solid var(--c-border-1, #d0d0d0);
+    border-radius: 4px;
+    font-size: 12px;
+    cursor: pointer;
+    background: var(--c-surface-1, #f0f0f0);
+    color: var(--c-text-1, #333);
+}
+
+.ce-link-dialog-actions button.primary {
+    background: var(--c-primary, #3b82f6);
+    color: #fff;
+    border-color: var(--c-primary, #3b82f6);
+}
+
+/* ── Line spacing popup ── */
+.ce-linespacing-popup {
+    position: absolute;
+    z-index: 1000;
+    background: var(--c-surface-2, #fff);
+    border: 1px solid var(--c-border-1, #d0d0d0);
+    border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    min-width: 90px;
+}
+
+.ce-linespacing-popup button {
+    height: 28px;
+    padding: 4px 10px;
+    border: none;
+    background: transparent;
+    text-align: left;
+    font-size: 13px;
+    cursor: pointer;
+    border-radius: 4px;
+    color: var(--c-text-1, #333);
+}
+
+.ce-linespacing-popup button:hover {
+    background: var(--c-surface-3, #e8e8e8);
+}
+
+.ce-linespacing-popup button.active {
+    background: var(--c-primary-bg, #dbeafe);
+    color: var(--c-primary, #3b82f6);
+}
+
+/* ── Editor area ── */
+.ce-editor-area {
+    flex: 1;
+    min-height: 200px;
+    overflow-y: auto;
+    padding: 12px 16px;
+    cursor: text;
+}
+
+.ce-editor-area .ProseMirror {
+    outline: none;
+    min-height: 180px;
+    font-family: inherit;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--c-text-1, #333);
+}
+
+.ce-editor-area .ProseMirror p {
+    margin: 0 0 8px;
+}
+
+.ce-editor-area .ProseMirror blockquote {
+    border-left: 3px solid var(--c-primary, #3b82f6);
+    margin: 8px 0;
+    padding: 4px 12px;
+    color: var(--c-text-2, #666);
+}
+
+.ce-editor-area .ProseMirror ul,
+.ce-editor-area .ProseMirror ol {
+    padding-left: 24px;
+    margin: 4px 0;
+}
+
+.ce-editor-area .ProseMirror img {
+    max-width: 100%;
+    height: auto;
+    border-radius: 4px;
+}
+
+.ce-editor-area .ProseMirror a {
+    color: var(--c-primary, #3b82f6);
+    text-decoration: underline;
+}
+
+.ce-editor-area .ProseMirror sub {
+    font-size: 0.75em;
+    vertical-align: sub;
+}
+
+.ce-editor-area .ProseMirror sup {
+    font-size: 0.75em;
+    vertical-align: super;
+}
+
+.ce-editor-area .ProseMirror hr {
+    border: none;
+    border-top: 1px solid var(--c-border-1, #d0d0d0);
+    margin: 12px 0;
+}
+
+.ce-editor-area .ProseMirror .ProseMirror-gapcursor {
+    position: relative;
+}
+
+.ce-editor-area .ProseMirror .ProseMirror-gapcursor::after {
+    border-top: 1px solid var(--c-text-1, #333);
+}
+
+/* Placeholder */
+.ce-editor-area .ProseMirror p.is-editor-empty:first-child::before {
+    content: attr(data-placeholder);
+    float: left;
+    color: var(--c-text-3, #aaa);
+    pointer-events: none;
+    height: 0;
+}
