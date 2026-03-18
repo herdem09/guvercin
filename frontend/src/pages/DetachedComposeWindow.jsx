@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { apiUrl } from '../utils/api'
-import ComposeView from '../components/ComposeView.jsx'
+import ComposeMailContent from '../components/ComposeMailContent.jsx'
+import { normalizeComposeDraft, parseComposeRecipients } from '../utils/compose.js'
 import './DashboardPage.css'
 
 function safeParse(json) {
@@ -14,13 +15,13 @@ function safeParse(json) {
 export default function DetachedComposeWindow() {
     const [windowLabel, setWindowLabel] = useState('')
     const [data, setData] = useState(null)
+    const [draft, setDraft] = useState(() => normalizeComposeDraft())
+    const [sending, setSending] = useState(false)
     const [sent, setSent] = useState(false)
 
     const accountId = data?.accountId
     const accountEmail = data?.accountEmail || ''
-    const initialDraft = data?.draft || null
 
-    /* Detect window label */
     useEffect(() => {
         document.body.style.padding = '0'
         document.body.style.margin = '0'
@@ -45,7 +46,6 @@ export default function DetachedComposeWindow() {
         }
     }, [])
 
-    /* Load data from Tauri invoke */
     useEffect(() => {
         if (!windowLabel) return
         let active = true
@@ -68,7 +68,11 @@ export default function DetachedComposeWindow() {
         return () => { active = false }
     }, [windowLabel])
 
-    const closeWindow = async () => {
+    useEffect(() => {
+        setDraft(normalizeComposeDraft(data?.draft))
+    }, [data])
+
+    const closeWindow = useCallback(async () => {
         try {
             const { invoke } = await import('@tauri-apps/api/core')
             if (windowLabel) {
@@ -79,11 +83,20 @@ export default function DetachedComposeWindow() {
             /* fallback */
         }
         window.close()
-    }
+    }, [windowLabel])
 
     const handleSend = useCallback(async (composed) => {
         if (!accountId) return
         try {
+            setSending(true)
+            const htmlBody = composed?.htmlBody || ''
+            const plainBody = (() => {
+                if (!htmlBody) return composed?.body?.trim() || ''
+                const tmp = document.createElement('div')
+                tmp.innerHTML = htmlBody
+                const normalized = (tmp.textContent || tmp.innerText || '').trim()
+                return normalized || composed?.body?.trim() || ''
+            })()
             await fetch(apiUrl(`/api/offline/${accountId}/actions`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -93,12 +106,12 @@ export default function DetachedComposeWindow() {
                     target_folder: 'Sent',
                     payload: {
                         from: composed.from || accountEmail,
-                        to: composed.to,
-                        cc: composed.cc,
-                        bcc: composed.bcc,
+                        to: parseComposeRecipients(composed.to),
+                        cc: parseComposeRecipients(composed.cc),
+                        bcc: parseComposeRecipients(composed.bcc),
                         subject: composed.subject,
-                        html_body: composed.htmlBody,
-                        body: composed.htmlBody,
+                        html_body: htmlBody,
+                        body: plainBody,
                     },
                 }),
             })
@@ -107,20 +120,18 @@ export default function DetachedComposeWindow() {
         } catch (error) {
             console.error('Failed to queue send action:', error)
             window.alert('Failed to send email: ' + (error?.message || 'Unknown error'))
+        } finally {
+            setSending(false)
         }
-    }, [accountId, accountEmail])
+    }, [accountId, accountEmail, closeWindow])
 
     const handleDiscard = useCallback(() => {
         closeWindow()
-    }, [])
+    }, [closeWindow])
 
     if (sent) {
         return (
             <div className="dashboard-page" style={{ height: '100vh' }}>
-                <div className="db-navbar">
-                    <div className="db-logo-icon">🕊️</div>
-                    <span className="db-logo-text">Guvercin</span>
-                </div>
                 <div className="db-section-area" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <div className="db-empty-state">
                         <div className="db-empty-icon">✅</div>
@@ -134,13 +145,6 @@ export default function DetachedComposeWindow() {
     if (!data) {
         return (
             <div className="dashboard-page" style={{ height: '100vh' }}>
-                <div className="db-navbar">
-                    <div className="db-logo-icon">🕊️</div>
-                    <span className="db-logo-text">Guvercin</span>
-                    <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-                        <button className="db-icon-btn" title="Close" onClick={closeWindow}>✕</button>
-                    </div>
-                </div>
                 <div className="db-section-area" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <div className="db-loading">
                         <div className="db-spinner" />
@@ -153,19 +157,14 @@ export default function DetachedComposeWindow() {
 
     return (
         <div className="dashboard-page" style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
-            <div className="db-navbar">
-                <div className="db-logo-icon">🕊️</div>
-                <span className="db-logo-text">Guvercin — Compose</span>
-                <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
-                    <button className="db-icon-btn" title="Close" onClick={closeWindow}>✕</button>
-                </div>
-            </div>
             <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-                <ComposeView
-                    initialDraft={initialDraft}
+                <ComposeMailContent
+                    draft={draft}
+                    onDraftChange={setDraft}
                     onSend={handleSend}
                     onDiscard={handleDiscard}
                     accountEmail={accountEmail}
+                    sending={sending}
                 />
             </div>
         </div>

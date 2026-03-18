@@ -6,7 +6,8 @@ import { normalizeMailboxResponse } from '../utils/mailboxes'
 import { useOfflineSync } from '../context/OfflineSyncContext.jsx'
 import { useTheme } from '../context/ThemeContext.jsx'
 import Avatar from '../components/Avatar.jsx'
-import ComposeView from '../components/ComposeView.jsx'
+import ComposeMailContent from '../components/ComposeMailContent.jsx'
+import { getComposeTitle, normalizeComposeDraft, parseComposeRecipients } from '../utils/compose.js'
 import './DashboardPage.css'
 
 const FOLDER_MAP = {
@@ -117,6 +118,10 @@ const MAIL_SORT_DIRECTION_LABELS = {
 
 function normalizeMailText(value) {
     return (value || '').toString().trim().toLocaleLowerCase()
+}
+
+function createComposeSessionId() {
+    return `compose-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
 function getMailType(mail) {
@@ -855,8 +860,7 @@ const DashboardPage = () => {
     const [loadingContent, setLoadingContent] = useState(false)
     const [currentPage, setCurrentPage] = useState(1)
     const [perPage, setPerPage] = useState(50)
-    const [composeOpen, setComposeOpen] = useState(false)
-    const [composeForm, setComposeForm] = useState({ to: '', cc: '', bcc: '', subject: '', body: '', htmlBody: '' })
+    const [inlineComposeSession, setInlineComposeSession] = useState(null)
     const [tabs, setTabs] = useState([])
     const [activeTabId, setActiveTabId] = useState(null)
     const [tabContents, setTabContents] = useState({})
@@ -878,7 +882,6 @@ const DashboardPage = () => {
     const isSyncingRef = useRef(false)
     const nextMailWindowId = useRef(0)
     const nextTabId = useRef(0)
-    const nextComposeWindowId = useRef(0)
     const nextNoticeIdRef = useRef(0)
     const pendingNoticeActionsRef = useRef(new Map())
     const prevCanUseRemoteMailRef = useRef(false)
@@ -1576,27 +1579,26 @@ const DashboardPage = () => {
     }
 
     const sendComposedMail = async (composed) => {
-        const toList = composed?.to || (composeForm.to ? composeForm.to.split(',').map((s) => s.trim()).filter(Boolean) : [])
-        if (toList.length === 0) return
-        const htmlBody = composed?.htmlBody || composeForm.htmlBody || ''
+        const toList = parseComposeRecipients(composed?.to)
+        if (toList.length === 0) return false
+        const htmlBody = composed?.htmlBody || ''
         const plainBody = (() => {
-            if (composeForm.body?.trim()) return composeForm.body
-            if (!htmlBody) return ''
+            if (!htmlBody) return composed?.body?.trim() || ''
             const tmp = document.createElement('div')
             tmp.innerHTML = htmlBody
-            return (tmp.textContent || tmp.innerText || '').trim()
+            const normalized = (tmp.textContent || tmp.innerText || '').trim()
+            return normalized || composed?.body?.trim() || ''
         })()
         await queueAction('send', null, {
             from: composed?.from || email || accountEmailLabel,
             to: toList,
-            cc: composed?.cc || composeForm.cc.split(',').map((s) => s.trim()).filter(Boolean),
-            bcc: composed?.bcc || composeForm.bcc.split(',').map((s) => s.trim()).filter(Boolean),
-            subject: composed?.subject || composeForm.subject,
+            cc: parseComposeRecipients(composed?.cc),
+            bcc: parseComposeRecipients(composed?.bcc),
+            subject: composed?.subject || '',
             html_body: htmlBody,
             body: plainBody,
         })
-        setComposeOpen(false)
-        setComposeForm({ to: '', cc: '', bcc: '', subject: '', body: '', htmlBody: '' })
+        return true
     }
 
     const detachMailToWindow = async () => {
@@ -1974,10 +1976,8 @@ const DashboardPage = () => {
                                 queueAction={queueAction}
                                 createMailbox={createMailbox}
                                 canUseRemoteMail={canUseRemoteMail}
-                                composeOpen={composeOpen}
-                                setComposeOpen={setComposeOpen}
-                                composeForm={composeForm}
-                                setComposeForm={setComposeForm}
+                                inlineComposeSession={inlineComposeSession}
+                                setInlineComposeSession={setInlineComposeSession}
                                 sendComposedMail={sendComposedMail}
                                 tabs={tabs}
                                 setTabs={setTabs}
@@ -2237,7 +2237,7 @@ function MailSection({
     currentPage, setCurrentPage, maxPage: _maxPage, perPage, setPerPage,
     isMailFullscreen, toggleMailFullscreen,
     deleteMailsOptimistic, moveMailsOptimistic, setMailsSeenState, queueAction, createMailbox,
-    canUseRemoteMail, composeOpen, setComposeOpen, composeForm, setComposeForm, sendComposedMail,
+    canUseRemoteMail, inlineComposeSession, setInlineComposeSession, sendComposedMail,
     tabs, setTabs, activeTabId, setActiveTabId, tabContents, setTabContents, loadingTab, setLoadingTab, nextTabId,
 }) {
     const { t } = useTranslation()
@@ -2391,18 +2391,7 @@ function MailSection({
         return new Intl.DateTimeFormat(undefined, options).format(dt)
     }
 
-    const composeDraft = useCallback((draft) => {
-        const draftData = {
-            to: draft.to || '',
-            cc: draft.cc || '',
-            bcc: draft.bcc || '',
-            subject: draft.subject || '',
-            body: draft.body || '',
-            htmlBody: draft.htmlBody || '',
-        }
-        setComposeForm(draftData)
-        setComposeOpen(true)
-    }, [setComposeForm, setComposeOpen])
+    const createEmptyComposeDraft = useCallback((draft = {}) => normalizeComposeDraft(draft), [])
 
     const prefixSubject = (prefix, subject) => {
         const baseSubject = (subject || '(No Subject)').trim()
@@ -2432,6 +2421,98 @@ function MailSection({
 
         return null
     }, [accountId, canUseRemoteMail, mailContent, selectedFolder, selectedMail])
+
+    const closeComposeTab = useCallback((tabId) => {
+        setTabs((prev) => prev.filter((tab) => tab.id !== tabId))
+        if (activeTabId === tabId) {
+            setActiveTabId(null)
+        }
+    }, [activeTabId, setActiveTabId, setTabs])
+
+    const updateComposeTabDraft = useCallback((tabId, nextDraft) => {
+        setTabs((prev) => prev.map((tab) => (
+            tab.id === tabId && tab.kind === 'compose'
+                ? { ...tab, draft: normalizeComposeDraft(nextDraft) }
+                : tab
+        )))
+    }, [setTabs])
+
+    const openComposeInTab = useCallback((sessionOrDraft, fallbackSource = 'new') => {
+        const source = sessionOrDraft?.source || fallbackSource
+        const draft = createEmptyComposeDraft(sessionOrDraft?.draft || sessionOrDraft)
+        const sourceId = sessionOrDraft?.id || null
+        nextTabId.current += 1
+        const tabId = `tab-${nextTabId.current}`
+
+        setTabs((prev) => [...prev, { id: tabId, kind: 'compose', source, draft }])
+        setActiveTabId(tabId)
+        setSelectedMail(null)
+        setMailContent(null)
+
+        if (sourceId && inlineComposeSession?.id === sourceId) {
+            setInlineComposeSession(null)
+        }
+    }, [createEmptyComposeDraft, inlineComposeSession, nextTabId, setActiveTabId, setInlineComposeSession, setMailContent, setSelectedMail, setTabs])
+
+    const openComposeWindow = useCallback(async (sessionOrDraft, fallbackSource = 'new') => {
+        if (!accountId) return false
+        try {
+            const { invoke } = await import('@tauri-apps/api/core')
+            nextComposeWindowId.current += 1
+            const label = `compose-${nextComposeWindowId.current}`
+            const source = sessionOrDraft?.source || fallbackSource
+            const draft = createEmptyComposeDraft(sessionOrDraft?.draft || sessionOrDraft)
+
+            await invoke('open_compose_window', {
+                label,
+                composeDataJson: JSON.stringify({
+                    accountId,
+                    accountEmail,
+                    source,
+                    draft,
+                }),
+            })
+
+            if (sessionOrDraft?.id && inlineComposeSession?.id === sessionOrDraft.id) {
+                setInlineComposeSession(null)
+            } else if (sessionOrDraft?.id) {
+                const matchingTab = tabs.find((tab) => tab.id === sessionOrDraft.id && tab.kind === 'compose')
+                if (matchingTab) {
+                    closeComposeTab(sessionOrDraft.id)
+                }
+            }
+
+            setSelectedMail(null)
+            setMailContent(null)
+            return true
+        } catch (error) {
+            console.error('Failed to open compose window:', error)
+            return false
+        }
+    }, [accountEmail, accountId, closeComposeTab, createEmptyComposeDraft, inlineComposeSession, setInlineComposeSession, setMailContent, setSelectedMail, tabs])
+
+    const openInlineCompose = useCallback(({ source = 'new', draft = {} }) => {
+        if (inlineComposeSession) {
+            openComposeInTab(inlineComposeSession, inlineComposeSession.source)
+        }
+
+        setInlineComposeSession({
+            id: createComposeSessionId(),
+            kind: 'compose',
+            source,
+            draft: createEmptyComposeDraft(draft),
+        })
+        setActiveTabId(null)
+        setSelectedMail(null)
+        setMailContent(null)
+        if (isMailFullscreen) {
+            toggleMailFullscreen()
+        }
+    }, [createEmptyComposeDraft, inlineComposeSession, isMailFullscreen, openComposeInTab, setActiveTabId, setInlineComposeSession, setMailContent, setSelectedMail, toggleMailFullscreen])
+
+    const composeDraft = useCallback((draft, source = 'new') => {
+        openInlineCompose({ source, draft })
+    }, [openInlineCompose])
 
     const fetchMailRawBytes = useCallback(async (mail) => {
         if (!mail || !accountId) return null
@@ -2679,7 +2760,7 @@ function MailSection({
         }
 
         setTabs((prev) => prev.map((tab) => (
-            idSet.has(tab.mail.id)
+            tab.kind === 'mail' && idSet.has(tab.mail.id)
                 ? { ...tab, mail: toggleMailLabelState(tab.mail, trimmedLabel, shouldAdd) }
                 : tab
         )))
@@ -2812,6 +2893,7 @@ function MailSection({
     const mailToolbarRef = useRef(null)
     const isDraggingRef = useRef(false)
     const dragPreviewRef = useRef(null)
+    const nextComposeWindowId = useRef(0)
 
     useEffect(() => () => {
         if (dragPreviewRef.current) {
@@ -3013,7 +3095,7 @@ function MailSection({
         if (mail.seen !== true) {
             setMailsSeenState([mail.id], true)
         }
-        setTabs(prev => [...prev, { id: tabId, mail, mailbox: mail?.mailbox || selectedFolder || 'INBOX' }])
+        setTabs(prev => [...prev, { id: tabId, kind: 'mail', mail, mailbox: mail?.mailbox || selectedFolder || 'INBOX' }])
         setTabContents(prev => ({ ...prev, [tabId]: content }))
         setActiveTabId(tabId)
 
@@ -3469,23 +3551,7 @@ function MailSection({
     )
 
     const handleNewMail = async () => {
-        try {
-            const { invoke } = await import('@tauri-apps/api/core')
-            nextComposeWindowId.current += 1
-            const label = `compose-${nextComposeWindowId.current}`
-            const composeData = {
-                accountId,
-                accountEmail,
-                draft: { to: '', cc: '', bcc: '', subject: '', htmlBody: '' },
-            }
-            await invoke('open_compose_window', {
-                label,
-                composeDataJson: JSON.stringify(composeData),
-            })
-        } catch (error) {
-            console.error('Failed to open compose window, falling back to inline:', error)
-            composeDraft({ to: '', cc: '', bcc: '', subject: '', body: '', htmlBody: '' })
-        }
+        openInlineCompose({ source: 'new', draft: createEmptyComposeDraft() })
     }
 
     const handleDeleteAction = async () => {
@@ -3548,7 +3614,7 @@ function MailSection({
                 to: recipients.join(', '),
                 subject: 'Re: Selected mails',
                 body: `\n\n${buildMultiMailSummary(replyMails)}`,
-            })
+            }, 'reply')
             return
         }
 
@@ -3557,10 +3623,11 @@ function MailSection({
         composeDraft({
             to: mail.address || '',
             cc: dedupeEmails(parseEmailList(content?.cc || '')).join(', '),
+            showCc: !!(content?.cc || '').trim(),
             subject: prefixSubject('Re:', content?.subject || mail.subject),
             body: `\n\n${buildQuotedMailBlock(mail, content)}`,
             htmlBody: buildQuotedHtmlBlock(mail, content),
-        })
+        }, 'reply')
     }
 
     const composeForwardDraft = async (mailList) => {
@@ -3572,7 +3639,7 @@ function MailSection({
                 to: '',
                 subject: `Fwd: ${forwardMails.length} mails`,
                 body: buildMultiMailSummary(forwardMails),
-            })
+            }, 'forward')
             return
         }
 
@@ -3583,7 +3650,7 @@ function MailSection({
             subject: prefixSubject('Fwd:', content?.subject || mail.subject),
             body: buildQuotedMailBlock(mail, content),
             htmlBody: buildQuotedHtmlBlock(mail, content),
-        })
+        }, 'forward')
     }
 
     const handleReplyAction = async () => {
@@ -3646,9 +3713,12 @@ function MailSection({
         await createAndApplyLabel([mailItemMenu.mail.id])
     }
 
-    const activeTab = tabs.find(t => t.id === activeTabId)
-    const activeTabContent = activeTabId ? tabContents[activeTabId] : null
-    const activeTabMail = activeTab ? (mails.find((mail) => mail.id === activeTab.mail.id) || activeTab.mail) : null
+    const activeTab = tabs.find((tab) => tab.id === activeTabId) || null
+    const activeTabContent = activeTab?.kind === 'mail' && activeTabId ? tabContents[activeTabId] : null
+    const activeTabMail = activeTab?.kind === 'mail'
+        ? (mails.find((mail) => mail.id === activeTab.mail.id) || activeTab.mail)
+        : null
+    const activeComposeTab = activeTab?.kind === 'compose' ? activeTab : null
     const activeTabReadLabel = activeTabMail?.seen === true ? 'Unread' : 'Read'
     const fileActionsDisabled = !selectedMail || loadingContent || fileActionLoading !== ''
     const mailItemMenuMail = mailItemMenu?.mail
@@ -3656,12 +3726,20 @@ function MailSection({
         : null
     const mailItemReadLabel = mailItemMenuMail?.seen === true ? 'Mark as unread' : 'Mark as read'
 
+    const getTabTitle = useCallback((tab) => {
+        if (!tab) return ''
+        if (tab.kind === 'compose') {
+            return getComposeTitle(tab.draft)
+        }
+        return tab.mail?.subject || '(No Subject)'
+    }, [])
+
     const closeTabsForMailIds = (mailIds) => {
         const ids = new Set(mailIds)
         const affectedTabIds = tabs
-            .filter((tab) => ids.has(tab.mail.id))
+            .filter((tab) => tab.kind === 'mail' && ids.has(tab.mail.id))
             .map((tab) => tab.id)
-        setTabs((prev) => prev.filter((tab) => !ids.has(tab.mail.id)))
+        setTabs((prev) => prev.filter((tab) => tab.kind !== 'mail' || !ids.has(tab.mail.id)))
         setTabContents((prev) => {
             const next = { ...prev }
             affectedTabIds.forEach((tabId) => {
@@ -3671,14 +3749,14 @@ function MailSection({
             })
             return next
         })
-        if (activeTabId && ids.has(activeTab?.mail.id)) {
+        if (activeTabId && activeTab?.kind === 'mail' && ids.has(activeTab.mail.id)) {
             setActiveTabId(null)
         }
     }
 
     const patchOpenTabsForMail = (mailId, patch) => {
         setTabs((prev) => prev.map((tab) => (
-            tab.mail.id === mailId ? { ...tab, mail: { ...tab.mail, ...patch } } : tab
+            tab.kind === 'mail' && tab.mail.id === mailId ? { ...tab, mail: { ...tab.mail, ...patch } } : tab
         )))
     }
 
@@ -3712,10 +3790,11 @@ function MailSection({
         composeDraft({
             to: activeTabMail.address || '',
             cc: dedupeEmails(parseEmailList(content?.cc || '')).join(', '),
+            showCc: !!(content?.cc || '').trim(),
             subject: prefixSubject('Re:', content?.subject || activeTabMail.subject),
             body: `\n\n${buildQuotedMailBlock(activeTabMail, content)}`,
             htmlBody: buildQuotedHtmlBlock(activeTabMail, content),
-        })
+        }, 'reply')
     }
 
     const handleActiveTabForwardAction = async () => {
@@ -3726,7 +3805,7 @@ function MailSection({
             subject: prefixSubject('Fwd:', content?.subject || activeTabMail.subject),
             body: buildQuotedMailBlock(activeTabMail, content),
             htmlBody: buildQuotedHtmlBlock(activeTabMail, content),
-        })
+        }, 'forward')
     }
 
     const handleActiveTabReadToggleAction = async () => {
@@ -3757,6 +3836,45 @@ function MailSection({
         }
     }
 
+    const handleActiveComposeTabSend = async () => {
+        if (!activeComposeTab) return
+        const sentOk = await sendComposedMail(activeComposeTab.draft)
+        if (sentOk) {
+            closeComposeTab(activeComposeTab.id)
+        }
+        closeActionMenus()
+    }
+
+    const handleActiveComposeTabDiscard = () => {
+        if (!activeComposeTab) return
+        closeComposeTab(activeComposeTab.id)
+        closeActionMenus()
+    }
+
+    const handleActiveComposeTabWindow = async () => {
+        if (!activeComposeTab) return
+        await openComposeWindow(activeComposeTab, activeComposeTab.source)
+        closeActionMenus()
+    }
+
+    const updateInlineComposeDraft = useCallback((nextDraft) => {
+        setInlineComposeSession((prev) => (
+            prev ? { ...prev, draft: normalizeComposeDraft(nextDraft) } : prev
+        ))
+    }, [setInlineComposeSession])
+
+    const handleInlineComposeSend = async (draft) => {
+        if (!inlineComposeSession) return
+        const sentOk = await sendComposedMail(draft || inlineComposeSession.draft)
+        if (sentOk) {
+            setInlineComposeSession(null)
+        }
+    }
+
+    const handleInlineComposeDiscard = useCallback(() => {
+        setInlineComposeSession(null)
+    }, [setInlineComposeSession])
+
     return (
         <div className="mail-section-wrapper">
             { }
@@ -3773,7 +3891,7 @@ function MailSection({
                         className={`mail-tab-item ${activeTabId === tab.id ? 'active' : ''}`}
                         onClick={() => setActiveTabId(tab.id)}
                     >
-                        <span className="mail-tab-label">{tab.mail.subject || '(No Subject)'}</span>
+                        <span className="mail-tab-label">{getTabTitle(tab)}</span>
                         <span className="mail-tab-close" onClick={(e) => closeTab(e, tab.id)}>✕</span>
                     </button>
                 ))}
@@ -3803,68 +3921,76 @@ function MailSection({
             <div className="db-submenu">
                 <div className="db-submenu-scroll" ref={submenuScrollRef}>
                     {activeTabId ? (
-                        <ul>
-                            <li><button disabled={!activeTabMail} onClick={handleActiveTabDeleteAction}>🗑️ {t('Delete')}</button></li>
-                            <li><button disabled={!activeTabMail} onClick={handleActiveTabMoveToTrashAction}>🗃️ {t('Move to Trash')}</button></li>
-                            <li><button disabled={!activeTabMail} onClick={handleActiveTabArchiveAction}>📦 {t('Archive')}</button></li>
-                            <li><button disabled={!activeTabMail} onClick={handleActiveTabReplyAction}>↩️ Reply</button></li>
-                            <li><button disabled={!activeTabMail} onClick={handleActiveTabForwardAction}>➡️ Forward</button></li>
-                            <li className="db-submenu-menu-wrap" ref={moveMenuRef}>
-                                <button
-                                    disabled={!activeTabMail}
-                                    title={activeTabMail ? undefined : 'Open a mail first'}
-                                    className={isMoveMenuOpen ? 'submenu-open' : ''}
-                                    onClick={() => {
-                                        setIsLabelMenuOpen(false)
-                                        setIsMoveMenuOpen((prev) => !prev)
-                                    }}
-                                >
-                                    📁 {t('Move')}
-                                </button>
-                                {isMoveMenuOpen && (
-                                    <div
-                                        className="db-submenu-popover"
-                                        style={movePopoverStyle || undefined}
-                                        onWheel={(e) => e.stopPropagation()}
+                        activeComposeTab ? (
+                            <ul>
+                                <li><button disabled={!activeComposeTab} onClick={handleActiveComposeTabSend}>📨 Send</button></li>
+                                <li><button disabled={!activeComposeTab} onClick={handleActiveComposeTabDiscard}>✕ Discard</button></li>
+                                <li><button disabled={!activeComposeTab} onClick={handleActiveComposeTabWindow}>🪟 Open in Window</button></li>
+                            </ul>
+                        ) : (
+                            <ul>
+                                <li><button disabled={!activeTabMail} onClick={handleActiveTabDeleteAction}>🗑️ {t('Delete')}</button></li>
+                                <li><button disabled={!activeTabMail} onClick={handleActiveTabMoveToTrashAction}>🗃️ {t('Move to Trash')}</button></li>
+                                <li><button disabled={!activeTabMail} onClick={handleActiveTabArchiveAction}>📦 {t('Archive')}</button></li>
+                                <li><button disabled={!activeTabMail} onClick={handleActiveTabReplyAction}>↩️ Reply</button></li>
+                                <li><button disabled={!activeTabMail} onClick={handleActiveTabForwardAction}>➡️ Forward</button></li>
+                                <li className="db-submenu-menu-wrap" ref={moveMenuRef}>
+                                    <button
+                                        disabled={!activeTabMail}
+                                        title={activeTabMail ? undefined : 'Open a mail first'}
+                                        className={isMoveMenuOpen ? 'submenu-open' : ''}
+                                        onClick={() => {
+                                            setIsLabelMenuOpen(false)
+                                            setIsMoveMenuOpen((prev) => !prev)
+                                        }}
                                     >
-                                        {moveFolderOptions.map((folder) => (
-                                            <button
-                                                key={folder}
-                                                type="button"
-                                                className="db-submenu-popover__item"
-                                                onClick={() => handleActiveTabMoveAction(folder)}
-                                            >
-                                                {folderInfo(folder).label}
+                                        📁 {t('Move')}
+                                    </button>
+                                    {isMoveMenuOpen && (
+                                        <div
+                                            className="db-submenu-popover"
+                                            style={movePopoverStyle || undefined}
+                                            onWheel={(e) => e.stopPropagation()}
+                                        >
+                                            {moveFolderOptions.map((folder) => (
+                                                <button
+                                                    key={folder}
+                                                    type="button"
+                                                    className="db-submenu-popover__item"
+                                                    onClick={() => handleActiveTabMoveAction(folder)}
+                                                >
+                                                    {folderInfo(folder).label}
+                                                </button>
+                                            ))}
+                                            <div className="db-submenu-popover__divider" />
+                                            <button type="button" className="db-submenu-popover__item" onClick={handleCreateFolderAndMoveFromTab}>
+                                                + New Folder
                                             </button>
-                                        ))}
-                                        <div className="db-submenu-popover__divider" />
-                                        <button type="button" className="db-submenu-popover__item" onClick={handleCreateFolderAndMoveFromTab}>
-                                            + New Folder
-                                        </button>
-                                    </div>
-                                )}
-                            </li>
-                            <li className="db-submenu-menu-wrap" ref={labelMenuRef}>
-                                <button
-                                    disabled={!activeTabMail}
-                                    title={activeTabMail ? undefined : 'Open a mail first'}
-                                    className={isLabelMenuOpen ? 'submenu-open' : ''}
-                                    onClick={() => {
-                                        setIsMoveMenuOpen(false)
-                                        setIsLabelMenuOpen((prev) => !prev)
-                                    }}
-                                >
-                                    🏷️ Labels
-                                </button>
-                                {isLabelMenuOpen && renderLabelChecklist(
-                                    activeTabMail ? [activeTabMail] : [],
-                                    handleActiveTabLabelToggleAction,
-                                    handleActiveTabCreateLabelAction,
-                                    { style: labelPopoverStyle || undefined },
-                                )}
-                            </li>
-                            <li><button disabled={!activeTabMail} onClick={handleActiveTabReadToggleAction}>👁️ {activeTabReadLabel}</button></li>
-                        </ul>
+                                        </div>
+                                    )}
+                                </li>
+                                <li className="db-submenu-menu-wrap" ref={labelMenuRef}>
+                                    <button
+                                        disabled={!activeTabMail}
+                                        title={activeTabMail ? undefined : 'Open a mail first'}
+                                        className={isLabelMenuOpen ? 'submenu-open' : ''}
+                                        onClick={() => {
+                                            setIsMoveMenuOpen(false)
+                                            setIsLabelMenuOpen((prev) => !prev)
+                                        }}
+                                    >
+                                        🏷️ Labels
+                                    </button>
+                                    {isLabelMenuOpen && renderLabelChecklist(
+                                        activeTabMail ? [activeTabMail] : [],
+                                        handleActiveTabLabelToggleAction,
+                                        handleActiveTabCreateLabelAction,
+                                        { style: labelPopoverStyle || undefined },
+                                    )}
+                                </li>
+                                <li><button disabled={!activeTabMail} onClick={handleActiveTabReadToggleAction}>👁️ {activeTabReadLabel}</button></li>
+                            </ul>
+                        )
                     ) : activeRibbonTab === 'home' && (
                         <ul>
                             <li><button onClick={handleNewMail}>🆕 {t('New Mail')}</button></li>
@@ -3990,12 +4116,26 @@ function MailSection({
             { }
             {activeTabId ? (
                 <div className="mail-tab-content">
-                    {loadingTab ? (
+                    {activeTab?.kind === 'mail' && loadingTab ? (
                         <div className="db-loading" style={{ paddingTop: 60 }}><div className="db-spinner" />Loading...</div>
+                    ) : activeComposeTab ? (
+                        <ComposeMailContent
+                            draft={activeComposeTab.draft}
+                            onDraftChange={(nextDraft) => updateComposeTabDraft(activeComposeTab.id, nextDraft)}
+                            onSend={async (draft) => {
+                                const sentOk = await sendComposedMail(draft)
+                                if (sentOk) {
+                                    closeComposeTab(activeComposeTab.id)
+                                }
+                            }}
+                            onDiscard={() => closeComposeTab(activeComposeTab.id)}
+                            onOpenInWindow={() => openComposeWindow(activeComposeTab, activeComposeTab.source)}
+                            accountEmail={accountEmail}
+                        />
                     ) : activeTab ? (
                         <div className="db-mail-content">
                             <div className="db-mail-content-header">
-                                <div className="db-mail-content-subject">{activeTabContent?.subject || activeTab.mail.subject || '(No Subject)'}</div>
+                                <div className="db-mail-content-subject">{activeTabContent?.subject || activeTabMail?.subject || '(No Subject)'}</div>
                                 <div className="db-mail-content-actions">
                                     <button
                                         className="db-mail-action-btn"
@@ -4004,10 +4144,10 @@ function MailSection({
                                     >✕</button>
                                 </div>
                             </div>
-                            <div className="db-mail-meta"><strong>From:</strong> {activeTabContent?.from_name ? `${activeTabContent.from_name} <${activeTabContent.from_address}>` : activeTab.mail.address}</div>
+                            <div className="db-mail-meta"><strong>From:</strong> {activeTabContent?.from_name ? `${activeTabContent.from_name} <${activeTabContent.from_address}>` : activeTabMail?.address}</div>
                             {!!(activeTabContent?.cc || '').trim() && <div className="db-mail-meta"><strong>CC:</strong> {activeTabContent.cc}</div>}
                             {!!(activeTabContent?.bcc || '').trim() && <div className="db-mail-meta"><strong>BCC:</strong> {activeTabContent.bcc}</div>}
-                            <div className="db-mail-meta"><strong>Date:</strong> {formatMailDateLong(activeTabContent?.date || activeTab.mail.date)}</div>
+                            <div className="db-mail-meta"><strong>Date:</strong> {formatMailDateLong(activeTabContent?.date || activeTabMail?.date)}</div>
                             <hr className="db-mail-divider" />
                             {activeTabContent?.html_body ? (
                                 <div className="db-mail-body-html">
@@ -4652,6 +4792,16 @@ function MailSection({
                                                     : 'Offline cache is not available yet.'}
                                         </div>
                                     </div>
+                                ) : inlineComposeSession ? (
+                                    <ComposeMailContent
+                                        draft={inlineComposeSession.draft}
+                                        onDraftChange={updateInlineComposeDraft}
+                                        onSend={handleInlineComposeSend}
+                                        onDiscard={handleInlineComposeDiscard}
+                                        onOpenInTab={() => openComposeInTab(inlineComposeSession, inlineComposeSession.source)}
+                                        onOpenInWindow={() => openComposeWindow(inlineComposeSession, inlineComposeSession.source)}
+                                        accountEmail={accountEmail}
+                                    />
                                 ) : !selectedMail ? (
                                     <div className="db-empty-state">
                                         <div className="db-empty-icon">🕊️</div>
@@ -4732,26 +4882,6 @@ function MailSection({
                                 )}
                             </div>
                         )}
-                    </div>
-                </div>
-            )}
-            {composeOpen && (
-                <div className="db-compose-modal">
-                    <div className="db-compose-card" style={{ width: '720px', maxWidth: '90vw', height: '80vh', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
-                        <ComposeView
-                            initialDraft={{
-                                to: composeForm.to,
-                                cc: composeForm.cc,
-                                bcc: composeForm.bcc,
-                                subject: composeForm.subject,
-                                htmlBody: composeForm.htmlBody || '',
-                            }}
-                            onSend={async (composed) => {
-                                await sendComposedMail(composed)
-                            }}
-                            onDiscard={() => setComposeOpen(false)}
-                            accountEmail={accountEmail}
-                        />
                     </div>
                 </div>
             )}

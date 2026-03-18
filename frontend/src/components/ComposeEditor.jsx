@@ -5,9 +5,9 @@ import { Schema, DOMParser as PmDOMParser, DOMSerializer } from 'prosemirror-mod
 import { schema as basicSchema } from 'prosemirror-schema-basic'
 import { addListNodes } from 'prosemirror-schema-list'
 import { keymap } from 'prosemirror-keymap'
-import { baseKeymap, toggleMark, setBlockType, wrapIn, lift } from 'prosemirror-commands'
+import { baseKeymap, toggleMark, wrapIn } from 'prosemirror-commands'
 import { history, undo, redo } from 'prosemirror-history'
-import { inputRules, wrappingInputRule, textblockTypeInputRule, smartQuotes, emDash, ellipsis } from 'prosemirror-inputrules'
+import { inputRules, wrappingInputRule, smartQuotes, emDash, ellipsis } from 'prosemirror-inputrules'
 import { gapCursor } from 'prosemirror-gapcursor'
 import { wrapInList, splitListItem, liftListItem, sinkListItem } from 'prosemirror-schema-list'
 import './ComposeEditor.css'
@@ -168,12 +168,6 @@ function getParagraphAttr(state, attrName) {
     return paragraph?.attrs?.[attrName] ?? null
 }
 
-function blockTypeActive(state, nodeType, attrs) {
-    const { $from, to, node } = state.selection
-    if (node) return node.hasMarkup(nodeType, attrs)
-    return to <= $from.end() && $from.parent.hasMarkup(nodeType, attrs)
-}
-
 function setAlignment(state, dispatch, align) {
     const { from, to } = state.selection
     const tr = state.tr
@@ -302,7 +296,21 @@ export default function ComposeEditor({ initialContent, onChange, lineSpacing = 
     const [editorState, setEditorState] = useState(null)
     const onChangeRef = useRef(onChange)
     const lastSelectionRef = useRef(null)
-    onChangeRef.current = onChange
+    const lastHtmlRef = useRef(initialContent || '')
+    const initialContentRef = useRef(initialContent)
+    const lineSpacingValueRef = useRef(lineSpacing)
+
+    useEffect(() => {
+        onChangeRef.current = onChange
+    }, [onChange])
+
+    useEffect(() => {
+        initialContentRef.current = initialContent
+    }, [initialContent])
+
+    useEffect(() => {
+        lineSpacingValueRef.current = lineSpacing
+    }, [lineSpacing])
 
     /* Popups */
     const [showEmoji, setShowEmoji] = useState(false)
@@ -321,9 +329,11 @@ export default function ComposeEditor({ initialContent, onChange, lineSpacing = 
     useEffect(() => {
         if (!editorRef.current) return
 
-        const doc = initialContent
-            ? parseFromHtml(schema, initialContent)
-            : schema.node('doc', null, [schema.node('paragraph', { align: null, lineHeight: lineSpacing })])
+        const initialHtml = initialContentRef.current || ''
+        const initialLineSpacing = lineSpacingValueRef.current
+        const doc = initialHtml
+            ? parseFromHtml(schema, initialHtml)
+            : schema.node('doc', null, [schema.node('paragraph', { align: null, lineHeight: initialLineSpacing })])
 
         const state = EditorState.create({
             doc,
@@ -359,6 +369,7 @@ export default function ComposeEditor({ initialContent, onChange, lineSpacing = 
                 }
                 if (tr.docChanged && onChangeRef.current) {
                     const html = serializeToHtml(schema, newState.doc)
+                    lastHtmlRef.current = html
                     onChangeRef.current(html)
                 }
             },
@@ -366,6 +377,7 @@ export default function ComposeEditor({ initialContent, onChange, lineSpacing = 
 
         viewRef.current = view
         setEditorState(state)
+        lastHtmlRef.current = initialHtml
         lastSelectionRef.current = {
             from: state.selection.from,
             to: state.selection.to,
@@ -376,6 +388,31 @@ export default function ComposeEditor({ initialContent, onChange, lineSpacing = 
             viewRef.current = null
         }
     }, [schema])
+
+    useEffect(() => {
+        const view = viewRef.current
+        if (!view) return
+
+        const nextHtml = initialContent || ''
+        if (nextHtml === lastHtmlRef.current) return
+
+        const nextDoc = nextHtml
+            ? parseFromHtml(schema, nextHtml)
+            : schema.node('doc', null, [schema.node('paragraph', { align: null, lineHeight: lineSpacing })])
+
+        const nextState = EditorState.create({
+            doc: nextDoc,
+            plugins: view.state.plugins,
+        })
+
+        view.updateState(nextState)
+        setEditorState(nextState)
+        lastSelectionRef.current = {
+            from: nextState.selection.from,
+            to: nextState.selection.to,
+        }
+        lastHtmlRef.current = nextHtml
+    }, [initialContent, lineSpacing, schema])
 
     /* Close popups on outside click */
     useEffect(() => {

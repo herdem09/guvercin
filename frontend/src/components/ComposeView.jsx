@@ -1,38 +1,24 @@
-import { useState, useRef, useCallback } from 'react'
+import { useRef, useCallback } from 'react'
 import ComposeEditor from './ComposeEditor.jsx'
 import './ComposeView.css'
 
-export default function ComposeView({ initialDraft, onSend, onDiscard, accountEmail }) {
-    const [to, setTo] = useState(initialDraft?.to || '')
-    const [cc, setCc] = useState(initialDraft?.cc || '')
-    const [bcc, setBcc] = useState(initialDraft?.bcc || '')
-    const [subject, setSubject] = useState(initialDraft?.subject || '')
-    const [showCc, setShowCc] = useState(!!(initialDraft?.cc))
-    const [showBcc, setShowBcc] = useState(!!(initialDraft?.bcc))
-    const [sending, setSending] = useState(false)
+export default function ComposeView({ draft, onDraftChange, onSend, onDiscard, accountEmail, sending = false }) {
     const editorAreaRef = useRef(null)
-    const htmlBodyRef = useRef(initialDraft?.htmlBody || '')
+    const patchDraft = useCallback((patch) => {
+        onDraftChange?.({ ...draft, ...patch })
+    }, [draft, onDraftChange])
 
     const handleEditorChange = useCallback((html) => {
-        htmlBodyRef.current = html
-    }, [])
+        patchDraft({ htmlBody: html })
+    }, [patchDraft])
 
     const handleSend = useCallback(async () => {
-        if (!to.trim()) return
-        setSending(true)
-        try {
-            await onSend?.({
-                to: to.split(',').map((s) => s.trim()).filter(Boolean),
-                cc: cc.split(',').map((s) => s.trim()).filter(Boolean),
-                bcc: bcc.split(',').map((s) => s.trim()).filter(Boolean),
-                subject,
-                htmlBody: htmlBodyRef.current,
-                from: accountEmail || '',
-            })
-        } finally {
-            setSending(false)
-        }
-    }, [to, cc, bcc, subject, onSend, accountEmail])
+        if (!draft?.to?.trim()) return
+        await onSend?.({
+            ...draft,
+            from: accountEmail || '',
+        })
+    }, [accountEmail, draft, onSend])
 
     const handleDiscard = useCallback(() => {
         onDiscard?.()
@@ -40,7 +26,6 @@ export default function ComposeView({ initialDraft, onSend, onDiscard, accountEm
 
     return (
         <div className="compose-view">
-            {/* Header fields */}
             <div className="cv-header">
                 <div className="cv-field">
                     <label className="cv-label">From</label>
@@ -52,37 +37,37 @@ export default function ComposeView({ initialDraft, onSend, onDiscard, accountEm
                         className="cv-input"
                         type="text"
                         placeholder="recipient@example.com"
-                        value={to}
-                        onChange={(e) => setTo(e.target.value)}
+                        value={draft?.to || ''}
+                        onChange={(e) => patchDraft({ to: e.target.value })}
                     />
-                    {!showCc && (
-                        <button type="button" className="cv-toggle-btn" onClick={() => setShowCc(true)}>CC</button>
+                    {!draft?.showCc && (
+                        <button type="button" className="cv-toggle-btn" onClick={() => patchDraft({ showCc: true })}>CC</button>
                     )}
-                    {!showBcc && (
-                        <button type="button" className="cv-toggle-btn" onClick={() => setShowBcc(true)}>BCC</button>
+                    {!draft?.showBcc && (
+                        <button type="button" className="cv-toggle-btn" onClick={() => patchDraft({ showBcc: true })}>BCC</button>
                     )}
                 </div>
-                {showCc && (
+                {draft?.showCc && (
                     <div className="cv-field">
                         <label className="cv-label">CC</label>
                         <input
                             className="cv-input"
                             type="text"
                             placeholder="cc@example.com"
-                            value={cc}
-                            onChange={(e) => setCc(e.target.value)}
+                            value={draft?.cc || ''}
+                            onChange={(e) => patchDraft({ cc: e.target.value })}
                         />
                     </div>
                 )}
-                {showBcc && (
+                {draft?.showBcc && (
                     <div className="cv-field">
                         <label className="cv-label">BCC</label>
                         <input
                             className="cv-input"
                             type="text"
                             placeholder="bcc@example.com"
-                            value={bcc}
-                            onChange={(e) => setBcc(e.target.value)}
+                            value={draft?.bcc || ''}
+                            onChange={(e) => patchDraft({ bcc: e.target.value })}
                         />
                     </div>
                 )}
@@ -92,27 +77,25 @@ export default function ComposeView({ initialDraft, onSend, onDiscard, accountEm
                         className="cv-input"
                         type="text"
                         placeholder="Subject"
-                        value={subject}
-                        onChange={(e) => setSubject(e.target.value)}
+                        value={draft?.subject || ''}
+                        onChange={(e) => patchDraft({ subject: e.target.value })}
                     />
                 </div>
             </div>
 
-            {/* Editor */}
             <div className="cv-editor-wrap" ref={editorAreaRef}>
                 <ComposeEditor
-                    initialContent={initialDraft?.htmlBody || ''}
+                    initialContent={draft?.htmlBody || ''}
                     onChange={handleEditorChange}
                 />
             </div>
 
-            {/* Actions */}
             <div className="cv-actions">
                 <button
                     type="button"
                     className="cv-send-btn"
                     onClick={handleSend}
-                    disabled={sending || !to.trim()}
+                    disabled={sending || !draft?.to?.trim()}
                 >
                     {sending ? '⏳ Sending...' : '📨 Send'}
                 </button>
