@@ -380,7 +380,7 @@ export default function DetachedMailWindow() {
   return (
     <div className="dashboard-page" style={{ height: '100vh' }}>
       <div className="db-navbar">
-        <div className="db-logo-icon">🕊️</div>
+        <div className="db-logo-icon"><img src="../icon/guvercin-textless-unplanned.svg" alt="Guvercin" style={{width: '24px', height: '24px'}} /></div>
         <span className="db-logo-text">Guvercin</span>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           <button className="db-icon-btn" title="Close" onClick={closeWindow}>✕</button>

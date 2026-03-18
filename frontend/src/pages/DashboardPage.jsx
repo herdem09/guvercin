@@ -1745,7 +1745,7 @@ const DashboardPage = () => {
         <div className="dashboard-page">
             <div className="db-navbar">
                 <button className="db-logo-btn">
-                    <div className="db-logo-icon">🕊️</div>
+                    <div className="db-logo-icon"><img src="../icon/guvercin-textless-unplanned.svg" alt="Guvercin" style={{width: '24px', height: '24px'}} /></div>
                     <span className="db-logo-text">Guvercin</span>
                 </button>
                 <div className="db-search">
@@ -5069,7 +5069,7 @@ function MailSection({
                             <div className="db-right-panel">
                                 {!hasMailSource ? (
                                     <div className="db-empty-state" style={{ paddingTop: 100 }}>
-                                        <div className="db-empty-icon">🕊️</div>
+                                        <div className="db-empty-icon"><img src="../icon/guvercin-textless-unplanned.svg" alt="Guvercin" style={{width: '48px', height: '48px'}} /></div>
                                         <div className="db-empty-text">
                                             {connecting
                                                 ? 'Connecting...'
@@ -5090,7 +5090,7 @@ function MailSection({
                                     />
                                 ) : !selectedMail ? (
                                     <div className="db-empty-state">
-                                        <div className="db-empty-icon">🕊️</div>
+                                        <div className="db-empty-icon"><img src="../icon/guvercin-textless-unplanned.svg" alt="Guvercin" style={{width: '48px', height: '48px'}} /></div>
                                         <div className="db-empty-text">Select an email</div>
                                     </div>
                                 ) : loadingContent ? (
