@@ -2,22 +2,22 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import Avatar from './Avatar.jsx'
 
 const FOLDER_MAP = {
-  INBOX: { icon: '✉️', href: '#inbox' },
-  'Inbox': { icon: '✉️', href: '#inbox' },
-  'Spam': { icon: '🚫', href: '#junk' },
-  Spam: { icon: '🚫', href: '#junk' },
-  Drafts: { icon: '📝', href: '#drafts' },
-  Drafts: { icon: '📝', href: '#drafts' },
-  'Sent Items': { icon: '📤', href: '#sent' },
-  Sent: { icon: '📤', href: '#sent' },
-  'Trash': { icon: '🗑️', href: '#deleted' },
-  Trash: { icon: '🗑️', href: '#deleted' },
-  Archive: { icon: '🗄️', href: '#archive' },
-  Archive: { icon: '🗄️', href: '#archive' },
+  INBOX: { icon: <img src="/img/icons/inbox.svg" className="svg-icon-inline" />, href: '#inbox' },
+  'Inbox': { icon: <img src="/img/icons/inbox.svg" className="svg-icon-inline" />, href: '#inbox' },
+  'Spam': { icon: <img src="/img/icons/spambox.svg" className="svg-icon-inline" />, href: '#junk' },
+  Spam: { icon: <img src="/img/icons/spambox.svg" className="svg-icon-inline" />, href: '#junk' },
+  Drafts: { icon: <img src="/img/icons/draft.svg" className="svg-icon-inline" />, href: '#drafts' },
+  Drafts: { icon: <img src="/img/icons/draft.svg" className="svg-icon-inline" />, href: '#drafts' },
+  'Sent Items': { icon: <img src="/img/icons/sentbox.svg" className="svg-icon-inline" />, href: '#sent' },
+  Sent: { icon: <img src="/img/icons/sentbox.svg" className="svg-icon-inline" />, href: '#sent' },
+  'Trash': { icon: <img src="/img/icons/recycle-bin.svg" className="svg-icon-inline" />, href: '#deleted' },
+  Trash: { icon: <img src="/img/icons/recycle-bin.svg" className="svg-icon-inline" />, href: '#deleted' },
+  Archive: { icon: <img src="/img/icons/archive.svg" className="svg-icon-inline" />, href: '#archive' },
+  Archive: { icon: <img src="/img/icons/archive.svg" className="svg-icon-inline" />, href: '#archive' },
 }
 
 function folderIcon(name) {
-  return FOLDER_MAP[name]?.icon ?? '✉️'
+  return FOLDER_MAP[name]?.icon ?? <img src="/img/icons/inbox.svg" className="svg-icon-inline" />
 }
 
 function getShortTime() {
@@ -120,7 +120,7 @@ export default function MailWorkspace({ accountId, email }) {
           <>
             <div className="db-folder-header">
               <span className="db-folder-title">{email || 'Mailbox'}</span>
-              <button className="db-folder-menu-btn">···</button>
+              <button className="db-folder-menu-btn"><img src="/img/icons/three-point.svg" className="svg-icon-inline" /></button>
             </div>
             <ul className="db-folder-list">
               {(folders.length > 0 ? folders : ['INBOX']).map((folder) => (
@@ -149,26 +149,26 @@ export default function MailWorkspace({ accountId, email }) {
       <div className="db-center-panel">
         <div className="db-mail-toolbar">
           <button className="db-mail-toolbar-btn">
-            <span className="db-mail-toolbar-icon">☑️</span>
+            <span className="db-mail-toolbar-icon"><img src="/img/icons/choice-choosen.svg" className="svg-icon-inline" /></span>
             Select
           </button>
           <button className="db-mail-toolbar-btn">
-            <span className="db-mail-toolbar-icon">⏭️</span>
+            <span className="db-mail-toolbar-icon"><img src="/img/icons/arrow-no-tail.svg" className="svg-icon-inline" /></span>
             Jump
           </button>
           <button className="db-mail-toolbar-btn">
-            <span className="db-mail-toolbar-icon">🔍</span>
+            <span className="db-mail-toolbar-icon"><img src="/img/icons/filter.svg" className="svg-icon-inline" /></span>
             Filter
           </button>
           <button className="db-mail-toolbar-btn" onClick={() => loadMails(selectedFolder)}>
-            <span className="db-mail-toolbar-icon">🔄</span>
+            <span className="db-mail-toolbar-icon"><img src="/img/icons/reload.svg" className="svg-icon-inline" /></span>
             Refresh
           </button>
         </div>
 
         {!connected ? (
           <div className="db-empty-state">
-            <div className="db-empty-icon">📭</div>
+            <div className="db-empty-icon"><img src="/img/icons/inbox.svg" className="svg-icon-inline" /></div>
             <div className="db-empty-text">Connect first</div>
           </div>
         ) : loadingMails ? (
@@ -178,7 +178,7 @@ export default function MailWorkspace({ accountId, email }) {
           </div>
         ) : mails.length === 0 ? (
           <div className="db-empty-state">
-            <div className="db-empty-icon">📭</div>
+            <div className="db-empty-icon"><img src="/img/icons/inbox.svg" className="svg-icon-inline" /></div>
             <div className="db-empty-text">This folder is empty</div>
           </div>
         ) : (
@@ -219,7 +219,7 @@ export default function MailWorkspace({ accountId, email }) {
           </div>
         ) : !selectedMail ? (
           <div className="db-empty-state">
-            <div className="db-empty-icon"><img src="../icon/guvercin-textless-unplanned.svg" alt="Guvercin" style={{width: '48px', height: '48px'}} /></div>
+            <div className="db-empty-icon"><img src="/img/logo/guvercin-notext-nobackground.svg" alt="Guvercin" style={{width: '48px', height: '48px'}} /></div>
             <div className="db-empty-text">Select an email</div>
           </div>
         ) : loadingContent ? (

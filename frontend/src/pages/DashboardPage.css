@@ -2539,3 +2539,5 @@ body.resizing * {
     width: 100%;
   }
 }
+
+.svg-icon-inline { width: 1em; height: 1em; vertical-align: middle; }

@@ -25,7 +25,7 @@ export default function ComposeMailContent({
                             onClick={onOpenInTab}
                             title="Open in new tab"
                         >
-                            🗂️
+                            <img src="/img/icons/open-in-new-tab.svg" className="svg-icon-inline" />
                         </button>
                     )}
                     {onOpenInWindow && (
@@ -34,7 +34,7 @@ export default function ComposeMailContent({
                             onClick={onOpenInWindow}
                             title="Open in new window"
                         >
-                            🪟
+                            <img src="/img/icons/open-in-new-window.svg" className="svg-icon-inline" />
                         </button>
                     )}
                     <button
@@ -42,7 +42,7 @@ export default function ComposeMailContent({
                         onClick={onDiscard}
                         title="Close"
                     >
-                        ✕
+                        <img src="/img/icons/three-point.svg" className="svg-icon-inline" />
                     </button>
                 </div>
             </div>

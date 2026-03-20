@@ -208,7 +208,7 @@ function RecipientField({ label, recipients, onChange, placeholder, trailingActi
                                     handleRemove(index)
                                 }}
                             >
-                                ×
+                                <img src="/img/icons/three-point.svg" className="svg-icon-inline" />
                             </span>
                         </button>
                     ))}
@@ -508,14 +508,14 @@ export default function ComposeView({ draft, onDraftChange, onSend, onDiscard, a
                     onClick={handleSend}
                     disabled={sending || (draft?.toRecipients || []).length === 0}
                 >
-                    {sending ? '⏳ Sending...' : '📨 Send'}
+                    {sending ? '⏳ Sending...' : '<img src="/img/icons/mail.svg" className="svg-icon-inline" /> Send'}
                 </button>
                 <button
                     type="button"
                     className="cv-discard-btn"
                     onClick={onDiscard}
                 >
-                    ✕ Discard
+                    <img src="/img/icons/three-point.svg" className="svg-icon-inline" /> Discard
                 </button>
             </div>
         </div>

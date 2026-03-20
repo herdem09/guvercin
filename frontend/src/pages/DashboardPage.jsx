@@ -19,19 +19,19 @@ import {
 import './DashboardPage.css'
 
 const FOLDER_MAP = {
-    'INBOX': { icon: '📥', label: 'Inbox' },
-    'Inbox': { icon: '📥', label: 'Inbox' },
+    'INBOX': { icon: <img src="/img/icons/inbox.svg" alt="Inbox" className="svg-icon-inline" />, label: 'Inbox' },
+    'Inbox': { icon: <img src="/img/icons/inbox.svg" alt="Inbox" className="svg-icon-inline" />, label: 'Inbox' },
     'Starred': { icon: '⭐', label: 'Starred' },
     'Snoozed': { icon: '🕒', label: 'Snoozed' },
-    'Sent': { icon: '✈️', label: 'Sent Items' },
-    'Sent Items': { icon: '✈️', label: 'Sent Items' },
-    'Drafts': { icon: '📝', label: 'Drafts' },
-    'Archive': { icon: '📦', label: 'Archive' },
+    'Sent': { icon: <img src="/img/icons/sentbox.svg" alt="Sent" className="svg-icon-inline" />, label: 'Sent Items' },
+    'Sent Items': { icon: <img src="/img/icons/sentbox.svg" alt="Sent" className="svg-icon-inline" />, label: 'Sent Items' },
+    'Drafts': { icon: <img src="/img/icons/draft.svg" alt="Drafts" className="svg-icon-inline" />, label: 'Drafts' },
+    'Archive': { icon: <img src="/img/icons/archive.svg" alt="Archive" className="svg-icon-inline" />, label: 'Archive' },
     'Trash': { icon: '🗑️', label: 'Trash' },
-    'Spam': { icon: '🚫', label: 'Spam' },
-    'Junk': { icon: '🚫', label: 'Spam' },
-    'All Mail': { icon: '📑', label: 'All Mail' },
-    '[Gmail]/All Mail': { icon: '📑', label: 'All Mail' },
+    'Spam': { icon: <img src="/img/icons/spambox.svg" alt="Spam" className="svg-icon-inline" />, label: 'Spam' },
+    'Junk': { icon: <img src="/img/icons/spambox.svg" alt="Spam" className="svg-icon-inline" />, label: 'Spam' },
+    'All Mail': { icon: <img src="/img/icons/all-mails.svg" alt="All Mails" className="svg-icon-inline" />, label: 'All Mail' },
+    '[Gmail]/All Mail': { icon: <img src="/img/icons/all-mails.svg" alt="All Mails" className="svg-icon-inline" />, label: 'All Mail' },
 }
 
 function folderInfo(name) {
@@ -41,9 +41,9 @@ function folderInfo(name) {
         .replace(/^Labels\//i, '')
         .replace(/^\[Labels\]\//i, '')
     if (isLabelMailbox(name)) {
-        return { icon: '🏷️', label: clean }
+        return { icon: <img src="/img/icons/label.svg" alt="Label" className="svg-icon-inline" />, label: clean }
     }
-    return FOLDER_MAP[clean] || FOLDER_MAP[name] || { icon: '📁', label: clean }
+    return FOLDER_MAP[clean] || FOLDER_MAP[name] || { icon: <img src="/img/icons/folder.svg" alt="Folder" className="svg-icon-inline" />, label: clean }
 }
 
 function formatBytes(bytes) {
@@ -101,8 +101,8 @@ function CollapsedTab({ label, title, onClick }) {
 }
 
 const MAIL_FILTER_OPTIONS = [
-    { key: 'all', label: 'All', icon: '✉' },
-    { key: 'unread', label: 'Unread', icon: '⌁' },
+    { key: 'all', label: 'All', icon: <img src="/img/icons/all-mails.svg" alt="All" className="svg-icon-inline" /> },
+    { key: 'unread', label: 'Unread', icon: <img src="/img/icons/unreaed.svg" alt="Unread" className="svg-icon-inline" /> },
     { key: 'toMe', label: 'To me', icon: '➤' },
 ]
 
@@ -1745,7 +1745,7 @@ const DashboardPage = () => {
         <div className="dashboard-page">
             <div className="db-navbar">
                 <button className="db-logo-btn">
-                    <div className="db-logo-icon"><img src="../icon/guvercin-textless-unplanned.svg" alt="Guvercin" style={{width: '24px', height: '24px'}} /></div>
+                    <div className="db-logo-icon"><img src="/img/logo/guvercin-righttext-nobackground.svg" alt="Guvercin" style={{width: '24px', height: '24px'}} /></div>
                     <span className="db-logo-text">Guvercin</span>
                 </button>
                 <div className="db-search">
@@ -1770,7 +1770,7 @@ const DashboardPage = () => {
                         onClick={() => setIsAdvancedSearchOpen(true)}
                         title={t('Advanced search')}
                     >
-                        ⚙️
+                        <img src="/img/icons/more-choice.svg" className="svg-icon-inline" />
                     </button>
                     <button
                         type="button"
@@ -1786,7 +1786,7 @@ const DashboardPage = () => {
                         aria-label={t('Search')}
                         title={t('Search')}
                     >
-                        🔍
+                        <img src="/img/icons/search.svg" className="svg-icon-inline" />
                     </button>
                 </div>
                 <div className="db-navbar-right">
@@ -1796,7 +1796,7 @@ const DashboardPage = () => {
                     </div>
                     <div className={`db-sync-indicator ${syncState === 'syncing' ? 'is-syncing' : ''}`}>
                         <button type="button" className="db-icon-btn db-sync-indicator__btn" aria-label="Sync and network status">
-                            🌐
+                            {networkOnline && canUseRemoteMail ? <img src="/img/icons/online.svg" className="svg-icon-inline" /> : (networkOnline ? <img src="/img/icons/online-but-problem.svg" className="svg-icon-inline" /> : <img src="/img/icons/offline.svg" className="svg-icon-inline" />)}
                             <span
                                 className={`db-sync-indicator__dot ${canUseRemoteMail ? 'live' : 'offline'} ${syncState === 'syncing' ? 'syncing' : ''}`}
                                 aria-hidden="true"
@@ -1825,7 +1825,7 @@ const DashboardPage = () => {
                             {lastError && <div className="db-sync-popover__error">Error: {lastError}</div>}
                         </div>
                     </div>
-                    <button className="db-icon-btn" title="Notifications">🔔</button>
+                    <button className="db-icon-btn" title="Notifications"><img src="/img/icons/notification.svg" className="svg-icon-inline" /></button>
                     <div className="db-settings-wrapper">
                         <button
                             type="button"
@@ -1838,7 +1838,7 @@ const DashboardPage = () => {
                                 if (next) await refreshThemes()
                             }}
                         >
-                            ⚙️
+                            <img src="/img/icons/settings.svg" className="svg-icon-inline" />
                         </button>
                         {settingsMenuOpen && (
                             <div className="db-settings-menu" ref={settingsMenuRef}>
@@ -1923,7 +1923,7 @@ const DashboardPage = () => {
             <div className="db-main-container">
                 <div className="db-sidebar">
                     {[
-                        { key: 'mail', icon: '✉️', label: t('Mail') },
+                        { key: 'mail', icon: <img src="/img/icons/mail.svg" alt="Mail" className="svg-icon-inline" />, label: t('Mail') },
                         { key: 'calendar', icon: '📅', label: t('Calendar') },
                         { key: 'contacts', icon: '👥', label: t('Contacts') },
                         { key: 'todo', icon: '✅', label: t('Todo') }
@@ -2037,7 +2037,7 @@ const DashboardPage = () => {
                                             aria-label={notice.undoLabel || 'Cancel'}
                                             title={notice.undoLabel || 'Cancel'}
                                         >
-                                            ✕
+                                            <img src="/img/icons/three-point.svg" className="svg-icon-inline" />
                                         </button>
                                     </div>
                                 </div>
@@ -2067,7 +2067,7 @@ const DashboardPage = () => {
                                 aria-label="Close"
                                 title="Close"
                             >
-                                ✕
+                                <img src="/img/icons/three-point.svg" className="svg-icon-inline" />
                             </button>
                         </div>
 
@@ -3080,14 +3080,14 @@ function MailSection({
                             className={`db-label-popover__item ${option.state === 'checked' ? 'checked' : ''} ${option.state === 'indeterminate' ? 'indeterminate' : ''}`}
                             onClick={() => onToggleLabel(option.labelKey, option.state !== 'checked')}
                         >
-                            <span className="db-label-popover__check">{option.state === 'checked' ? '✓' : (option.state === 'indeterminate' ? '−' : '')}</span>
+                            <span className="db-label-popover__check">{option.state === 'checked' ? <img src="/img/icons/choice-choosen.svg" className="svg-icon-inline" /> : (option.state === 'indeterminate' ? <img src="/img/icons/choice-unchoosen.svg" className="svg-icon-inline" /> : '')}</span>
                             <span className="db-label-popover__label">{option.labelLabel}</span>
                         </button>
                     ))
                 )}
                 <div className="db-submenu-popover__divider" />
                 <button type="button" className="db-submenu-popover__item" onClick={onCreateLabel}>
-                    + New Label
+                    <img src="/img/icons/plus.svg" className="svg-icon-inline" /> New Label
                 </button>
             </div>
         )
@@ -3751,7 +3751,7 @@ function MailSection({
                     >
                         {hasChildren ? (
                             <span className={`db-folder-chevron ${isExpanded ? 'expanded' : ''}`} onClick={(e) => toggleExpand(e, node.fullPath)}>
-                                ❯
+                                <img src="/img/icons/dock-shown.svg" className="svg-icon-inline" />
                             </span>
                         ) : (
                             <span className="db-folder-chevron-placeholder" />
@@ -3785,7 +3785,7 @@ function MailSection({
                         }}
                         title="New folder"
                     >
-                        +
+                        <img src="/img/icons/plus.svg" className="svg-icon-inline" />
                     </button>
                 )}
                 {(title === t('Labels') || title === 'Labels') && (
@@ -3799,7 +3799,7 @@ function MailSection({
                         }}
                         title="New label"
                     >
-                        +
+                        <img src="/img/icons/plus.svg" className="svg-icon-inline" />
                     </button>
                 )}
             </div>
@@ -4166,7 +4166,7 @@ function MailSection({
                     className={`mail-tab-item main-tab ${!activeTabId ? 'active' : ''}`}
                     onClick={() => setActiveTabId(null)}
                 >
-                    📥 {selectedFolder || 'Inbox'}
+                    <img src="/img/icons/inbox.svg" className="svg-icon-inline" /> {selectedFolder || 'Inbox'}
                 </button>
                 {tabs.map(tab => (
                     <button
@@ -4175,7 +4175,7 @@ function MailSection({
                         onClick={() => setActiveTabId(tab.id)}
                     >
                         <span className="mail-tab-label">{getTabTitle(tab)}</span>
-                        <span className="mail-tab-close" onClick={(e) => closeTab(e, tab.id)}>✕</span>
+                        <span className="mail-tab-close" onClick={(e) => closeTab(e, tab.id)}><img src="/img/icons/three-point.svg" className="svg-icon-inline" /></span>
                     </button>
                 ))}
             </div>
@@ -4207,16 +4207,16 @@ function MailSection({
                         activeComposeTab ? (
                             <ul>
                                 <li><button disabled={!activeComposeTab} onClick={handleActiveComposeTabSend}>📨 Send</button></li>
-                                <li><button disabled={!activeComposeTab} onClick={handleActiveComposeTabDiscard}>✕ Discard</button></li>
-                                <li><button disabled={!activeComposeTab} onClick={handleActiveComposeTabWindow}>🪟 Open in Window</button></li>
+                                <li><button disabled={!activeComposeTab} onClick={handleActiveComposeTabDiscard}><img src="/img/icons/three-point.svg" className="svg-icon-inline" /> Discard</button></li>
+                                <li><button disabled={!activeComposeTab} onClick={handleActiveComposeTabWindow}><img src="/img/icons/open-in-new-window.svg" className="svg-icon-inline" /> Open in Window</button></li>
                             </ul>
                         ) : (
                             <ul>
-                                <li><button disabled={!activeTabMail} onClick={handleActiveTabDeleteAction}>🗑️ {t('Delete')}</button></li>
-                                <li><button disabled={!activeTabMail} onClick={handleActiveTabMoveToTrashAction}>🗃️ {t('Move to Trash')}</button></li>
-                                <li><button disabled={!activeTabMail} onClick={handleActiveTabArchiveAction}>📦 {t('Archive')}</button></li>
-                                <li><button disabled={!activeTabMail} onClick={handleActiveTabReplyAction}>↩️ Reply</button></li>
-                                <li><button disabled={!activeTabMail} onClick={handleActiveTabForwardAction}>➡️ Forward</button></li>
+                                <li><button disabled={!activeTabMail} onClick={handleActiveTabDeleteAction}><img src="/img/icons/recycle-bin.svg" className="svg-icon-inline" /> {t('Delete')}</button></li>
+                                <li><button disabled={!activeTabMail} onClick={handleActiveTabMoveToTrashAction}><img src="/img/icons/move-to-folder.svg" className="svg-icon-inline" /> {t('Move to Trash')}</button></li>
+                                <li><button disabled={!activeTabMail} onClick={handleActiveTabArchiveAction}><img src="/img/icons/archive.svg" className="svg-icon-inline" /> {t('Archive')}</button></li>
+                                <li><button disabled={!activeTabMail} onClick={handleActiveTabReplyAction}><img src="/img/icons/reply.svg" className="svg-icon-inline" /> Reply</button></li>
+                                <li><button disabled={!activeTabMail} onClick={handleActiveTabForwardAction}><img src="/img/icons/forward.svg" className="svg-icon-inline" /> Forward</button></li>
                                 <li className="db-submenu-menu-wrap" ref={moveMenuRef}>
                                     <button
                                         disabled={!activeTabMail}
@@ -4227,7 +4227,7 @@ function MailSection({
                                             setIsMoveMenuOpen((prev) => !prev)
                                         }}
                                     >
-                                        📁 {t('Move')}
+                                        <img src="/img/icons/folder.svg" className="svg-icon-inline" /> {t('Move')}
                                     </button>
                                     {isMoveMenuOpen && (
                                         <div
@@ -4247,7 +4247,7 @@ function MailSection({
                                             ))}
                                             <div className="db-submenu-popover__divider" />
                                             <button type="button" className="db-submenu-popover__item" onClick={handleCreateFolderAndMoveFromTab}>
-                                                + New Folder
+                                                <img src="/img/icons/plus.svg" className="svg-icon-inline" /> New Folder
                                             </button>
                                         </div>
                                     )}
@@ -4262,7 +4262,7 @@ function MailSection({
                                             setIsLabelMenuOpen((prev) => !prev)
                                         }}
                                     >
-                                        🏷️ Labels
+                                        <img src="/img/icons/label.svg" className="svg-icon-inline" /> Labels
                                     </button>
                                     {isLabelMenuOpen && renderLabelChecklist(
                                         activeTabMail ? [activeTabMail] : [],
@@ -4271,17 +4271,17 @@ function MailSection({
                                         { style: labelPopoverStyle || undefined },
                                     )}
                                 </li>
-                                <li><button disabled={!activeTabMail} onClick={handleActiveTabReadToggleAction}>👁️ {activeTabReadLabel}</button></li>
+                                <li><button disabled={!activeTabMail} onClick={handleActiveTabReadToggleAction}><img src="/img/icons/read.svg" className="svg-icon-inline" /> {activeTabReadLabel}</button></li>
                             </ul>
                         )
                     ) : activeRibbonTab === 'home' && (
                         <ul>
-                            <li><button onClick={handleNewMail}>🆕 {t('New Mail')}</button></li>
-                            <li><button disabled={!hasAnyActionMail} onClick={handleDeleteAction}>🗑️ {t('Delete')}</button></li>
-                            <li><button disabled={!hasAnyActionMail} onClick={handleMoveToTrashAction}>🗃️ {t('Move to Trash')}</button></li>
-                            <li><button disabled={!hasAnyActionMail} onClick={handleArchiveAction}>📦 {t('Archive')}</button></li>
-                            <li><button disabled={!hasAnyActionMail} onClick={handleReplyAction}>↩️ {homeReplyLabel}</button></li>
-                            <li><button disabled={!hasAnyActionMail} onClick={handleForwardAction}>➡️ {homeForwardLabel}</button></li>
+                            <li><button onClick={handleNewMail}><img src="/img/icons/new-mail.svg" className="svg-icon-inline" /> {t('New Mail')}</button></li>
+                            <li><button disabled={!hasAnyActionMail} onClick={handleDeleteAction}><img src="/img/icons/recycle-bin.svg" className="svg-icon-inline" /> {t('Delete')}</button></li>
+                            <li><button disabled={!hasAnyActionMail} onClick={handleMoveToTrashAction}><img src="/img/icons/move-to-folder.svg" className="svg-icon-inline" /> {t('Move to Trash')}</button></li>
+                            <li><button disabled={!hasAnyActionMail} onClick={handleArchiveAction}><img src="/img/icons/archive.svg" className="svg-icon-inline" /> {t('Archive')}</button></li>
+                            <li><button disabled={!hasAnyActionMail} onClick={handleReplyAction}>{hasMultipleActionMails ? <img src="/img/icons/reply-all.svg" className="svg-icon-inline" /> : <img src="/img/icons/reply.svg" className="svg-icon-inline" />} {homeReplyLabel}</button></li>
+                            <li><button disabled={!hasAnyActionMail} onClick={handleForwardAction}>{hasMultipleActionMails ? <img src="/img/icons/forward-all.svg" className="svg-icon-inline" /> : <img src="/img/icons/forward.svg" className="svg-icon-inline" />} {homeForwardLabel}</button></li>
                             <li className="db-submenu-menu-wrap" ref={moveMenuRef}>
                                 <button
                                     disabled={!hasAnyActionMail}
@@ -4292,7 +4292,7 @@ function MailSection({
                                         setIsMoveMenuOpen((prev) => !prev)
                                     }}
                                 >
-                                    📁 {t('Move')}
+                                    <img src="/img/icons/folder.svg" className="svg-icon-inline" /> {t('Move')}
                                 </button>
                                 {isMoveMenuOpen && (
                                     <div
@@ -4312,7 +4312,7 @@ function MailSection({
                                         ))}
                                         <div className="db-submenu-popover__divider" />
                                         <button type="button" className="db-submenu-popover__item" onClick={handleCreateFolderAndMove}>
-                                            + New Folder
+                                            <img src="/img/icons/plus.svg" className="svg-icon-inline" /> New Folder
                                         </button>
                                     </div>
                                 )}
@@ -4327,7 +4327,7 @@ function MailSection({
                                         setIsLabelMenuOpen((prev) => !prev)
                                     }}
                                 >
-                                    🏷️ Labels
+                                    <img src="/img/icons/label.svg" className="svg-icon-inline" /> Labels
                                 </button>
                                 {isLabelMenuOpen && renderLabelChecklist(
                                     actionableMails,
@@ -4336,34 +4336,34 @@ function MailSection({
                                     { style: labelPopoverStyle || undefined },
                                 )}
                             </li>
-                            <li><button disabled={!hasAnyActionMail} onClick={handleReadToggleAction}>👁️ {readToggleLabel}</button></li>
+                            <li><button disabled={!hasAnyActionMail} onClick={handleReadToggleAction}><img src="/img/icons/read.svg" className="svg-icon-inline" /> {readToggleLabel}</button></li>
                         </ul>
                     )}
                     {!activeTabId && activeRibbonTab === 'file' && (
                         <ul>
                             <li>
                                 <button disabled={fileActionsDisabled} onClick={handleDownloadHtml}>
-                                    💾 {fileActionLoading === 'html' ? 'Saving HTML...' : 'Download as HTML'}
+                                    <img src="/img/icons/save.svg" className="svg-icon-inline" /> {fileActionLoading === 'html' ? 'Saving HTML...' : 'Download as HTML'}
                                 </button>
                             </li>
                             <li>
                                 <button disabled={fileActionsDisabled} onClick={handleDownloadMsg}>
-                                    ✉️ {fileActionLoading === 'msg' ? 'Saving MSG...' : 'Download as MSG'}
+                                    <img src="/img/icons/mail.svg" className="svg-icon-inline" /> {fileActionLoading === 'msg' ? 'Saving MSG...' : 'Download as MSG'}
                                 </button>
                             </li>
                             <li>
                                 <button disabled={fileActionsDisabled} onClick={handleDownloadEml}>
-                                    📩 {fileActionLoading === 'eml' ? 'Saving EML...' : 'Download as EML'}
+                                    <img src="/img/icons/mail.svg" className="svg-icon-inline" /> {fileActionLoading === 'eml' ? 'Saving EML...' : 'Download as EML'}
                                 </button>
                             </li>
                             <li>
                                 <button disabled={fileActionsDisabled} onClick={handleDownloadPdf}>
-                                    📄 {fileActionLoading === 'pdf' ? 'Saving PDF...' : 'Download as PDF'}
+                                    <img src="/img/icons/all-mails.svg" className="svg-icon-inline" /> {fileActionLoading === 'pdf' ? 'Saving PDF...' : 'Download as PDF'}
                                 </button>
                             </li>
                             <li>
                                 <button disabled={fileActionsDisabled} onClick={handlePrintMail}>
-                                    🖨️ {fileActionLoading === 'print' ? 'Preparing print...' : 'Print'}
+                                    <img src="/img/icons/print.svg" className="svg-icon-inline" /> {fileActionLoading === 'print' ? 'Preparing print...' : 'Print'}
                                 </button>
                             </li>
                         </ul>
@@ -4377,14 +4377,14 @@ function MailSection({
                                             syncMailsFromRemote(selectedFolder, currentPage, perPage)
                                         }
                                     })
-                            }}>🔄 {t('Update Folder')}</button></li>
-                            <li><button onClick={() => { }}>📡 {t('Send All')}</button></li>
+                            }}><img src="/img/icons/reload.svg" className="svg-icon-inline" /> {t('Update Folder')}</button></li>
+                            <li><button onClick={() => { }}><img src="/img/icons/online.svg" className="svg-icon-inline" /> {t('Send All')}</button></li>
                         </ul>
                     )}
                     {!activeTabId && activeRibbonTab === 'folder' && (
                         <ul>
-                            <li><button onClick={() => { }}>📁 {t('New Folder')}</button></li>
-                            <li><button onClick={() => { }}>🏷️ {t('Rename')}</button></li>
+                            <li><button onClick={() => { }}><img src="/img/icons/folder.svg" className="svg-icon-inline" /> {t('New Folder')}</button></li>
+                            <li><button onClick={() => { }}><img src="/img/icons/label.svg" className="svg-icon-inline" /> {t('Rename')}</button></li>
                         </ul>
                     )}
                     {!activeTabId && activeRibbonTab === 'view' && (
@@ -4427,7 +4427,7 @@ function MailSection({
                                         className="db-mail-action-btn"
                                         onClick={() => closeTab({ stopPropagation: () => { } }, activeTabId)}
                                         title="Close tab"
-                                    >✕</button>
+                                    ><img src="/img/icons/three-point.svg" className="svg-icon-inline" /></button>
                                 </div>
                             </div>
                             <div className="db-mail-meta"><strong>From:</strong> {activeTabContent?.from_name ? `${activeTabContent.from_name} <${activeTabContent.from_address}>` : activeTabMail?.address}</div>
@@ -4492,7 +4492,7 @@ function MailSection({
                                         onClick={() => setFoldersHidden(true)}
                                         title={t('Hide mailboxes')}
                                     >
-                                        ❯
+                                        <img src="/img/icons/dock-shown.svg" className="svg-icon-inline" />
                                     </button>
                                 </div>
                                 {hasFolderAccess ? (
@@ -4556,7 +4556,7 @@ function MailSection({
                                         onClick={() => setMailsHidden(true)}
                                         title={t('Hide mails')}
                                     >
-                                        ❯
+                                        <img src="/img/icons/dock-shown.svg" className="svg-icon-inline" />
                                     </button>
                                     <button
                                         type="button"
@@ -4594,7 +4594,7 @@ function MailSection({
                                             }}
                                             title="Select"
                                         >
-                                            ☑
+                                            <img src="/img/icons/choice-choosen.svg" className="svg-icon-inline" />
                                         </button>
                                         <button
                                             type="button"
@@ -4605,7 +4605,7 @@ function MailSection({
                                             aria-label="Open selection options"
                                             title="Selection options"
                                         >
-                                            ▾
+                                            <img src="/img/icons/arrow-no-tail.svg" className="svg-icon-inline" style={{transform: 'rotate(90deg)'}} />
                                         </button>
                                         {isSelectionMenuOpen && (
                                             <div
@@ -4638,7 +4638,7 @@ function MailSection({
                                             aria-haspopup="menu"
                                             aria-expanded={isFilterMenuOpen}
                                         >
-                                            🔍
+                                            <img src="/img/icons/search.svg" className="svg-icon-inline" />
                                         </button>
                                         {isFilterMenuOpen && (
                                             <div
@@ -4659,7 +4659,7 @@ function MailSection({
                                                             setIsFilterMenuOpen(false)
                                                         }}
                                                     >
-                                                        <span className="db-toolbar-popover__check">{activeFilter === option.key ? '✓' : ''}</span>
+                                                        <span className="db-toolbar-popover__check">{activeFilter === option.key ? <img src="/img/icons/choice-choosen.svg" className="svg-icon-inline" /> : ''}</span>
                                                         <span className="db-toolbar-popover__icon">{option.icon}</span>
                                                         <span>{option.label}</span>
                                                     </button>
@@ -4679,7 +4679,7 @@ function MailSection({
                                             aria-haspopup="menu"
                                             aria-expanded={isSortMenuOpen}
                                         >
-                                            ↕️
+                                            <img src="/img/icons/sort.svg" className="svg-icon-inline" />
                                         </button>
                                         {isSortMenuOpen && (
                                             <div
@@ -4698,7 +4698,7 @@ function MailSection({
                                                         aria-checked={sortBy === option.key}
                                                         onClick={() => setSortBy(option.key)}
                                                     >
-                                                        <span className="db-toolbar-popover__check">{sortBy === option.key ? '✓' : ''}</span>
+                                                        <span className="db-toolbar-popover__check">{sortBy === option.key ? <img src="/img/icons/choice-choosen.svg" className="svg-icon-inline" /> : ''}</span>
                                                         <span>{option.label}</span>
                                                     </button>
                                                 ))}
@@ -4713,7 +4713,7 @@ function MailSection({
                                                         aria-checked={sortDirection === direction}
                                                         onClick={() => setSortDirection(direction)}
                                                     >
-                                                        <span className="db-toolbar-popover__check">{sortDirection === direction ? '✓' : ''}</span>
+                                                        <span className="db-toolbar-popover__check">{sortDirection === direction ? <img src="/img/icons/choice-choosen.svg" className="svg-icon-inline" /> : ''}</span>
                                                         <span>{getSortDirectionLabel(sortBy, direction)}</span>
                                                     </button>
                                                 ))}
@@ -4732,7 +4732,7 @@ function MailSection({
                                                 setCurrentPage(p)
                                             }}
                                         >
-                                            ◀
+                                            <img src="/img/icons/arrow-no-tail.svg" className="svg-icon-inline" style={{transform: 'rotate(180deg)'}} />
                                         </button>
                                         <span className="db-page-num">{displayPage}/{filteredMaxPage}</span>
                                         <button
@@ -4743,7 +4743,7 @@ function MailSection({
                                                 setCurrentPage(p)
                                             }}
                                         >
-                                            ▶
+                                            <img src="/img/icons/arrow-no-tail.svg" className="svg-icon-inline" />
                                         </button>
                                     </div>
 
@@ -4799,7 +4799,7 @@ function MailSection({
                                         onClick={toggleMailFullscreen}
                                         title={isMailFullscreen ? 'Exit mails fullscreen' : 'Mails fullscreen'}
                                     >
-                                        {isMailFullscreen ? '↔' : '⇔'}
+                                        {isMailFullscreen ? '<img src="/img/icons/mails-fullscreen.svg" className="svg-icon-inline" />' : '<img src="/img/icons/mails-fullscreen.svg" className="svg-icon-inline" />'}
                                     </button>
 
                                     {isMailFullscreen && (
@@ -4810,22 +4810,22 @@ function MailSection({
                                                     className={`db-mail-toolbar-btn ${layoutCols === 1 ? 'active' : ''}`}
                                                     onClick={() => setLayoutCols(1)}
                                                     title="1 Column"
-                                                >1️⃣</button>
+                                                ><img src="/img/icons/columns-1.svg" className="svg-icon-inline" /></button>
                                                 <button
                                                     className={`db-mail-toolbar-btn ${layoutCols === 2 ? 'active' : ''}`}
                                                     onClick={() => setLayoutCols(2)}
                                                     title="2 Columns"
-                                                >2️⃣</button>
+                                                ><img src="/img/icons/columns-2.svg" className="svg-icon-inline" /></button>
                                                 <button
                                                     className={`db-mail-toolbar-btn ${layoutCols === 3 ? 'active' : ''}`}
                                                     onClick={() => setLayoutCols(3)}
                                                     title="3 Columns"
-                                                >3️⃣</button>
+                                                ><img src="/img/icons/columns-3.svg" className="svg-icon-inline" /></button>
                                                 <button
                                                     className={`db-mail-toolbar-btn ${layoutCols === 4 ? 'active' : ''}`}
                                                     onClick={() => setLayoutCols(4)}
                                                     title="4 Columns"
-                                                >4️⃣</button>
+                                                ><img src="/img/icons/columns-4.svg" className="svg-icon-inline" /></button>
                                             </div>
                                         </>
                                     )}
@@ -4848,7 +4848,7 @@ function MailSection({
                                 )}
                                 {!hasMailSource ? (
                                     <div className="db-empty-state">
-                                        <div className="db-empty-icon">📭</div>
+                                        <div className="db-empty-icon"><img src="/img/icons/inbox.svg" className="svg-icon-inline" /></div>
                                         <div className="db-empty-text">
                                             {connecting
                                                 ? 'Connecting...'
@@ -4861,7 +4861,7 @@ function MailSection({
                                     <div className="db-loading"><div className="db-spinner" />Loading...</div>
                                 ) : mails.length === 0 ? (
                                     <div className="db-empty-state">
-                                        <div className="db-empty-icon">{listMode === 'search' ? '🔎' : '📭'}</div>
+                                        <div className="db-empty-icon">{listMode === 'search' ? <img src="/img/icons/search.svg" className="svg-icon-inline" /> : <img src="/img/icons/inbox.svg" className="svg-icon-inline" />}</div>
                                         <div className="db-empty-text">
                                             {listMode === 'search' ? t('No results found.') : 'This folder is empty'}
                                         </div>
@@ -4909,7 +4909,7 @@ function MailSection({
                                                                 aria-label={isChecked ? 'Unselect mail' : 'Select mail'}
                                                                 title={selectMode ? 'Select mail' : 'Enter selection mode'}
                                                             >
-                                                                <span className="db-mail-avatar-toggle__icon">✓</span>
+                                                                <img src="/img/icons/choice-choosen.svg" className="svg-icon-inline db-mail-avatar-toggle__icon" />
                                                             </button>
                                                         </div>
                                                         <div className="db-mail-item-content">
@@ -4939,7 +4939,7 @@ function MailSection({
                                                                 title="More actions"
                                                                 onClick={(event) => openMailItemMenuFromButton(event, mail)}
                                                             >
-                                                                ⋮
+                                                                <img src="/img/icons/three-point.svg" className="svg-icon-inline" />
                                                             </button>
                                                             <div className="db-mail-qa-row">
                                                                 <button
@@ -4950,14 +4950,14 @@ function MailSection({
                                                                         openMailInTab(mail)
                                                                     }}
                                                                 >
-                                                                    🗂️
+                                                                    <img src="/img/icons/open-in-new-tab.svg" className="svg-icon-inline" />
                                                                 </button>
                                                                 <button
                                                                     className="db-mail-qa-btn"
                                                                     title="Open in new window"
                                                                     onClick={(e) => detachMailToWindowFromList(e, mail)}
                                                                 >
-                                                                    🪟
+                                                                    <img src="/img/icons/open-in-new-window.svg" className="svg-icon-inline" />
                                                                 </button>
                                                             </div>
                                                         </div>
@@ -4973,26 +4973,26 @@ function MailSection({
                                                     onWheel={(e) => e.stopPropagation()}
                                                 >
                                                     <button type="button" className="db-submenu-popover__item" onClick={handleMailItemMenuDelete}>
-                                                        🗑️ Delete
+                                                        <img src="/img/icons/recycle-bin.svg" className="svg-icon-inline" /> Delete
                                                     </button>
                                                     <button type="button" className="db-submenu-popover__item" onClick={handleMailItemMenuMoveToTrash}>
-                                                        🗃️ Move to Trash
+                                                        <img src="/img/icons/move-to-folder.svg" className="svg-icon-inline" /> Move to Trash
                                                     </button>
                                                     <button type="button" className="db-submenu-popover__item" onClick={handleMailItemMenuArchive}>
-                                                        📦 Archive
+                                                        <img src="/img/icons/archive.svg" className="svg-icon-inline" /> Archive
                                                     </button>
                                                     <button type="button" className="db-submenu-popover__item" onClick={handleMailItemMenuReply}>
-                                                        ↩️ Reply
+                                                        <img src="/img/icons/reply.svg" className="svg-icon-inline" /> Reply
                                                     </button>
                                                     <button type="button" className="db-submenu-popover__item" onClick={handleMailItemMenuForward}>
-                                                        ➡️ Forward
+                                                        <img src="/img/icons/forward.svg" className="svg-icon-inline" /> Forward
                                                     </button>
                                                     <button
                                                         type="button"
                                                         className="db-submenu-popover__item db-mail-item-menu__submenu-trigger"
                                                         onClick={toggleMailItemMoveMenu}
                                                     >
-                                                        <span>📁 Move</span>
+                                                        <span><img src="/img/icons/folder.svg" className="svg-icon-inline" /> Move</span>
                                                         <span className="db-mail-item-menu__chevron">›</span>
                                                     </button>
                                                     <button
@@ -5000,11 +5000,11 @@ function MailSection({
                                                         className="db-submenu-popover__item db-mail-item-menu__submenu-trigger"
                                                         onClick={toggleMailItemLabelMenu}
                                                     >
-                                                        <span>🏷️ Labels</span>
+                                                        <span><img src="/img/icons/label.svg" className="svg-icon-inline" /> Labels</span>
                                                         <span className="db-mail-item-menu__chevron">›</span>
                                                     </button>
                                                     <button type="button" className="db-submenu-popover__item" onClick={handleMailItemMenuReadToggle}>
-                                                        👁️ {mailItemReadLabel}
+                                                        <img src="/img/icons/read.svg" className="svg-icon-inline" /> {mailItemReadLabel}
                                                     </button>
                                                 </div>
                                                 {mailItemMenu.moveMenuOpen && (
@@ -5038,7 +5038,7 @@ function MailSection({
                                                                 }
                                                             }}
                                                         >
-                                                            + New Folder
+                                                            <img src="/img/icons/plus.svg" className="svg-icon-inline" /> New Folder
                                                         </button>
                                                     </div>
                                                 )}
@@ -5069,7 +5069,7 @@ function MailSection({
                             <div className="db-right-panel">
                                 {!hasMailSource ? (
                                     <div className="db-empty-state" style={{ paddingTop: 100 }}>
-                                        <div className="db-empty-icon"><img src="../icon/guvercin-textless-unplanned.svg" alt="Guvercin" style={{width: '48px', height: '48px'}} /></div>
+                                        <div className="db-empty-icon"><img src="/img/logo/guvercin-notext-nobackground.svg" alt="Guvercin" style={{width: '48px', height: '48px'}} /></div>
                                         <div className="db-empty-text">
                                             {connecting
                                                 ? 'Connecting...'
@@ -5090,7 +5090,7 @@ function MailSection({
                                     />
                                 ) : !selectedMail ? (
                                     <div className="db-empty-state">
-                                        <div className="db-empty-icon"><img src="../icon/guvercin-textless-unplanned.svg" alt="Guvercin" style={{width: '48px', height: '48px'}} /></div>
+                                        <div className="db-empty-icon"><img src="/img/logo/guvercin-notext-nobackground.svg" alt="Guvercin" style={{width: '48px', height: '48px'}} /></div>
                                         <div className="db-empty-text">Select an email</div>
                                     </div>
                                 ) : loadingContent ? (
@@ -5105,21 +5105,21 @@ function MailSection({
                                                     onClick={() => openMailInTab(selectedMail, mailContent)}
                                                     title="Open in new tab"
                                                 >
-                                                    🗂️
+                                                    <img src="/img/icons/open-in-new-tab.svg" className="svg-icon-inline" />
                                                 </button>
                                                 <button
                                                     className="db-mail-action-btn"
                                                     onClick={detachMailToWindow}
                                                     title="Open in new window"
                                                 >
-                                                    🪟
+                                                    <img src="/img/icons/open-in-new-window.svg" className="svg-icon-inline" />
                                                 </button>
                                                 <button
                                                     className="db-mail-action-btn"
                                                     onClick={() => setSelectedMail(null)}
                                                     title="Close"
                                                 >
-                                                    ✕
+                                                    <img src="/img/icons/three-point.svg" className="svg-icon-inline" />
                                                 </button>
                                             </div>
                                         </div>
@@ -5140,7 +5140,7 @@ function MailSection({
                                                     onClick={() => setAttachmentsExpanded(!attachmentsExpanded)}
                                                     style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', userSelect: 'none' }}
                                                 >
-                                                    <span className={`db-folder-chevron ${attachmentsExpanded ? 'expanded' : ''}`} style={{ marginRight: '6px' }}>❯</span>
+                                                    {attachmentsExpanded ? 'expanded' : '' ? <img src="/img/icons/dock-shown.svg" className="svg-icon-inline" style={{marginRight:"6px"}}/> : <img src="/img/icons/dock-hidden.svg" className="svg-icon-inline" style={{marginRight:"6px"}}/>}
                                                     Attachments ({mailContent.attachments.length})
                                                 </div>
                                                 {attachmentsExpanded && (
@@ -5189,7 +5189,7 @@ function MailSection({
                                 aria-label="Close"
                                 title="Close"
                             >
-                                ✕
+                                <img src="/img/icons/three-point.svg" className="svg-icon-inline" />
                             </button>
                         </div>
                         <div className="db-compose-exit-panel__body">
