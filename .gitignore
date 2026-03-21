@@ -1,10 +1,14 @@
 # IDEs
 .idea/
 .vscode/
+*.swp
+*.swo
 
 # Node / Frontend
 node_modules/
+**/node_modules/
 dist/
+**/dist/
 dist-ssr/
 *.local
 npm-debug.log*
@@ -13,16 +17,21 @@ yarn-error.log*
 
 # Rust / Backend
 target/
+**/target/
 **/*.rs.bk
 Cargo.lock
 
 # Tauri
 src-tauri/target/
 src-tauri/gen/
+frontend/src-tauri/target/
+frontend/src-tauri/gen/
 
 # OS
 .DS_Store
+**/.DS_Store
 Thumbs.db
+**/Thumbs.db
 
 # Databases / Local Files
 *.db
@@ -31,10 +40,6 @@ databases/
 .env
 .env.*
 
-# Build artifacts
-/node_modules/
-/frontend/node_modules/
-/frontend/dist/
-/target/
-/rust-backend/target/
-/src-tauri/target/
+# Assets (Sources no longer needed in repo if SVGs are used)
+*.ai
+*.png

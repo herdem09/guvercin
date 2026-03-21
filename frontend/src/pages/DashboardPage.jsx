@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { apiUrl } from '../utils/api'
@@ -17,17 +17,135 @@ import {
     parseComposeRecipients,
 } from '../utils/compose.js'
 import './DashboardPage.css'
+import SettingsPage from './SettingsPage.jsx'
+
+const SubmenuBar = ({ children, submenuScrollRef, submenuMoreRef, submenuVisibleCount, setSubmenuVisibleCount }) => {
+    const [isMoreOpen, setIsMoreOpen] = useState(false)
+    const measureRef = useRef(null)
+
+    useLayoutEffect(() => {
+        const check = () => {
+            if (!measureRef.current || !submenuScrollRef.current) return
+            const items = Array.from(measureRef.current.querySelectorAll('li'))
+            // Current available width of the component
+            const containerWidth = measureRef.current.parentElement.offsetWidth
+            
+            let totalWidth = 0
+            const widths = items.map(li => {
+                const w = li.offsetWidth + 2 // width + gap
+                totalWidth += w
+                return w
+            })
+
+            // If everything fits without the "More" button, display all
+            if (totalWidth <= containerWidth) {
+                setSubmenuVisibleCount(items.length)
+                return
+            }
+
+            // Otherwise, we need space for the "More" button (~42px)
+            const moreBtnWidth = 42
+            let used = moreBtnWidth
+            let count = 0
+            for (let i = 0; i < widths.length; i++) {
+                if (used + widths[i] <= containerWidth) {
+                    used += widths[i]
+                    count++
+                } else {
+                    break
+                }
+            }
+            setSubmenuVisibleCount(count)
+        }
+        const ro = new ResizeObserver(check)
+        if (submenuScrollRef.current && submenuScrollRef.current.parentElement) {
+            ro.observe(submenuScrollRef.current.parentElement)
+        }
+        check()
+        return () => ro.disconnect()
+    }, [children, submenuScrollRef, setSubmenuVisibleCount])
+
+    const moreBtnWrapRef = useRef(null)
+
+    // Close more menu when clicking outside the entire button+menu area
+    useEffect(() => {
+        if (!isMoreOpen) return
+        const handleClick = (e) => {
+            if (moreBtnWrapRef.current && !moreBtnWrapRef.current.contains(e.target)) {
+                setIsMoreOpen(false)
+            }
+        }
+        // Use mousedown so it fires before any click handlers inside
+        document.addEventListener('mousedown', handleClick)
+        return () => document.removeEventListener('mousedown', handleClick)
+    }, [isMoreOpen])
+
+    const childList = []
+    React.Children.forEach(children, child => {
+        if (child && child.type === React.Fragment) {
+            React.Children.forEach(child.props.children, c => childList.push(c))
+        } else if (child) {
+            childList.push(child)
+        }
+    })
+
+    // Flattern nested lists if they are wrapped in ribbons
+    const ribbonChildren = []
+    childList.forEach(child => {
+        if (child && child.type === 'ul') {
+            React.Children.forEach(child.props.children, c => ribbonChildren.push(c))
+        } else {
+            ribbonChildren.push(child)
+        }
+    })
+
+    const visible = ribbonChildren.slice(0, submenuVisibleCount)
+    const hidden = ribbonChildren.slice(submenuVisibleCount)
+
+    return (
+        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', position: 'relative' }}>
+            <div ref={measureRef} style={{ position: 'absolute', visibility: 'hidden', pointerEvents: 'none', display: 'flex', gap: 2, whiteSpace: 'nowrap', left: -9999 }}>
+                <ul style={{ display: 'flex', gap: 2 }}>{ribbonChildren}</ul>
+            </div>
+            <div className="db-submenu-scroll" ref={submenuScrollRef}>
+                <ul style={{ display: 'flex', gap: 2, margin: 0, padding: '0 10px', listStyle: 'none' }}>
+                    {visible}
+                </ul>
+            </div>
+            {hidden.length > 0 && (
+                <div ref={moreBtnWrapRef} style={{ position: 'relative', flexShrink: 0 }}>
+                    <button className="db-submenu-more-btn" onClick={() => setIsMoreOpen(prev => !prev)}>
+                        <img src="/img/icons/three-point.svg" className="svg-icon-inline" />
+                    </button>
+                    {isMoreOpen && (
+                        <div className="db-overflow-menu" ref={submenuMoreRef} onClick={() => setIsMoreOpen(false)}>
+                            <ul style={{ listStyle: 'none', padding: 0, margin: 0, display: 'flex', flexDirection: 'column' }}>
+                                {hidden.map((child, i) => (
+                                    <div key={i} className="db-overflow-menu-item">
+                                        {child}
+                                    </div>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    )
+}
+
+
 
 const FOLDER_MAP = {
     'INBOX': { icon: <img src="/img/icons/inbox.svg" alt="Inbox" className="svg-icon-inline" />, label: 'Inbox' },
     'Inbox': { icon: <img src="/img/icons/inbox.svg" alt="Inbox" className="svg-icon-inline" />, label: 'Inbox' },
-    'Starred': { icon: '⭐', label: 'Starred' },
-    'Snoozed': { icon: '🕒', label: 'Snoozed' },
+    'Starred': { icon: <img src="/img/icons/star.svg" alt="Starred" className="svg-icon-inline" />, label: 'Starred' },
+    'Snoozed': { icon: <img src="/img/icons/clock.svg" alt="Snoozed" className="svg-icon-inline" />, label: 'Snoozed' },
     'Sent': { icon: <img src="/img/icons/sentbox.svg" alt="Sent" className="svg-icon-inline" />, label: 'Sent Items' },
     'Sent Items': { icon: <img src="/img/icons/sentbox.svg" alt="Sent" className="svg-icon-inline" />, label: 'Sent Items' },
     'Drafts': { icon: <img src="/img/icons/draft.svg" alt="Drafts" className="svg-icon-inline" />, label: 'Drafts' },
     'Archive': { icon: <img src="/img/icons/archive.svg" alt="Archive" className="svg-icon-inline" />, label: 'Archive' },
-    'Trash': { icon: '🗑️', label: 'Trash' },
+    'Trash': { icon: <img src="/img/icons/recycle-bin.svg" alt="Trash" className="svg-icon-inline" />, label: 'Trash' },
     'Spam': { icon: <img src="/img/icons/spambox.svg" alt="Spam" className="svg-icon-inline" />, label: 'Spam' },
     'Junk': { icon: <img src="/img/icons/spambox.svg" alt="Spam" className="svg-icon-inline" />, label: 'Spam' },
     'All Mail': { icon: <img src="/img/icons/all-mails.svg" alt="All Mails" className="svg-icon-inline" />, label: 'All Mail' },
@@ -876,6 +994,7 @@ const DashboardPage = () => {
 
     const [accountMenuOpen, setAccountMenuOpen] = useState(false)
     const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
+    const [settingsPageOpen, setSettingsPageOpen] = useState(false)
     const [isMailFullscreen, setIsMailFullscreen] = useState(false)
     const [isSyncing, setIsSyncing] = useState(false)
     const [actionNotices, setActionNotices] = useState([])
@@ -1744,9 +1863,8 @@ const DashboardPage = () => {
     return (
         <div className="dashboard-page">
             <div className="db-navbar">
-                <button className="db-logo-btn">
-                    <div className="db-logo-icon"><img src="/img/logo/guvercin-righttext-nobackground.svg" alt="Guvercin" style={{width: '24px', height: '24px'}} /></div>
-                    <span className="db-logo-text">Guvercin</span>
+                <button className="db-logo-btn" style={{ padding: 0, height: '40px', background: 'transparent', minWidth: '130px', border: 'none' }}>
+                    <img src="/img/logo/guvercin-righttext-nobackground.svg" alt="Guvercin" style={{ height: '100%', width: 'auto', display: 'block' }} />
                 </button>
                 <div className="db-search">
                     <input
@@ -1900,13 +2018,26 @@ const DashboardPage = () => {
                                 ref={accountMenuRef}
                                 onWheel={(e) => e.stopPropagation()}
                             >
-                                <div className="account-popover__avatar">
-                                    <Avatar
-                                        email={accountEmailLabel}
-                                        name={accountLabel}
-                                        accountId={accountId}
-                                        size={64}
-                                    />
+                                <div className="account-popover__avatar-row">
+                                    <div className="account-popover__avatar">
+                                        <Avatar
+                                            email={accountEmailLabel}
+                                            name={accountLabel}
+                                            accountId={accountId}
+                                            size={64}
+                                        />
+                                    </div>
+                                    <button
+                                        type="button"
+                                        className="account-popover__settings-btn"
+                                        title="Settings"
+                                        onClick={() => {
+                                            closeAccountMenu()
+                                            setSettingsPageOpen(true)
+                                        }}
+                                    >
+                                        <img src="/img/icons/settings.svg" className="svg-icon-inline" alt="Settings" />
+                                    </button>
                                 </div>
                                 <div className="account-popover__name">{accountLabel}</div>
                                 <div className="account-popover__email">{accountEmailLabel}</div>
@@ -2037,7 +2168,7 @@ const DashboardPage = () => {
                                             aria-label={notice.undoLabel || 'Cancel'}
                                             title={notice.undoLabel || 'Cancel'}
                                         >
-                                            <img src="/img/icons/three-point.svg" className="svg-icon-inline" />
+                                            <img src="/img/icons/close.svg" className="svg-icon-inline" />
                                         </button>
                                     </div>
                                 </div>
@@ -2067,7 +2198,7 @@ const DashboardPage = () => {
                                 aria-label="Close"
                                 title="Close"
                             >
-                                <img src="/img/icons/three-point.svg" className="svg-icon-inline" />
+                                <img src="/img/icons/close.svg" className="svg-icon-inline" />
                             </button>
                         </div>
 
@@ -2233,6 +2364,9 @@ const DashboardPage = () => {
                     </div>
                 </div>
             )}
+            {settingsPageOpen && (
+                <SettingsPage onClose={() => setSettingsPageOpen(false)} accountId={accountId} />
+            )}
         </div>
     )
 }
@@ -2263,10 +2397,15 @@ function MailSection({
     const [activeRibbonTab, setActiveRibbonTab] = useState('home')
     const [expandedFolders, setExpandedFolders] = useState(['INBOX'])
     const [folderWidth, setFolderWidth] = useState(240)
-    const [listWidth, setListWidth] = useState(460)
+    const [listWidth, setListWidth] = useState(320)
     const [minListWidth, setMinListWidth] = useState(360)
     const [foldersHidden, setFoldersHidden] = useState(false)
     const [mailsHidden, setMailsHidden] = useState(false)
+    const [layoutMode, setLayoutMode] = useState('full') // 'full' | 'medium' | 'narrow'
+    const [overlayPanel, setOverlayPanel] = useState(null) // null | 'folders' | 'mails'
+    // track if user manually closed each panel (so auto-expand doesn't override)
+    const userClosedFolders = useRef(false)
+    const userClosedMails = useRef(false)
     const [selectMode, setSelectMode] = useState(false)
     const [selectedMailIds, setSelectedMailIds] = useState(() => new Set())
     const [lastSelectedMailId, setLastSelectedMailId] = useState(null)
@@ -3121,9 +3260,13 @@ function MailSection({
     const selectionMenuRef = useRef(null)
     const filterMenuRef = useRef(null)
     const sortMenuRef = useRef(null)
+    const containerRef = useRef(null)
     const submenuScrollRef = useRef(null)
     const moveMenuRef = useRef(null)
     const labelMenuRef = useRef(null)
+    const submenuMoreRef = useRef(null)
+    const [isSubmenuMoreOpen, setIsSubmenuMoreOpen] = useState(false)
+    const [submenuVisibleCount, setSubmenuVisibleCount] = useState(99)
     const mailItemMenuRef = useRef(null)
     const isResizingFolder = useRef(false)
     const isResizingList = useRef(false)
@@ -3552,6 +3695,50 @@ function MailSection({
         const frame = window.requestAnimationFrame(recomputeMinListWidth)
         return () => window.cancelAnimationFrame(frame)
     }, [recomputeMinListWidth, isMailFullscreen, displayCols])
+
+    // Auto-close folder overlay in narrow mode when user selects a folder
+    useEffect(() => {
+        setOverlayPanel(null)
+    }, [selectedFolder])
+
+    // Auto-collapse panels based on container width
+    useLayoutEffect(() => {
+        const el = containerRef.current
+        if (!el || typeof ResizeObserver === 'undefined') return
+
+        const MIN_CONTENT = 480 // minimum px for mail content to be comfortably visible
+        const SIDEBAR_WIDTH = 48 * 3 // 3 icon bars on left
+
+        const compute = () => {
+            const available = el.offsetWidth
+            const needsForFull = folderWidth + listWidth + MIN_CONTENT
+            const needsForMedium = listWidth + MIN_CONTENT
+
+            if (available >= needsForFull) {
+                // Full mode: show everything
+                setLayoutMode('full')
+                setOverlayPanel(null)
+                if (!userClosedFolders.current) setFoldersHidden(false)
+                if (!userClosedMails.current) setMailsHidden(false)
+            } else if (available >= needsForMedium) {
+                // Medium mode: hide folders, show mail list normally
+                setLayoutMode('medium')
+                setOverlayPanel(null)
+                setFoldersHidden(true)
+                if (!userClosedMails.current) setMailsHidden(false)
+            } else {
+                // Narrow mode: hide both, use overlay
+                setLayoutMode('narrow')
+                setFoldersHidden(true)
+                setMailsHidden(true)
+            }
+        }
+
+        const ro = new ResizeObserver(compute)
+        ro.observe(el)
+        compute()
+        return () => ro.disconnect()
+    }, [folderWidth, listWidth])
 
     const toggleMailSelected = (mailId) => {
         setSelectedMailIds((prev) => {
@@ -4175,7 +4362,7 @@ function MailSection({
                         onClick={() => setActiveTabId(tab.id)}
                     >
                         <span className="mail-tab-label">{getTabTitle(tab)}</span>
-                        <span className="mail-tab-close" onClick={(e) => closeTab(e, tab.id)}><img src="/img/icons/three-point.svg" className="svg-icon-inline" /></span>
+                        <span className="mail-tab-close" onClick={(e) => closeTab(e, tab.id)}><img src="/img/icons/close.svg" className="svg-icon-inline" /></span>
                     </button>
                 ))}
             </div>
@@ -4202,25 +4389,97 @@ function MailSection({
                 </div>
             )}
             <div className="db-submenu">
-                <div className="db-submenu-scroll" ref={submenuScrollRef}>
-                    {activeTabId ? (
-                        activeComposeTab ? (
+                <SubmenuBar
+                    submenuScrollRef={submenuScrollRef}
+                    submenuMoreRef={submenuMoreRef}
+                    submenuVisibleCount={submenuVisibleCount}
+                    setSubmenuVisibleCount={setSubmenuVisibleCount}
+                >
+
+
+                        {activeTabId ? (
+                            activeComposeTab ? (
+                                <ul>
+                                    <li><button disabled={!activeComposeTab} onClick={handleActiveComposeTabSend}>📨 Send</button></li>
+                                    <li><button disabled={!activeComposeTab} onClick={handleActiveComposeTabDiscard}><img src="/img/icons/close.svg" className="svg-icon-inline" /> Discard</button></li>
+                                    <li><button disabled={!activeComposeTab} onClick={handleActiveComposeTabWindow}><img src="/img/icons/open-in-new-window.svg" className="svg-icon-inline" /> Open in Window</button></li>
+                                </ul>
+                            ) : (
+                                <ul>
+                                    <li><button disabled={!activeTabMail} onClick={handleActiveTabDeleteAction}><img src="/img/icons/recycle-bin.svg" className="svg-icon-inline" /> {t('Delete')}</button></li>
+                                    <li><button disabled={!activeTabMail} onClick={handleActiveTabMoveToTrashAction}><img src="/img/icons/move-to-folder.svg" className="svg-icon-inline" /> {t('Move to Trash')}</button></li>
+                                    <li><button disabled={!activeTabMail} onClick={handleActiveTabArchiveAction}><img src="/img/icons/archive.svg" className="svg-icon-inline" /> {t('Archive')}</button></li>
+                                    <li><button disabled={!activeTabMail} onClick={handleActiveTabReplyAction}><img src="/img/icons/reply.svg" className="svg-icon-inline" /> Reply</button></li>
+                                    <li><button disabled={!activeTabMail} onClick={handleActiveTabForwardAction}><img src="/img/icons/forward.svg" className="svg-icon-inline" /> Forward</button></li>
+                                    <li className="db-submenu-menu-wrap" ref={moveMenuRef}>
+                                        <button
+                                            disabled={!activeTabMail}
+                                            title={activeTabMail ? undefined : 'Open a mail first'}
+                                            className={isMoveMenuOpen ? 'submenu-open' : ''}
+                                            onClick={() => {
+                                                setIsLabelMenuOpen(false)
+                                                setIsMoveMenuOpen((prev) => !prev)
+                                            }}
+                                        >
+                                            <img src="/img/icons/folder.svg" className="svg-icon-inline" /> {t('Move')}
+                                        </button>
+                                        {isMoveMenuOpen && (
+                                            <div
+                                                className="db-submenu-popover"
+                                                style={movePopoverStyle || undefined}
+                                                onWheel={(e) => e.stopPropagation()}
+                                            >
+                                                {moveFolderOptions.map((folder) => (
+                                                    <button
+                                                        key={folder}
+                                                        type="button"
+                                                        className="db-submenu-popover__item"
+                                                        onClick={() => handleActiveTabMoveAction(folder)}
+                                                    >
+                                                        {folderInfo(folder).label}
+                                                    </button>
+                                                ))}
+                                                <div className="db-submenu-popover__divider" />
+                                                <button type="button" className="db-submenu-popover__item" onClick={handleCreateFolderAndMoveFromTab}>
+                                                    <img src="/img/icons/plus.svg" className="svg-icon-inline" /> New Folder
+                                                </button>
+                                            </div>
+                                        )}
+                                    </li>
+                                    <li className="db-submenu-menu-wrap" ref={labelMenuRef}>
+                                        <button
+                                            disabled={!activeTabMail}
+                                            title={activeTabMail ? undefined : 'Open a mail first'}
+                                            className={isLabelMenuOpen ? 'submenu-open' : ''}
+                                            onClick={() => {
+                                                setIsMoveMenuOpen(false)
+                                                setIsLabelMenuOpen((prev) => !prev)
+                                            }}
+                                        >
+                                            <img src="/img/icons/label.svg" className="svg-icon-inline" /> Labels
+                                        </button>
+                                        {isLabelMenuOpen && renderLabelChecklist(
+                                            activeTabMail ? [activeTabMail] : [],
+                                            handleActiveTabLabelToggleAction,
+                                            handleActiveTabCreateLabelAction,
+                                            { style: labelPopoverStyle || undefined },
+                                        )}
+                                    </li>
+                                    <li><button disabled={!activeTabMail} onClick={handleActiveTabReadToggleAction}><img src="/img/icons/read.svg" className="svg-icon-inline" /> {activeTabReadLabel}</button></li>
+                                </ul>
+                            )
+                        ) : activeRibbonTab === 'home' && (
                             <ul>
-                                <li><button disabled={!activeComposeTab} onClick={handleActiveComposeTabSend}>📨 Send</button></li>
-                                <li><button disabled={!activeComposeTab} onClick={handleActiveComposeTabDiscard}><img src="/img/icons/three-point.svg" className="svg-icon-inline" /> Discard</button></li>
-                                <li><button disabled={!activeComposeTab} onClick={handleActiveComposeTabWindow}><img src="/img/icons/open-in-new-window.svg" className="svg-icon-inline" /> Open in Window</button></li>
-                            </ul>
-                        ) : (
-                            <ul>
-                                <li><button disabled={!activeTabMail} onClick={handleActiveTabDeleteAction}><img src="/img/icons/recycle-bin.svg" className="svg-icon-inline" /> {t('Delete')}</button></li>
-                                <li><button disabled={!activeTabMail} onClick={handleActiveTabMoveToTrashAction}><img src="/img/icons/move-to-folder.svg" className="svg-icon-inline" /> {t('Move to Trash')}</button></li>
-                                <li><button disabled={!activeTabMail} onClick={handleActiveTabArchiveAction}><img src="/img/icons/archive.svg" className="svg-icon-inline" /> {t('Archive')}</button></li>
-                                <li><button disabled={!activeTabMail} onClick={handleActiveTabReplyAction}><img src="/img/icons/reply.svg" className="svg-icon-inline" /> Reply</button></li>
-                                <li><button disabled={!activeTabMail} onClick={handleActiveTabForwardAction}><img src="/img/icons/forward.svg" className="svg-icon-inline" /> Forward</button></li>
+                                <li><button onClick={handleNewMail}><img src="/img/icons/new-mail.svg" className="svg-icon-inline" /> {t('New Mail')}</button></li>
+                                <li><button disabled={!hasAnyActionMail} onClick={handleDeleteAction}><img src="/img/icons/recycle-bin.svg" className="svg-icon-inline" /> {t('Delete')}</button></li>
+                                <li><button disabled={!hasAnyActionMail} onClick={handleMoveToTrashAction}><img src="/img/icons/move-to-folder.svg" className="svg-icon-inline" /> {t('Move to Trash')}</button></li>
+                                <li><button disabled={!hasAnyActionMail} onClick={handleArchiveAction}><img src="/img/icons/archive.svg" className="svg-icon-inline" /> {t('Archive')}</button></li>
+                                <li><button disabled={!hasAnyActionMail} onClick={handleReplyAction}>{hasMultipleActionMails ? <img src="/img/icons/reply-all.svg" className="svg-icon-inline" /> : <img src="/img/icons/reply.svg" className="svg-icon-inline" />} {homeReplyLabel}</button></li>
+                                <li><button disabled={!hasAnyActionMail} onClick={handleForwardAction}>{hasMultipleActionMails ? <img src="/img/icons/forward-all.svg" className="svg-icon-inline" /> : <img src="/img/icons/forward.svg" className="svg-icon-inline" />} {homeForwardLabel}</button></li>
                                 <li className="db-submenu-menu-wrap" ref={moveMenuRef}>
                                     <button
-                                        disabled={!activeTabMail}
-                                        title={activeTabMail ? undefined : 'Open a mail first'}
+                                        disabled={!hasAnyActionMail}
+                                        title={selectionRequiredTitle}
                                         className={isMoveMenuOpen ? 'submenu-open' : ''}
                                         onClick={() => {
                                             setIsLabelMenuOpen(false)
@@ -4240,13 +4499,13 @@ function MailSection({
                                                     key={folder}
                                                     type="button"
                                                     className="db-submenu-popover__item"
-                                                    onClick={() => handleActiveTabMoveAction(folder)}
+                                                    onClick={() => handleMoveAction(folder)}
                                                 >
                                                     {folderInfo(folder).label}
                                                 </button>
                                             ))}
                                             <div className="db-submenu-popover__divider" />
-                                            <button type="button" className="db-submenu-popover__item" onClick={handleCreateFolderAndMoveFromTab}>
+                                            <button type="button" className="db-submenu-popover__item" onClick={handleCreateFolderAndMove}>
                                                 <img src="/img/icons/plus.svg" className="svg-icon-inline" /> New Folder
                                             </button>
                                         </div>
@@ -4254,8 +4513,8 @@ function MailSection({
                                 </li>
                                 <li className="db-submenu-menu-wrap" ref={labelMenuRef}>
                                     <button
-                                        disabled={!activeTabMail}
-                                        title={activeTabMail ? undefined : 'Open a mail first'}
+                                        disabled={!hasAnyActionMail}
+                                        title={selectionRequiredTitle}
                                         className={isLabelMenuOpen ? 'submenu-open' : ''}
                                         onClick={() => {
                                             setIsMoveMenuOpen(false)
@@ -4265,136 +4524,72 @@ function MailSection({
                                         <img src="/img/icons/label.svg" className="svg-icon-inline" /> Labels
                                     </button>
                                     {isLabelMenuOpen && renderLabelChecklist(
-                                        activeTabMail ? [activeTabMail] : [],
-                                        handleActiveTabLabelToggleAction,
-                                        handleActiveTabCreateLabelAction,
+                                        actionableMails,
+                                        handleLabelToggleAction,
+                                        handleCreateLabelAction,
                                         { style: labelPopoverStyle || undefined },
                                     )}
                                 </li>
-                                <li><button disabled={!activeTabMail} onClick={handleActiveTabReadToggleAction}><img src="/img/icons/read.svg" className="svg-icon-inline" /> {activeTabReadLabel}</button></li>
+                                <li><button disabled={!hasAnyActionMail} onClick={handleReadToggleAction}><img src="/img/icons/read.svg" className="svg-icon-inline" /> {readToggleLabel}</button></li>
                             </ul>
-                        )
-                    ) : activeRibbonTab === 'home' && (
-                        <ul>
-                            <li><button onClick={handleNewMail}><img src="/img/icons/new-mail.svg" className="svg-icon-inline" /> {t('New Mail')}</button></li>
-                            <li><button disabled={!hasAnyActionMail} onClick={handleDeleteAction}><img src="/img/icons/recycle-bin.svg" className="svg-icon-inline" /> {t('Delete')}</button></li>
-                            <li><button disabled={!hasAnyActionMail} onClick={handleMoveToTrashAction}><img src="/img/icons/move-to-folder.svg" className="svg-icon-inline" /> {t('Move to Trash')}</button></li>
-                            <li><button disabled={!hasAnyActionMail} onClick={handleArchiveAction}><img src="/img/icons/archive.svg" className="svg-icon-inline" /> {t('Archive')}</button></li>
-                            <li><button disabled={!hasAnyActionMail} onClick={handleReplyAction}>{hasMultipleActionMails ? <img src="/img/icons/reply-all.svg" className="svg-icon-inline" /> : <img src="/img/icons/reply.svg" className="svg-icon-inline" />} {homeReplyLabel}</button></li>
-                            <li><button disabled={!hasAnyActionMail} onClick={handleForwardAction}>{hasMultipleActionMails ? <img src="/img/icons/forward-all.svg" className="svg-icon-inline" /> : <img src="/img/icons/forward.svg" className="svg-icon-inline" />} {homeForwardLabel}</button></li>
-                            <li className="db-submenu-menu-wrap" ref={moveMenuRef}>
-                                <button
-                                    disabled={!hasAnyActionMail}
-                                    title={selectionRequiredTitle}
-                                    className={isMoveMenuOpen ? 'submenu-open' : ''}
-                                    onClick={() => {
-                                        setIsLabelMenuOpen(false)
-                                        setIsMoveMenuOpen((prev) => !prev)
-                                    }}
-                                >
-                                    <img src="/img/icons/folder.svg" className="svg-icon-inline" /> {t('Move')}
-                                </button>
-                                {isMoveMenuOpen && (
-                                    <div
-                                        className="db-submenu-popover"
-                                        style={movePopoverStyle || undefined}
-                                        onWheel={(e) => e.stopPropagation()}
-                                    >
-                                        {moveFolderOptions.map((folder) => (
-                                            <button
-                                                key={folder}
-                                                type="button"
-                                                className="db-submenu-popover__item"
-                                                onClick={() => handleMoveAction(folder)}
-                                            >
-                                                {folderInfo(folder).label}
-                                            </button>
-                                        ))}
-                                        <div className="db-submenu-popover__divider" />
-                                        <button type="button" className="db-submenu-popover__item" onClick={handleCreateFolderAndMove}>
-                                            <img src="/img/icons/plus.svg" className="svg-icon-inline" /> New Folder
-                                        </button>
-                                    </div>
-                                )}
-                            </li>
-                            <li className="db-submenu-menu-wrap" ref={labelMenuRef}>
-                                <button
-                                    disabled={!hasAnyActionMail}
-                                    title={selectionRequiredTitle}
-                                    className={isLabelMenuOpen ? 'submenu-open' : ''}
-                                    onClick={() => {
-                                        setIsMoveMenuOpen(false)
-                                        setIsLabelMenuOpen((prev) => !prev)
-                                    }}
-                                >
-                                    <img src="/img/icons/label.svg" className="svg-icon-inline" /> Labels
-                                </button>
-                                {isLabelMenuOpen && renderLabelChecklist(
-                                    actionableMails,
-                                    handleLabelToggleAction,
-                                    handleCreateLabelAction,
-                                    { style: labelPopoverStyle || undefined },
-                                )}
-                            </li>
-                            <li><button disabled={!hasAnyActionMail} onClick={handleReadToggleAction}><img src="/img/icons/read.svg" className="svg-icon-inline" /> {readToggleLabel}</button></li>
-                        </ul>
-                    )}
-                    {!activeTabId && activeRibbonTab === 'file' && (
-                        <ul>
-                            <li>
-                                <button disabled={fileActionsDisabled} onClick={handleDownloadHtml}>
-                                    <img src="/img/icons/save.svg" className="svg-icon-inline" /> {fileActionLoading === 'html' ? 'Saving HTML...' : 'Download as HTML'}
-                                </button>
-                            </li>
-                            <li>
-                                <button disabled={fileActionsDisabled} onClick={handleDownloadMsg}>
-                                    <img src="/img/icons/mail.svg" className="svg-icon-inline" /> {fileActionLoading === 'msg' ? 'Saving MSG...' : 'Download as MSG'}
-                                </button>
-                            </li>
-                            <li>
-                                <button disabled={fileActionsDisabled} onClick={handleDownloadEml}>
-                                    <img src="/img/icons/mail.svg" className="svg-icon-inline" /> {fileActionLoading === 'eml' ? 'Saving EML...' : 'Download as EML'}
-                                </button>
-                            </li>
-                            <li>
-                                <button disabled={fileActionsDisabled} onClick={handleDownloadPdf}>
-                                    <img src="/img/icons/all-mails.svg" className="svg-icon-inline" /> {fileActionLoading === 'pdf' ? 'Saving PDF...' : 'Download as PDF'}
-                                </button>
-                            </li>
-                            <li>
-                                <button disabled={fileActionsDisabled} onClick={handlePrintMail}>
-                                    <img src="/img/icons/print.svg" className="svg-icon-inline" /> {fileActionLoading === 'print' ? 'Preparing print...' : 'Print'}
-                                </button>
-                            </li>
-                        </ul>
-                    )}
-                    {!activeTabId && activeRibbonTab === 'send-receive' && (
-                        <ul>
-                            <li><button onClick={() => {
-                                loadMailsFromCache(selectedFolder, currentPage, perPage)
-                                    .then(() => {
-                                        if (canUseRemoteMail && !isSyncing) {
-                                            syncMailsFromRemote(selectedFolder, currentPage, perPage)
-                                        }
-                                    })
-                            }}><img src="/img/icons/reload.svg" className="svg-icon-inline" /> {t('Update Folder')}</button></li>
-                            <li><button onClick={() => { }}><img src="/img/icons/online.svg" className="svg-icon-inline" /> {t('Send All')}</button></li>
-                        </ul>
-                    )}
-                    {!activeTabId && activeRibbonTab === 'folder' && (
-                        <ul>
-                            <li><button onClick={() => { }}><img src="/img/icons/folder.svg" className="svg-icon-inline" /> {t('New Folder')}</button></li>
-                            <li><button onClick={() => { }}><img src="/img/icons/label.svg" className="svg-icon-inline" /> {t('Rename')}</button></li>
-                        </ul>
-                    )}
-                    {!activeTabId && activeRibbonTab === 'view' && (
-                        <ul>
-                            <li><button onClick={() => { }}>📖 {t('Reading Pane')}</button></li>
-                            <li><button onClick={() => { }}>📏 {t('Layout')}</button></li>
-                        </ul>
-                    )}
-                </div>
+                        )}
+                        {!activeTabId && activeRibbonTab === 'file' && (
+                            <ul>
+                                <li>
+                                    <button disabled={fileActionsDisabled} onClick={handleDownloadHtml}>
+                                        <img src="/img/icons/save.svg" className="svg-icon-inline" /> {fileActionLoading === 'html' ? 'Saving HTML...' : 'Download as HTML'}
+                                    </button>
+                                </li>
+                                <li>
+                                    <button disabled={fileActionsDisabled} onClick={handleDownloadMsg}>
+                                        <img src="/img/icons/mail.svg" className="svg-icon-inline" /> {fileActionLoading === 'msg' ? 'Saving MSG...' : 'Download as MSG'}
+                                    </button>
+                                </li>
+                                <li>
+                                    <button disabled={fileActionsDisabled} onClick={handleDownloadEml}>
+                                        <img src="/img/icons/mail.svg" className="svg-icon-inline" /> {fileActionLoading === 'eml' ? 'Saving EML...' : 'Download as EML'}
+                                    </button>
+                                </li>
+                                <li>
+                                    <button disabled={fileActionsDisabled} onClick={handleDownloadPdf}>
+                                        <img src="/img/icons/all-mails.svg" className="svg-icon-inline" /> {fileActionLoading === 'pdf' ? 'Saving PDF...' : 'Download as PDF'}
+                                    </button>
+                                </li>
+                                <li>
+                                    <button disabled={fileActionsDisabled} onClick={handlePrintMail}>
+                                        <img src="/img/icons/print.svg" className="svg-icon-inline" /> {fileActionLoading === 'print' ? 'Preparing print...' : 'Print'}
+                                    </button>
+                                </li>
+                            </ul>
+                        )}
+                        {!activeTabId && activeRibbonTab === 'send-receive' && (
+                            <ul>
+                                <li><button onClick={() => {
+                                    loadMailsFromCache(selectedFolder, currentPage, perPage)
+                                        .then(() => {
+                                            if (canUseRemoteMail && !isSyncing) {
+                                                syncMailsFromRemote(selectedFolder, currentPage, perPage)
+                                            }
+                                        })
+                                }}><img src="/img/icons/reload.svg" className="svg-icon-inline" /> {t('Update Folder')}</button></li>
+                                <li><button onClick={() => { }}><img src="/img/icons/online.svg" className="svg-icon-inline" /> {t('Send All')}</button></li>
+                            </ul>
+                        )}
+                        {!activeTabId && activeRibbonTab === 'folder' && (
+                            <ul>
+                                <li><button onClick={() => { }}><img src="/img/icons/folder.svg" className="svg-icon-inline" /> {t('New Folder')}</button></li>
+                                <li><button onClick={() => { }}><img src="/img/icons/label.svg" className="svg-icon-inline" /> {t('Rename')}</button></li>
+                            </ul>
+                        )}
+                        {!activeTabId && activeRibbonTab === 'view' && (
+                            <ul>
+                                <li><button onClick={() => { }}>📖 {t('Reading Pane')}</button></li>
+                                <li><button onClick={() => { }}>📏 {t('Layout')}</button></li>
+                            </ul>
+                        )}
+                    </SubmenuBar>
             </div>
+
 
             { }
             {activeTabId ? (
@@ -4427,7 +4622,7 @@ function MailSection({
                                         className="db-mail-action-btn"
                                         onClick={() => closeTab({ stopPropagation: () => { } }, activeTabId)}
                                         title="Close tab"
-                                    ><img src="/img/icons/three-point.svg" className="svg-icon-inline" /></button>
+                                    ><img src="/img/icons/close.svg" className="svg-icon-inline" /></button>
                                 </div>
                             </div>
                             <div className="db-mail-meta"><strong>From:</strong> {activeTabContent?.from_name ? `${activeTabContent.from_name} <${activeTabContent.from_address}>` : activeTabMail?.address}</div>
@@ -4470,17 +4665,48 @@ function MailSection({
                     ) : null}
                 </div>
             ) : (
-                <div className="mail-section-container" data-fullscreen-mail={isMailFullscreen}>
-                    {foldersHidden && (
-                        <div className="db-dock-tabs db-dock-tabs--left">
+                <div
+                    className={`mail-section-container mail-section-container--${layoutMode}`}
+                    data-fullscreen-mail={isMailFullscreen}
+                    ref={containerRef}
+                >
+                    {/* Backdrop in narrow or medium overlay mode */}
+                    {overlayPanel && (
+                        <div
+                            className="db-panel-backdrop"
+                            onClick={() => setOverlayPanel(null)}
+                        />
+                    )}
+
+                    {/* Collapsed tab buttons shown when panels are auto-hidden */}
+                    <div className="db-dock-tabs db-dock-tabs--left">
+                        {foldersHidden && (
                             <CollapsedTab
                                 label={t('Mailboxes')}
                                 title={t('Show mailboxes')}
-                                onClick={() => setFoldersHidden(false)}
+                                onClick={() => {
+                                    // In both medium and narrow mode: use overlay so mail content isn't compressed
+                                    setOverlayPanel(prev => prev === 'folders' ? null : 'folders')
+                                }}
                             />
-                        </div>
-                    )}
+                        )}
+                        {mailsHidden && (
+                            <CollapsedTab
+                                label={t('Mails')}
+                                title={t('Show mails')}
+                                onClick={() => {
+                                    if (layoutMode === 'narrow') {
+                                        setOverlayPanel(prev => prev === 'mails' ? null : 'mails')
+                                    } else {
+                                        userClosedMails.current = false
+                                        setMailsHidden(false)
+                                    }
+                                }}
+                            />
+                        )}
+                    </div>
 
+                    {/* Folder panel — shown inline (non-narrow) or as overlay (narrow) */}
                     {!foldersHidden && (
                         <>
                             <div className="db-folder-panel" style={{ width: folderWidth }}>
@@ -4489,7 +4715,14 @@ function MailSection({
                                     <button
                                         type="button"
                                         className="db-panel-hide-btn"
-                                        onClick={() => setFoldersHidden(true)}
+                                        onClick={() => {
+                                            userClosedFolders.current = true
+                                            setFoldersHidden(true)
+                                            if (layoutMode === 'medium') {
+                                                userClosedMails.current = false
+                                                setMailsHidden(false)
+                                            }
+                                        }}
                                         title={t('Hide mailboxes')}
                                     >
                                         <img src="/img/icons/dock-shown.svg" className="svg-icon-inline" />
@@ -4521,28 +4754,58 @@ function MailSection({
                                     </div>
                                 )}
                             </div>
-                            <div
-                                className="db-resizer"
-                                onMouseDown={() => { isResizingFolder.current = true; document.body.classList.add('resizing') }}
-                                title="Resize mailboxes"
-                            />
+                            {layoutMode !== 'narrow' && (
+                                <div
+                                    className="db-resizer"
+                                    onMouseDown={() => { isResizingFolder.current = true; document.body.classList.add('resizing') }}
+                                    title="Resize mailboxes"
+                                />
+                            )}
                         </>
                     )}
 
-                    {mailsHidden && (
-                        <div className="db-dock-tabs db-dock-tabs--left">
-                            <CollapsedTab
-                                label={t('Mails')}
-                                title={t('Show mails')}
-                                onClick={() => setMailsHidden(false)}
-                            />
+                    {/* Narrow or medium mode: folders shown as overlay (doesn't push mail content) */}
+                    {foldersHidden && overlayPanel === 'folders' && (
+                        <div className="db-folder-panel db-folder-panel--overlay" style={{ width: folderWidth }}>
+                            <div className="db-panel-header">
+                                <span className="db-panel-title">{t('Mailboxes')}</span>
+                                <button
+                                    type="button"
+                                    className="db-panel-hide-btn"
+                                    onClick={() => setOverlayPanel(null)}
+                                    title={t('Hide mailboxes')}
+                                >
+                                    <img src="/img/icons/dock-shown.svg" className="svg-icon-inline" />
+                                </button>
+                            </div>
+                            {hasFolderAccess ? (
+                                <div className="db-folder-scroll-area">
+                                    <ul className="db-folder-list">
+                                        {listMode === 'search' && (
+                                            <li className="db-folder-item selected">
+                                                <div className="db-folder-item-content">
+                                                    <span className="db-folder-chevron-placeholder" />
+                                                    <span className="db-folder-icon">🔎</span>
+                                                    <span className="db-folder-text">{t('Search results')}</span>
+                                                </div>
+                                            </li>
+                                        )}
+                                        {folderTree.length > 0 && renderFolderSection(t('Folders'), folderTree, false)}
+                                        {labelTree.length > 0 && renderFolderSection(t('Labels'), labelTree, folderTree.length > 0)}
+                                    </ul>
+                                </div>
+                            ) : (
+                                <div className="db-empty-muted">
+                                    {connecting ? 'Connecting...' : canUseRemoteMail ? 'No mailboxes available.' : 'No offline mailboxes cached yet.'}
+                                </div>
+                            )}
                         </div>
                     )}
 
                     <div className="db-mail-main">
-                        {!mailsHidden && (
+                        {(!mailsHidden || (layoutMode === 'narrow' && overlayPanel === 'mails')) && (
                             <div
-                                className="db-center-panel"
+                                className={`db-center-panel${layoutMode === 'narrow' && mailsHidden && overlayPanel === 'mails' ? ' db-center-panel--overlay' : ''}`}
                                 style={
                                     isMailFullscreen
                                         ? { flex: 1, width: 'auto' }
@@ -4553,7 +4816,14 @@ function MailSection({
                                     <button
                                         type="button"
                                         className="db-mail-toolbar-btn"
-                                        onClick={() => setMailsHidden(true)}
+                                        onClick={() => {
+                                            if (layoutMode === 'narrow') {
+                                                setOverlayPanel(null)
+                                            } else {
+                                                userClosedMails.current = true
+                                                setMailsHidden(true)
+                                            }
+                                        }}
                                         title={t('Hide mails')}
                                     >
                                         <img src="/img/icons/dock-shown.svg" className="svg-icon-inline" />
@@ -4575,7 +4845,7 @@ function MailSection({
                                         title={isSyncing ? 'Syncing...' : (canUseRemoteMail ? 'Refresh from server' : 'Load from cache')}
                                         disabled={isSyncing}
                                     >
-                                        {isSyncing ? '⟳' : '🔄'}
+                                        {isSyncing ? <img src="/img/icons/reload.svg" className="svg-icon-inline spinning" /> : <img src="/img/icons/reload.svg" className="svg-icon-inline" />}
                                     </button>
                                     <div className="db-mail-toolbar-split" ref={selectionMenuRef}>
                                         <button
@@ -4605,7 +4875,7 @@ function MailSection({
                                             aria-label="Open selection options"
                                             title="Selection options"
                                         >
-                                            <img src="/img/icons/arrow-no-tail.svg" className="svg-icon-inline" style={{transform: 'rotate(90deg)'}} />
+                                            <img src="/img/icons/arrow-no-tail.svg" className="svg-icon-inline" style={{ transform: 'rotate(90deg)' }} />
                                         </button>
                                         {isSelectionMenuOpen && (
                                             <div
@@ -4723,7 +4993,7 @@ function MailSection({
 
                                     <div className="db-toolbar-separator" />
 
-                                    <div className="db-pagination-controls">
+                                    <div className="db-pagination-controls" style={{ gap: '2px' }}>
                                         <button
                                             className="db-pagination-btn"
                                             disabled={displayPage <= 1 || loadingMails}
@@ -4731,10 +5001,11 @@ function MailSection({
                                                 const p = displayPage - 1
                                                 setCurrentPage(p)
                                             }}
+                                            style={{ fontSize: '8px', padding: '1px 3px' }}
                                         >
-                                            <img src="/img/icons/arrow-no-tail.svg" className="svg-icon-inline" style={{transform: 'rotate(180deg)'}} />
+                                            <img src="/img/icons/arrow-no-tail.svg" className="svg-icon-inline" style={{ transform: 'rotate(180deg)', width: '7px', height: '7px' }} />
                                         </button>
-                                        <span className="db-page-num">{displayPage}/{filteredMaxPage}</span>
+                                        <span className="db-page-num" style={{ fontSize: '10px', minWidth: 'auto' }}>{displayPage}/{filteredMaxPage}</span>
                                         <button
                                             className="db-pagination-btn"
                                             disabled={displayPage >= filteredMaxPage || loadingMails}
@@ -4742,8 +5013,9 @@ function MailSection({
                                                 const p = displayPage + 1
                                                 setCurrentPage(p)
                                             }}
+                                            style={{ fontSize: '8px', padding: '1px 3px' }}
                                         >
-                                            <img src="/img/icons/arrow-no-tail.svg" className="svg-icon-inline" />
+                                            <img src="/img/icons/arrow-no-tail.svg" className="svg-icon-inline" style={{ width: '7px', height: '7px' }} />
                                         </button>
                                     </div>
 
@@ -4799,7 +5071,7 @@ function MailSection({
                                         onClick={toggleMailFullscreen}
                                         title={isMailFullscreen ? 'Exit mails fullscreen' : 'Mails fullscreen'}
                                     >
-                                        {isMailFullscreen ? '<img src="/img/icons/mails-fullscreen.svg" className="svg-icon-inline" />' : '<img src="/img/icons/mails-fullscreen.svg" className="svg-icon-inline" />'}
+                                        {isMailFullscreen ? <img src="/img/icons/mails-fullscreen.svg" className="svg-icon-inline" /> : <img src="/img/icons/mails-fullscreen.svg" className="svg-icon-inline" />}
                                     </button>
 
                                     {isMailFullscreen && (
@@ -4848,7 +5120,7 @@ function MailSection({
                                 )}
                                 {!hasMailSource ? (
                                     <div className="db-empty-state">
-                                        <div className="db-empty-icon"><img src="/img/icons/inbox.svg" className="svg-icon-inline" /></div>
+                                        <div className="db-empty-icon"><img src="/img/icons/inbox.svg" style={{ width: '240px', height: 'auto' }} /></div>
                                         <div className="db-empty-text">
                                             {connecting
                                                 ? 'Connecting...'
@@ -4861,14 +5133,14 @@ function MailSection({
                                     <div className="db-loading"><div className="db-spinner" />Loading...</div>
                                 ) : mails.length === 0 ? (
                                     <div className="db-empty-state">
-                                        <div className="db-empty-icon">{listMode === 'search' ? <img src="/img/icons/search.svg" className="svg-icon-inline" /> : <img src="/img/icons/inbox.svg" className="svg-icon-inline" />}</div>
+                                        <div className="db-empty-icon">{listMode === 'search' ? <img src="/img/icons/search.svg" style={{ width: '240px', height: 'auto' }} /> : <img src="/img/icons/inbox.svg" style={{ width: '240px', height: 'auto' }} />}</div>
                                         <div className="db-empty-text">
                                             {listMode === 'search' ? t('No results found.') : 'This folder is empty'}
                                         </div>
                                     </div>
                                 ) : visibleMails.length === 0 ? (
                                     <div className="db-empty-state">
-                                        <div className="db-empty-icon">🔎</div>
+                                        <div className="db-empty-icon"><img src="/img/icons/search.svg" style={{ width: '240px', height: 'auto' }} /></div>
                                         <div className="db-empty-text">No mails match the current filter.</div>
                                     </div>
                                 ) : (
@@ -5069,7 +5341,7 @@ function MailSection({
                             <div className="db-right-panel">
                                 {!hasMailSource ? (
                                     <div className="db-empty-state" style={{ paddingTop: 100 }}>
-                                        <div className="db-empty-icon"><img src="/img/logo/guvercin-notext-nobackground.svg" alt="Guvercin" style={{width: '48px', height: '48px'}} /></div>
+                                        <div className="db-empty-icon"><img src="/img/logo/guvercin-notext-nobackground.svg" alt="Guvercin" style={{ width: '1024px', height: 'auto' }} /></div>
                                         <div className="db-empty-text">
                                             {connecting
                                                 ? 'Connecting...'
@@ -5090,7 +5362,7 @@ function MailSection({
                                     />
                                 ) : !selectedMail ? (
                                     <div className="db-empty-state">
-                                        <div className="db-empty-icon"><img src="/img/logo/guvercin-notext-nobackground.svg" alt="Guvercin" style={{width: '48px', height: '48px'}} /></div>
+                                        <div className="db-empty-icon"><img src="/img/logo/guvercin-notext-nobackground.svg" alt="Guvercin" style={{ width: '600px', height: 'auto' }} /></div>
                                         <div className="db-empty-text">Select an email</div>
                                     </div>
                                 ) : loadingContent ? (
@@ -5119,7 +5391,7 @@ function MailSection({
                                                     onClick={() => setSelectedMail(null)}
                                                     title="Close"
                                                 >
-                                                    <img src="/img/icons/three-point.svg" className="svg-icon-inline" />
+                                                    <img src="/img/icons/close.svg" className="svg-icon-inline" />
                                                 </button>
                                             </div>
                                         </div>
@@ -5140,7 +5412,7 @@ function MailSection({
                                                     onClick={() => setAttachmentsExpanded(!attachmentsExpanded)}
                                                     style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', userSelect: 'none' }}
                                                 >
-                                                    {attachmentsExpanded ? 'expanded' : '' ? <img src="/img/icons/dock-shown.svg" className="svg-icon-inline" style={{marginRight:"6px"}}/> : <img src="/img/icons/dock-hidden.svg" className="svg-icon-inline" style={{marginRight:"6px"}}/>}
+                                                    {attachmentsExpanded ? <img src="/img/icons/dock-shown.svg" className="svg-icon-inline" style={{ marginRight: "6px" }} /> : <img src="/img/icons/dock-hidden.svg" className="svg-icon-inline" style={{ marginRight: "6px" }} />}
                                                     Attachments ({mailContent.attachments.length})
                                                 </div>
                                                 {attachmentsExpanded && (
@@ -5189,7 +5461,7 @@ function MailSection({
                                 aria-label="Close"
                                 title="Close"
                             >
-                                <img src="/img/icons/three-point.svg" className="svg-icon-inline" />
+                                <img src="/img/icons/close.svg" className="svg-icon-inline" />
                             </button>
                         </div>
                         <div className="db-compose-exit-panel__body">

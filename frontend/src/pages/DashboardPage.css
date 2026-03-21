@@ -5,6 +5,7 @@
   background: var(--c-bg-alt);
   font-family: "Calibri", "Segoe UI", Arial, sans-serif;
   overflow: hidden;
+  min-width: 580px; /* 48px sidebar + min ~530px for comfortable mail reading */
 }
 
 .db-action-notices {
@@ -459,8 +460,40 @@ body.resizing * {
   align-items: center;
   justify-content: center;
   font-size: 28px;
-  margin: 0 auto 0.65rem;
   box-shadow: 0 10px 20px var(--shadow-color-5);
+}
+
+.account-popover__avatar-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  margin-bottom: 0.65rem;
+}
+
+.account-popover__settings-btn {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--c-surface-3);
+  border: 1px solid var(--c-border-1);
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--c-text-2);
+  transition: background 0.18s, color 0.18s, transform 0.18s;
+}
+
+.account-popover__settings-btn:hover {
+  background: var(--c-primary);
+  color: var(--c-primary-contrast, #fff);
+  border-color: var(--c-primary);
+  transform: translateY(-50%) rotate(30deg);
 }
 
 .account-popover__name {
@@ -567,7 +600,7 @@ body.resizing * {
 
 .db-submenu-scroll {
   width: 100%;
-  overflow-x: auto;
+  overflow-x: hidden;
   overflow-y: hidden;
 }
 
@@ -578,6 +611,40 @@ body.resizing * {
   align-items: center;
   padding: 0 10px;
   min-width: max-content;
+  flex: 1;
+}
+
+.db-submenu-more-btn {
+  background: none;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  width: 34px;
+  color: var(--c-text-1);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.2s;
+  border-radius: 4px;
+  margin-right: 4px;
+}
+
+.db-submenu-more-btn:hover {
+  background: var(--c-border-1);
+}
+
+.db-overflow-menu {
+  position: absolute;
+  top: 100%;
+  right: 4px;
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border-1);
+  border-radius: 8px;
+  box-shadow: 0 12px 28px var(--shadow-color-4);
+  padding: 6px 0;
+  z-index: 5500;
+  min-width: 200px;
 }
 
 .db-submenu li button {
@@ -595,8 +662,26 @@ body.resizing * {
   transition: background 0.2s;
 }
 
-.db-submenu li {
-  position: relative;
+.db-overflow-menu-item {
+  width: 100%;
+}
+
+.db-overflow-menu-item li {
+  list-style: none;
+  width: 100%;
+}
+
+.db-overflow-menu-item li button {
+  width: 100%;
+  text-align: left;
+  height: 32px;
+  padding: 0 16px;
+  border-radius: 0;
+  justify-content: flex-start;
+}
+
+.db-overflow-menu-item li button:hover {
+  background: var(--c-surface-3);
 }
 
 .db-submenu li button:hover {
@@ -797,6 +882,28 @@ body.resizing * {
   flex: 1;
   width: 100%;
   overflow: hidden;
+  position: relative; /* needed for overlay positioning */
+  min-width: 500px; /* mail content needs at least ~300px, plus dock tabs */
+}
+
+/* Narrow mode: overlay panel floats above mail content */
+.db-folder-panel--overlay,
+.db-center-panel--overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  z-index: 500;
+  box-shadow: 4px 0 16px rgba(0, 0, 0, 0.25);
+  overflow: hidden;
+}
+
+/* Backdrop to catch outside-clicks in narrow overlay mode */
+.db-panel-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 490;
+  background: rgba(0, 0, 0, 0.18);
 }
 
 .db-resizer {
