@@ -448,7 +448,7 @@ body.resizing * {
   box-shadow: 0 20px 45px var(--shadow-color-8);
   border: 1px solid var(--overlay-hover-0);
   color: var(--c-text-1);
-  z-index: 200;
+  z-index: 5400;
 }
 
 .account-popover__avatar {
@@ -705,6 +705,28 @@ body.resizing * {
   position: relative;
 }
 
+.db-layout-menu-shell {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  position: relative;
+}
+
+/* Layout flyout: directly under Layout control, readable type */
+.db-layout-popover.db-submenu-popover {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 0;
+  padding: 6px 6px 7px;
+  min-width: 200px;
+  max-width: min(280px, calc(100vw - 24px));
+  background: var(--c-surface-3);
+  border: 1px solid var(--c-border-1);
+  border-radius: 9px;
+  box-shadow: 0 12px 32px var(--shadow-color-4);
+}
+
 .db-submenu-popover {
   position: fixed;
   top: 0;
@@ -862,6 +884,71 @@ body.resizing * {
   background: var(--c-primary);
   color: var(--c-primary-contrast);
   font-weight: 600;
+}
+
+.db-sidebar.db-sidebar--hidden {
+  width: 0;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  border: none;
+  gap: 0;
+}
+
+.db-layout-popover__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  margin: 0;
+  padding: 7px 10px 7px 12px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  transition: background 0.12s ease;
+}
+
+.db-layout-popover__row:hover {
+  background: var(--overlay-surface-2);
+}
+
+.db-layout-popover__row:focus-visible {
+  outline: 2px solid var(--c-primary);
+  outline-offset: -1px;
+}
+
+.db-layout-popover__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--c-text-1);
+  flex: 1;
+  min-width: 0;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
+}
+
+.db-layout-popover__check {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.db-layout-popover__tick {
+  width: 15px !important;
+  height: 15px !important;
+  display: block;
 }
 
 .db-section-area {

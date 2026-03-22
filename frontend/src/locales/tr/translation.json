@@ -113,5 +113,8 @@
   "Clear search": "Aramayı temizle",
   "Clear filters": "Filtreleri temizle",
   "Search results": "Arama sonuçları",
-  "Search results found": "{{count}} adet sonuç bulundu"
+  "Search results found": "{{count}} adet sonuç bulundu",
+  "App menu": "Uygulama menüsü",
+  "Mailboxes": "Posta kutuları",
+  "Mail list": "Posta listesi"
 }

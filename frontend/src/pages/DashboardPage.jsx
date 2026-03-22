@@ -988,12 +988,14 @@ const DashboardPage = () => {
     const [accountMenuOpen, setAccountMenuOpen] = useState(false)
     const [settingsPageOpen, setSettingsPageOpen] = useState(false)
     const [isMailFullscreen, setIsMailFullscreen] = useState(false)
+    const [appMenuVisible, setAppMenuVisible] = useState(true)
     const [isSyncing, setIsSyncing] = useState(false)
     const [actionNotices, setActionNotices] = useState([])
     const [noticeNow, setNoticeNow] = useState(Date.now())
 
     const accountButtonRef = useRef(null)
     const accountMenuRef = useRef(null)
+    const accountWrapperRef = useRef(null)
     const iframeRef = useRef(null)
     const syncAbortRef = useRef(null)
     const isSyncingRef = useRef(false)
@@ -1019,6 +1021,29 @@ const DashboardPage = () => {
             navigate(location.pathname, { replace: true, state: {} })
         }
     }, [location.pathname, location.state, navigate])
+
+    useEffect(() => {
+        if (!accountMenuOpen) return
+        const onPointerDown = (e) => {
+            if (accountWrapperRef.current?.contains(e.target)) return
+            setAccountMenuOpen(false)
+        }
+        document.addEventListener('mousedown', onPointerDown)
+        document.addEventListener('touchstart', onPointerDown, { passive: true })
+        return () => {
+            document.removeEventListener('mousedown', onPointerDown)
+            document.removeEventListener('touchstart', onPointerDown)
+        }
+    }, [accountMenuOpen])
+
+    useEffect(() => {
+        if (!accountMenuOpen) return
+        const onKey = (e) => {
+            if (e.key === 'Escape') setAccountMenuOpen(false)
+        }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+    }, [accountMenuOpen])
 
     const fetchMailboxCounts = useCallback(async () => {
         if (!accountId || !backendReachable) return
@@ -1913,7 +1938,7 @@ const DashboardPage = () => {
                         </div>
                     </div>
                     <button className="db-icon-btn" title="Notifications"><img src="/img/icons/notification.svg" className="svg-icon-inline" /></button>
-                    <div className="db-account-wrapper">
+                    <div className="db-account-wrapper" ref={accountWrapperRef}>
                         <button className="db-account-btn" ref={accountButtonRef} onClick={handleAccountButtonClick}>
                             <Avatar
                                 email={accountEmailLabel}
@@ -1962,7 +1987,7 @@ const DashboardPage = () => {
             </div>
 
             <div className="db-main-container">
-                <div className="db-sidebar">
+                <div className={`db-sidebar${appMenuVisible ? '' : ' db-sidebar--hidden'}`}>
                     {[
                         { key: 'mail', icon: <img src="/img/icons/mail.svg" alt="Mail" className="svg-icon-inline" />, label: t('Mail') },
                         { key: 'calendar', icon: '📅', label: t('Calendar') },
@@ -2047,6 +2072,8 @@ const DashboardPage = () => {
                                 accountForm={accountForm}
                                 mailboxCounts={mailboxCounts}
                                 mailboxCountDisplayMode={mailboxCountDisplayMode}
+                                appMenuVisible={appMenuVisible}
+                                setAppMenuVisible={setAppMenuVisible}
                             />
                         )}
                         {activeSection === 'calendar' && <CalendarSection />}
@@ -2310,6 +2337,8 @@ function MailSection({
     accountForm,
     mailboxCounts,
     mailboxCountDisplayMode,
+    appMenuVisible,
+    setAppMenuVisible,
 }) {
     const { t } = useTranslation()
     const hasFolderAccess = folders.length > 0
@@ -2343,6 +2372,9 @@ function MailSection({
     const [layoutCols, setLayoutCols] = useState(1)
     const [movePopoverStyle, setMovePopoverStyle] = useState(null)
     const [labelPopoverStyle, setLabelPopoverStyle] = useState(null)
+    const [layoutMenuHover, setLayoutMenuHover] = useState(false)
+    const [layoutMenuPinned, setLayoutMenuPinned] = useState(false)
+    const [layoutPopoverStyle, setLayoutPopoverStyle] = useState(null)
     const [mailItemMenu, setMailItemMenu] = useState(null)
     const [mailItemMoveMenuStyle, setMailItemMoveMenuStyle] = useState(null)
     const [mailItemLabelMenuStyle, setMailItemLabelMenuStyle] = useState(null)
@@ -2354,6 +2386,23 @@ function MailSection({
     const [blockSenderSelectedFolder, setBlockSenderSelectedFolder] = useState('')
     const displayCols = isMailFullscreen ? layoutCols : 1
     const perPageValue = Math.max(1, Number.parseInt(perPage, 10) || 50)
+    const showLayoutMenu = layoutMenuHover || layoutMenuPinned
+    const appMenuLeftPad = appMenuVisible ? 48 : 0
+
+    const clearLayoutHoverLeaveTimer = useCallback(() => {
+        if (layoutHoverLeaveTimerRef.current != null) {
+            window.clearTimeout(layoutHoverLeaveTimerRef.current)
+            layoutHoverLeaveTimerRef.current = null
+        }
+    }, [])
+
+    const scheduleLayoutHoverClose = useCallback(() => {
+        clearLayoutHoverLeaveTimer()
+        layoutHoverLeaveTimerRef.current = window.setTimeout(() => {
+            layoutHoverLeaveTimerRef.current = null
+            setLayoutMenuHover(false)
+        }, 220)
+    }, [clearLayoutHoverLeaveTimer])
 
     const visibleMails = useMemo(() => {
         const copy = Array.isArray(mails) ? mails.slice() : []
@@ -3187,6 +3236,9 @@ function MailSection({
     const submenuScrollRef = useRef(null)
     const moveMenuRef = useRef(null)
     const labelMenuRef = useRef(null)
+    const layoutMenuShellRef = useRef(null)
+    const layoutMenuAnchorRef = useRef(null)
+    const layoutHoverLeaveTimerRef = useRef(null)
     const submenuMoreRef = useRef(null)
     const [isSubmenuMoreOpen, setIsSubmenuMoreOpen] = useState(false)
     const [submenuVisibleCount, setSubmenuVisibleCount] = useState(99)
@@ -3273,7 +3325,13 @@ function MailSection({
         }
     }, [])
 
-    const syncPopoverPosition = useCallback((menuRef, setStyle, estimatedWidth = 220) => {
+    const syncPopoverPosition = useCallback((
+        menuRef,
+        setStyle,
+        estimatedWidth = 220,
+        gapBelow = 6,
+        horizontal = 'default',
+    ) => {
         const node = menuRef.current
         if (!node) {
             setStyle(null)
@@ -3281,14 +3339,28 @@ function MailSection({
         }
 
         const rect = node.getBoundingClientRect()
-        const left = Math.min(
-            Math.max(12, rect.left),
-            Math.max(12, window.innerWidth - estimatedWidth - 12),
-        )
+        const pad = 12
+        let left
+        if (horizontal === 'underAnchor') {
+            const w = estimatedWidth
+            left = rect.left
+            if (left + w > window.innerWidth - pad) {
+                left = rect.right - w
+            }
+            if (left < pad) left = pad
+            if (left + w > window.innerWidth - pad) {
+                left = Math.max(pad, window.innerWidth - w - pad)
+            }
+        } else {
+            left = Math.min(
+                Math.max(pad, rect.left),
+                Math.max(pad, window.innerWidth - estimatedWidth - pad),
+            )
+        }
 
         setStyle({
             left: `${left}px`,
-            top: `${rect.bottom + 6}px`,
+            top: `${rect.bottom + gapBelow}px`,
         })
     }, [])
 
@@ -3471,6 +3543,9 @@ function MailSection({
             if (mailItemMenuRef.current && !mailItemMenuRef.current.contains(e.target)) {
                 closeMailItemMenu()
             }
+            if (layoutMenuShellRef.current && !layoutMenuShellRef.current.contains(e.target)) {
+                setLayoutMenuPinned(false)
+            }
         }
         document.addEventListener('mousedown', handleClickOutside)
         return () => document.removeEventListener('mousedown', handleClickOutside)
@@ -3508,10 +3583,58 @@ function MailSection({
     }, [activeRibbonTab, activeTabId, isLabelMenuOpen, isMoveMenuOpen, syncPopoverPosition])
 
     useEffect(() => {
+        if (activeRibbonTab !== 'view') {
+            clearLayoutHoverLeaveTimer()
+            setLayoutMenuHover(false)
+            setLayoutMenuPinned(false)
+            setLayoutPopoverStyle(null)
+        }
+    }, [activeRibbonTab, clearLayoutHoverLeaveTimer])
+
+    /** Small gap so the panel reads clearly under the Layout ribbon control. */
+    const LAYOUT_POPOVER_GAP = 3
+
+    useLayoutEffect(() => {
+        if (!showLayoutMenu) {
+            setLayoutPopoverStyle(null)
+            return
+        }
+        syncPopoverPosition(layoutMenuAnchorRef, setLayoutPopoverStyle, 252, LAYOUT_POPOVER_GAP, 'underAnchor')
+    }, [showLayoutMenu, syncPopoverPosition])
+
+    useEffect(() => {
+        if (!showLayoutMenu) return
+
+        const sync = () => {
+            syncPopoverPosition(layoutMenuAnchorRef, setLayoutPopoverStyle, 252, LAYOUT_POPOVER_GAP, 'underAnchor')
+        }
+
+        const scrollNode = submenuScrollRef.current
+
+        window.addEventListener('resize', sync)
+        window.addEventListener('scroll', sync, true)
+        scrollNode?.addEventListener('scroll', sync)
+
+        return () => {
+            window.removeEventListener('resize', sync)
+            window.removeEventListener('scroll', sync, true)
+            scrollNode?.removeEventListener('scroll', sync)
+        }
+    }, [activeRibbonTab, activeTabId, showLayoutMenu, syncPopoverPosition])
+
+    useEffect(() => () => clearLayoutHoverLeaveTimer(), [clearLayoutHoverLeaveTimer])
+
+    useEffect(() => {
         const handleKeyDown = (e) => {
             if (e.key === 'Escape') {
                 if (mailItemMenu) {
                     closeMailItemMenu()
+                    return
+                }
+                if (layoutMenuPinned || layoutMenuHover) {
+                    clearLayoutHoverLeaveTimer()
+                    setLayoutMenuPinned(false)
+                    setLayoutMenuHover(false)
                     return
                 }
                 if (isMoveMenuOpen) {
@@ -3546,7 +3669,7 @@ function MailSection({
         }
         window.addEventListener('keydown', handleKeyDown)
         return () => window.removeEventListener('keydown', handleKeyDown)
-    }, [closeMailItemMenu, isFilterMenuOpen, isLabelMenuOpen, isMoveMenuOpen, isSelectionMenuOpen, isSortMenuOpen, mailItemMenu, selectMode, selectedMail, setMailContent, setSelectedMail])
+    }, [clearLayoutHoverLeaveTimer, closeMailItemMenu, isFilterMenuOpen, isLabelMenuOpen, isMoveMenuOpen, isSelectionMenuOpen, isSortMenuOpen, layoutMenuHover, layoutMenuPinned, mailItemMenu, selectMode, selectedMail, setMailContent, setSelectedMail])
 
     useEffect(() => {
         if (!mailItemMenu) return
@@ -3579,10 +3702,10 @@ function MailSection({
         const handleMouseMove = (e) => {
             if (isResizingFolder.current) {
 
-                const newWidth = Math.max(160, Math.min(500, e.clientX - 48))
+                const newWidth = Math.max(160, Math.min(500, e.clientX - appMenuLeftPad))
                 setFolderWidth(newWidth)
             } else if (isResizingList.current) {
-                const newWidth = Math.max(minListWidth, Math.min(900, e.clientX - 48 - folderWidth))
+                const newWidth = Math.max(minListWidth, Math.min(900, e.clientX - appMenuLeftPad - folderWidth))
                 setListWidth(newWidth)
             }
         }
@@ -3597,7 +3720,7 @@ function MailSection({
             document.removeEventListener('mousemove', handleMouseMove)
             document.removeEventListener('mouseup', handleMouseUp)
         }
-    }, [folderWidth, minListWidth])
+    }, [folderWidth, minListWidth, appMenuLeftPad])
 
     useEffect(() => {
         const el = mailToolbarRef.current
@@ -4600,8 +4723,100 @@ function MailSection({
                         )}
                         {!activeTabId && activeRibbonTab === 'view' && (
                             <ul>
-                                <li><button onClick={() => { }}>📖 {t('Reading Pane')}</button></li>
-                                <li><button onClick={() => { }}>📏 {t('Layout')}</button></li>
+                                <li className="db-submenu-menu-wrap">
+                                    <div ref={layoutMenuShellRef} className="db-layout-menu-shell">
+                                        <button
+                                            type="button"
+                                            ref={layoutMenuAnchorRef}
+                                            className={showLayoutMenu ? 'submenu-open' : ''}
+                                            onClick={(e) => {
+                                                e.stopPropagation()
+                                                setLayoutMenuPinned((p) => !p)
+                                            }}
+                                            onMouseEnter={() => {
+                                                clearLayoutHoverLeaveTimer()
+                                                setLayoutMenuHover(true)
+                                            }}
+                                            onMouseLeave={scheduleLayoutHoverClose}
+                                        >
+                                            <img src="/img/icons/columns-2.svg" className="svg-icon-inline" alt="" /> {t('Layout')}
+                                        </button>
+                                        {showLayoutMenu && (
+                                        <div
+                                            className="db-submenu-popover db-layout-popover"
+                                            style={layoutPopoverStyle || undefined}
+                                            onMouseDown={(e) => e.stopPropagation()}
+                                            onWheel={(e) => e.stopPropagation()}
+                                            onMouseEnter={clearLayoutHoverLeaveTimer}
+                                            onMouseLeave={scheduleLayoutHoverClose}
+                                        >
+                                            <button
+                                                type="button"
+                                                className="db-layout-popover__row"
+                                                role="menuitemcheckbox"
+                                                aria-checked={appMenuVisible}
+                                                onClick={() => setAppMenuVisible((v) => !v)}
+                                            >
+                                                <span className="db-layout-popover__label">{t('App menu')}</span>
+                                                <span className="db-layout-popover__check" aria-hidden>
+                                                    {appMenuVisible ? (
+                                                        <img src="/img/icons/choice-choosen.svg" className="svg-icon-inline db-layout-popover__tick" alt="" />
+                                                    ) : null}
+                                                </span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="db-layout-popover__row"
+                                                role="menuitemcheckbox"
+                                                aria-checked={!foldersHidden}
+                                                onClick={() => {
+                                                    if (foldersHidden) {
+                                                        userClosedFolders.current = false
+                                                        setFoldersHidden(false)
+                                                    } else {
+                                                        userClosedFolders.current = true
+                                                        setFoldersHidden(true)
+                                                        setOverlayPanel((p) => (p === 'folders' ? null : p))
+                                                    }
+                                                }}
+                                            >
+                                                <span className="db-layout-popover__label">{t('Mailboxes')}</span>
+                                                <span className="db-layout-popover__check" aria-hidden>
+                                                    {!foldersHidden ? (
+                                                        <img src="/img/icons/choice-choosen.svg" className="svg-icon-inline db-layout-popover__tick" alt="" />
+                                                    ) : null}
+                                                </span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className="db-layout-popover__row"
+                                                role="menuitemcheckbox"
+                                                aria-checked={!mailsHidden}
+                                                onClick={() => {
+                                                    if (mailsHidden) {
+                                                        userClosedMails.current = false
+                                                        setMailsHidden(false)
+                                                        setOverlayPanel((p) => (p === 'mails' ? null : p))
+                                                    } else {
+                                                        userClosedMails.current = true
+                                                        setMailsHidden(true)
+                                                        if (layoutMode === 'narrow') {
+                                                            setOverlayPanel((p) => (p === 'mails' ? null : p))
+                                                        }
+                                                    }
+                                                }}
+                                            >
+                                                <span className="db-layout-popover__label">{t('Mail list')}</span>
+                                                <span className="db-layout-popover__check" aria-hidden>
+                                                    {!mailsHidden ? (
+                                                        <img src="/img/icons/choice-choosen.svg" className="svg-icon-inline db-layout-popover__tick" alt="" />
+                                                    ) : null}
+                                                </span>
+                                            </button>
+                                        </div>
+                                        )}
+                                    </div>
+                                </li>
                             </ul>
                         )}
                     </SubmenuBar>

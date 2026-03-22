@@ -88,5 +88,11 @@
   "Clear search": "Clear search",
   "Clear filters": "Clear filters",
   "Search results": "Search results",
-  "Search results found": "{{count}} results found"
+  "Search results found": "{{count}} results found",
+  "App menu": "App menu",
+  "Mailboxes": "Mailboxes",
+  "Mail list": "Mail list",
+  "Layout": "Layout",
+  "View": "View",
+  "Mail": "Mail"
 }
