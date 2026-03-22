@@ -493,7 +493,7 @@ body.resizing * {
   background: var(--c-primary);
   color: var(--c-primary-contrast, #fff);
   border-color: var(--c-primary);
-  transform: translateY(-50%) rotate(30deg);
+  transform: translateY(-50%);
 }
 
 .account-popover__name {
@@ -1119,6 +1119,8 @@ body.resizing * {
 .db-folder-item-content {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 4px 8px;
   text-decoration: none;
   color: var(--c-text-1);
@@ -1126,6 +1128,56 @@ body.resizing * {
   transition: background 0.15s;
   cursor: pointer;
   user-select: none;
+}
+
+.db-folder-item-main {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+.db-folder-counts {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+
+.db-folder-count-pill {
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.15;
+  padding: 4px 8px;
+  border-radius: 8px;
+  min-width: 1.5rem;
+  text-align: center;
+  box-sizing: border-box;
+  background: var(--c-surface-3);
+  color: var(--c-text-2);
+  border: 1px solid var(--border-color, rgba(0, 0, 0, 0.08));
+}
+
+.db-folder-count-pill--unread {
+  background: var(--c-warm-surface-2, var(--c-surface-3));
+  color: var(--c-primary-contrast, var(--c-text-1));
+  border-color: transparent;
+}
+
+.db-folder-count-pill--total {
+  background: var(--c-surface-2, var(--c-surface-3));
+  color: var(--c-text-2);
+}
+
+.db-folder-item.selected .db-folder-count-pill {
+  background: rgba(255, 255, 255, 0.22);
+  color: var(--c-primary-contrast);
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.db-folder-item.selected .db-folder-count-pill--total {
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--c-primary-contrast);
 }
 
 .db-folder-item-content:hover {
@@ -2572,6 +2624,16 @@ body.resizing * {
   gap: 8px;
   padding: 4px 6px;
   font-size: 13px;
+  /* Same stack as body (index.css) so IMAP/custom folder names don’t fall back to a serif face */
+  font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.db-advanced-search-mailbox-item input[type='checkbox'] {
+  font-family: inherit;
+}
+
+.db-advanced-search-mailbox-item > span {
+  font-family: inherit;
 }
 
 .db-advanced-search-mailbox-empty {

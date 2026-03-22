@@ -81,7 +81,7 @@ pub async fn cache_avatar(
     content_type: &str,
     source: &str,
     cache_dir: &Path,
-    crypto: &CryptoManager,
+    crypto: Option<&CryptoManager>,
 ) -> anyhow::Result<PathBuf> {
     tokio::fs::create_dir_all(cache_dir).await?;
 
@@ -96,8 +96,13 @@ pub async fn cache_avatar(
     };
     let filename = format!("{hash}.{ext}");
     let path = cache_dir.join(&filename);
-    let key = crypto.file_key("avatar-cache")?;
-    crypto::encrypt_bytes_to_file(&key, data, &path).await?;
+
+    if let Some(crypto) = crypto {
+        let key = crypto.file_key("avatar-cache")?;
+        crate::crypto::encrypt_bytes_to_file(&key, data, &path).await?;
+    } else {
+        tokio::fs::write(&path, data).await?;
+    }
 
     sqlx::query(
         r#"
@@ -393,6 +398,7 @@ pub async fn run_waterfall(
         return;
     };
     let pool = &inner.general_pool;
+    let crypto_opt = inner.crypto.as_deref();
 
     if let Ok(Some(_)) = query_cache(pool, &hash).await {
         return;
@@ -423,7 +429,7 @@ pub async fn run_waterfall(
                 &ct,
                 "contact",
                 &cache_dir,
-                &inner.crypto,
+                crypto_opt,
             )
                     .await;
             return;
@@ -431,7 +437,7 @@ pub async fn run_waterfall(
     }
 
     if let Some((data, ct)) = try_bimi(&client, &domain).await {
-        let _ = cache_avatar(pool, &email, &hash, &data, &ct, "bimi", &cache_dir, &inner.crypto)
+        let _ = cache_avatar(pool, &email, &hash, &data, &ct, "bimi", &cache_dir, crypto_opt)
             .await;
         return;
     }
@@ -445,7 +451,7 @@ pub async fn run_waterfall(
             &ct,
             "google",
             &cache_dir,
-            &inner.crypto,
+            crypto_opt,
         )
                 .await;
         return;
@@ -460,7 +466,7 @@ pub async fn run_waterfall(
             &ct,
             "gravatar",
             &cache_dir,
-            &inner.crypto,
+            crypto_opt,
         )
                 .await;
         return;
@@ -475,7 +481,7 @@ pub async fn run_waterfall(
             &ct,
             "clearbit",
             &cache_dir,
-            &inner.crypto,
+            crypto_opt,
         )
                 .await;
         return;
@@ -490,7 +496,7 @@ pub async fn run_waterfall(
             &ct,
             "google_favicon",
             &cache_dir,
-            &inner.crypto,
+            crypto_opt,
         )
         .await;
         return;
@@ -505,7 +511,7 @@ pub async fn run_waterfall(
             &ct,
             "og_image",
             &cache_dir,
-            &inner.crypto,
+            crypto_opt,
         )
         .await;
         return;
@@ -520,7 +526,7 @@ pub async fn run_waterfall(
             &ct,
             "favicon",
             &cache_dir,
-            &inner.crypto,
+            crypto_opt,
         )
                 .await;
         return;

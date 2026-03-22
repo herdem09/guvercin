@@ -10,11 +10,11 @@ import DashboardPage from './pages/DashboardPage.jsx'
 import AccountSelectionPage from './pages/AccountSelectionPage.jsx'
 import DetachedMailWindow from './pages/DetachedMailWindow.jsx'
 import DetachedComposeWindow from './pages/DetachedComposeWindow.jsx'
+import LockScreen from './pages/LockScreen.jsx'
 import i18n from './i18n'
 import { useTranslation } from 'react-i18next'
 import { hydrateAccountSession } from './utils/accountStorage.js'
 import ThemePage from './pages/ThemePage.jsx'
-import ThemeImportPage from './pages/ThemeImportPage.jsx'
 
 function App() {
   const location = useLocation()
@@ -52,7 +52,7 @@ function App() {
 
     const tempFont = localStorage.getItem('temp_font')
     const savedFont = localStorage.getItem('font')
-    const onboardingPaths = ['/login', '/language', '/font', '/theme', '/theme-import', '/offline-setup', '/not_auth']
+    const onboardingPaths = ['/login', '/language', '/font', '/theme', '/offline-setup', '/not_auth']
 
     let fontToUse = "'Inter', sans-serif"
 
@@ -94,7 +94,6 @@ function App() {
       <Route path="/language" element={<LanguagePage />} />
       <Route path="/font" element={<FontPage />} />
       <Route path="/theme" element={<ThemePage />} />
-      <Route path="/theme-import" element={<ThemeImportPage />} />
       <Route path="/offline-setup" element={<OfflineSetupPage />} />
       <Route path="/not_auth" element={<NotAuthPage />} />
       <Route path="/dashboard" element={<DashboardPage />} />
@@ -110,6 +109,15 @@ function StartupRouter() {
   const navigate = useNavigate()
   const [error, setError] = useState(null)
   const [retryCount, setRetryCount] = useState(0)
+  // Lock-screen state
+  const [lockAccount, setLockAccount] = useState(null) // { id, email, displayName }
+  const [lockUnlocked, setLockUnlocked] = useState(false)
+
+  useEffect(() => {
+    if (lockUnlocked && lockAccount) {
+      navigate('/dashboard', { replace: true })
+    }
+  }, [lockUnlocked, lockAccount, navigate])
 
   useEffect(() => {
     let active = true
@@ -131,11 +139,37 @@ function StartupRouter() {
         const accounts = Array.isArray(data.accounts) ? data.accounts : []
         if (accounts.length === 0) {
           navigate('/login', { replace: true })
-        } else if (accounts.length === 1) {
-          hydrateAccountSession(accounts[0])
-          navigate('/dashboard', { replace: true })
         } else {
-          navigate('/account-select', { replace: true })
+          // Pick the account to open
+          const account = accounts.length === 1 ? accounts[0] : null
+          if (account) {
+            hydrateAccountSession(account)
+
+            // Check security settings
+            try {
+              const secRes = await fetch(apiUrl('/api/security/settings'))
+              if (secRes.ok) {
+                const sec = await secRes.json()
+                const policy = sec.login_policy || 'pc_only'
+                if (policy === 'account_only' || policy === 'both') {
+                  if (active) {
+                    setLockAccount({
+                      id: account.account_id,
+                      email: account.email_address || '',
+                      displayName: account.display_name || null,
+                    })
+                    return
+                  }
+                }
+              }
+            } catch {
+              // If security check fails, just proceed
+            }
+
+            navigate('/dashboard', { replace: true })
+          } else {
+            navigate('/account-select', { replace: true })
+          }
         }
       } catch {
         if (!active) {
@@ -158,6 +192,18 @@ function StartupRouter() {
       if (retryTimer) clearTimeout(retryTimer)
     }
   }, [navigate, t, retryCount])
+
+  // Show lock screen when required
+  if (lockAccount && !lockUnlocked) {
+    return (
+      <LockScreen
+        accountId={lockAccount.id}
+        accountEmail={lockAccount.email}
+        displayName={lockAccount.displayName}
+        onUnlocked={() => setLockUnlocked(true)}
+      />
+    )
+  }
 
   if (error) {
     return (

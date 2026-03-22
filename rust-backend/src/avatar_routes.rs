@@ -36,22 +36,36 @@ pub async fn get_avatar(
     }
 
     if let Ok(Some(cached)) = avatar::query_cache(pool, &hash).await {
-        let key = match inner.crypto.file_key("avatar-cache") {
-            Ok(k) => k,
-            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        let data = if let Some(crypto) = inner.crypto.as_ref() {
+            let key = match crypto.file_key("avatar-cache") {
+                Ok(k) => k,
+                Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            };
+            match crate::crypto::decrypt_file_to_bytes(&key, cached.file_path.as_ref()).await {
+                Ok(d) => d,
+                Err(_) => {
+                    // Fall through to re-resolve
+                    avatar::spawn_resolve(email, account_id, state);
+                    return StatusCode::ACCEPTED.into_response();
+                }
+            }
+        } else {
+            // Unencrypted mode: read raw file
+            match tokio::fs::read(cached.file_path.as_str()).await {
+                Ok(d) => d,
+                Err(_) => {
+                    avatar::spawn_resolve(email, account_id, state);
+                    return StatusCode::ACCEPTED.into_response();
+                }
+            }
         };
 
-        match crypto::decrypt_file_to_bytes(&key, cached.file_path.as_ref()).await {
-            Ok(data) => {
-                return Response::builder()
-                    .status(StatusCode::OK)
-                    .header(CONTENT_TYPE, cached.content_type)
-                    .header("Cache-Control", "public, max-age=86400")
-                    .body(Body::from(data))
-                    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
-            }
-            Err(_) => {}
-        }
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(CONTENT_TYPE, cached.content_type)
+            .header("Cache-Control", "public, max-age=86400")
+            .body(Body::from(data))
+            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
     }
 
     avatar::spawn_resolve(email, account_id, state);

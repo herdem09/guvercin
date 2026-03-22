@@ -88,3 +88,32 @@
 .theme-system.active {
   border-color: var(--c-primary);
 }
+
+.theme-hidden-file-input {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.theme-import-inline-msg {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.theme-import-inline-msg--error {
+  border: 1px solid var(--c-danger);
+  background: var(--c-danger-bg);
+  color: var(--c-danger-text);
+}
+
+.theme-import-inline-msg--success {
+  border: 1px solid var(--c-success);
+  background: var(--c-success-bg);
+  color: var(--c-success-text);
+}

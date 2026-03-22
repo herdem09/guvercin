@@ -1,31 +1,207 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react'
+import React, {
+    useState,
+    useMemo,
+    useRef,
+    useEffect,
+    useCallback,
+    useLayoutEffect,
+    createContext,
+    useContext,
+} from 'react'
 import { useTheme } from '../context/ThemeContext.jsx'
+import { apiUrl } from '../utils/api'
+import {
+    normalizeMailboxResponse,
+    dedupeStringsCaseInsensitive,
+    sortWithSavedOrder,
+    compareMailboxesDefaultOrder,
+} from '../utils/mailboxes'
+import { importThemeFromFile } from '../theme/importThemeFile.js'
+import {
+    applyThemePreference,
+    getStoredThemePreference,
+    setStoredThemePreference,
+} from '../theme/themeManager.js'
+
+/** GET /api/account/:id/settings uses camelCase (AccountSettingsResponse). */
+function parseSavedOrderFromSettings(setData, camelKey, snakeKey) {
+    const raw = setData?.[camelKey] ?? setData?.[snakeKey]
+    if (raw == null || raw === '') return []
+    try {
+        const parsed = JSON.parse(raw)
+        return Array.isArray(parsed) ? parsed : []
+    } catch {
+        return []
+    }
+}
+
 import './SettingsPage.css'
+
+const SettingsDraftContext = createContext(null)
+
+function useSettingsDraft(id, label, { isDirty, save, revert }) {
+    const ctx = useContext(SettingsDraftContext)
+    const saveRef = useRef(save)
+    const revertRef = useRef(revert)
+    saveRef.current = save
+    revertRef.current = revert
+
+    useEffect(() => {
+        if (!ctx) return undefined
+        if (!isDirty) {
+            ctx.unregister(id)
+            return undefined
+        }
+        ctx.register(id, {
+            label,
+            save: async () => {
+                await saveRef.current()
+            },
+            revert: () => {
+                revertRef.current()
+            },
+        })
+        return () => ctx.unregister(id)
+    }, [ctx, id, label, isDirty])
+}
+
+function setsEqual(a, b) {
+    if (a.size !== b.size) return false
+    for (const x of a) {
+        if (!b.has(x)) return false
+    }
+    return true
+}
+
+function cloneOfflineBaseline(src) {
+    return {
+        offlineEnabled: src.offlineEnabled,
+        selectedPrefixes: new Set(src.selectedPrefixes),
+        excludedExact: new Set(src.excludedExact),
+        policyMode: src.policyMode,
+        policyValue: src.policyValue,
+        cacheRawRfc822: src.cacheRawRfc822,
+    }
+}
+
+function offlineStateEquals(a, b) {
+    return (
+        a.offlineEnabled === b.offlineEnabled
+        && a.policyMode === b.policyMode
+        && String(a.policyValue) === String(b.policyValue)
+        && a.cacheRawRfc822 === b.cacheRawRfc822
+        && setsEqual(a.selectedPrefixes, b.selectedPrefixes)
+        && setsEqual(a.excludedExact, b.excludedExact)
+    )
+}
 
 /* ─── Static category tree ─────────────────────────────────────── */
 const CATEGORIES = [
     {
-        id: 'customization',
-        label: 'Customization',
+        id: 'appearance',
+        label: 'Appearance',
         children: [
-            { id: 'theme', label: 'Theme', parentId: 'customization' },
+            { id: 'theme', label: 'Theme', parentId: 'appearance' },
+            { id: 'font', label: 'Font', parentId: 'appearance' },
+            { id: 'mailbox_label_list', label: 'Mailbox & Label List', parentId: 'appearance' },
         ],
     },
     {
         id: 'email',
         label: 'Email',
         children: [
+            { id: 'offline', label: 'Offline', parentId: 'email' },
             { id: 'imap', label: 'IMAP', parentId: 'email' },
             { id: 'smtp', label: 'SMTP', parentId: 'email' },
+            { id: 'blocked', label: 'Blocked Senders', parentId: 'email' },
+        ],
+    },
+    {
+        id: 'security',
+        label: 'Security',
+        children: [
+            { id: 'encryption', label: 'Encryption', parentId: 'security' },
         ],
     },
 ]
 
-// Flat list of every node (parent + children) for search
-const ALL_NODES = [
-    ...CATEGORIES.map((c) => ({ ...c, type: 'parent' })),
-    ...CATEGORIES.flatMap((c) => c.children.map((ch) => ({ ...ch, type: 'child' }))),
-]
+/** Searchable content per panel (titles, descriptions, labels, keywords). */
+const PANEL_SEARCH_INDEX = {
+    theme: 'theme light dark system import appearance manual choose',
+    font: 'font typeface typography family inter sans serif system appearance text readability',
+    mailbox_label_list: 'sidebar mail counts unread total both none mailbox label list order reorder arrows folders',
+    offline: 'offline sync download folders labels cache attachments policy days count enable email caching',
+    imap: 'imap incoming mail server port password ssl starttls encryption connection',
+    smtp: 'smtp outgoing mail server port password ssl starttls',
+    blocked: 'blocked senders block delete spam archive email addresses automatically moved',
+    encryption: 'encryption encrypt stored data password login policy keyring account decrypt sqlite',
+}
+
+function SearchResultsPage({ filteredCategories, searchQuery, onSelectPanel, onSelectCategory, accountId, onClose, onRefreshAccount, appearance }) {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q || filteredCategories.length === 0) {
+        return (
+            <div className="sp-section">
+                <h2 className="sp-search-results__main-title">Search Results</h2>
+                <p className="sp-section__desc">No results found.</p>
+            </div>
+        )
+    }
+    return (
+        <div className="sp-section sp-search-results">
+            <h2 className="sp-search-results__main-title">Search Results</h2>
+            {filteredCategories.map((cat) => (
+                <div key={cat.id} className="sp-search-results__category">
+                    <button
+                        type="button"
+                        className="sp-search-results__category-title"
+                        onClick={() => onSelectCategory(cat.id)}
+                    >
+                        <HighlightMatch text={cat.label} query={q} />
+                    </button>
+                    {cat.children.map((child) => (
+                        <div key={child.id} className="sp-search-results__item">
+                            <button
+                                type="button"
+                                className="sp-search-results__item-title"
+                                onClick={() => onSelectPanel(child.id)}
+                            >
+                                <HighlightMatch text={child.label} query={q} />
+                            </button>
+                            <div className="sp-search-results__item-body">
+                                {renderSinglePanel(child.id, accountId, onClose, onRefreshAccount, searchQuery, appearance)}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            ))}
+        </div>
+    )
+}
+
+function panelMatchesSearch(panelId, query) {
+    if (!query) return false
+    const index = PANEL_SEARCH_INDEX[panelId]
+    if (!index) return false
+    return index.toLowerCase().includes(query)
+}
+
+function escapeRegex(s) {
+    return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function HighlightMatch({ text, query }) {
+    if (!query || !text) return text
+    const escaped = escapeRegex(query)
+    const parts = String(text).split(new RegExp(`(${escaped})`, 'gi'))
+    return parts.map((part, i) =>
+        part.toLowerCase() === query.toLowerCase() ? (
+            <mark key={i} className="sp-search-highlight">{part}</mark>
+        ) : (
+            part
+        )
+    )
+}
 
 /* ─── Theme settings panel ──────────────────────────────────────── */
 const BUILTIN_THEMES = [
@@ -33,29 +209,284 @@ const BUILTIN_THEMES = [
     { name: 'dark', label: 'Dark', swatches: ['#0f1115', '#3b3f46', '#e9eaec'] },
 ]
 
-function ThemeSettings() {
-    const { setThemeMode, setThemeName, themeMode, themeName } = useTheme()
+const FONT_FALLBACK_OPTIONS = [
+    'Inter', 'Arial', 'Verdana', 'Tahoma', 'Trebuchet MS', 'Times New Roman',
+    'Georgia', 'Garamond', 'Courier New', 'Segoe UI', 'system-ui',
+]
 
-    const chooseManual = async (name) => {
-        await setThemeMode('manual')
-        await setThemeName(name)
+function applyAppFontFamily(name) {
+    const safe = (name || 'Inter').trim() || 'Inter'
+    document.body.style.fontFamily = `"${safe}", sans-serif`
+}
+
+function FontSettings({
+    accountId,
+    searchQuery = '',
+    fontDraft,
+    setFontDraft,
+    fontBaselineRef,
+    fontReady,
+}) {
+    const [fonts, setFonts] = useState(FONT_FALLBACK_OPTIONS)
+    const [saving, setSaving] = useState(false)
+    const [persistError, setPersistError] = useState(null)
+
+    useEffect(() => {
+        let active = true
+        if ('queryLocalFonts' in window) {
+            window.queryLocalFonts()
+                .then((localFonts) => {
+                    if (!active) return
+                    const uniqueFamilies = new Set()
+                    localFonts.forEach((f) => uniqueFamilies.add(f.family))
+                    if (uniqueFamilies.size > 0) {
+                        setFonts(Array.from(uniqueFamilies).sort())
+                    }
+                })
+                .catch(() => {})
+        }
+        return () => {
+            active = false
+        }
+    }, [])
+
+    useEffect(() => {
+        setFonts((prev) => (prev.includes(fontDraft) ? prev : [...prev, fontDraft].sort()))
+    }, [fontDraft])
+
+    const persistFont = useCallback(async () => {
+        if (!accountId) {
+            localStorage.setItem('font', fontDraft)
+            fontBaselineRef.current = fontDraft
+            return
+        }
+        setPersistError(null)
+        const res = await fetch(apiUrl(`/api/account/${accountId}/font`), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ font: fontDraft }),
+        })
+        if (!res.ok) throw new Error('save_failed')
+        localStorage.setItem('font', fontDraft)
+        fontBaselineRef.current = fontDraft
+    }, [accountId, fontDraft, fontBaselineRef])
+
+    const saveFontDraft = useCallback(async () => {
+        setSaving(true)
+        setPersistError(null)
+        try {
+            await persistFont()
+        } catch (e) {
+            console.error(e)
+            setPersistError('Could not save font. Try again.')
+            throw new Error('save_failed')
+        } finally {
+            setSaving(false)
+        }
+    }, [persistFont])
+
+    const fontDirty = fontDraft !== fontBaselineRef.current
+
+    useSettingsDraft('font-appearance', 'Font', {
+        isDirty: fontDirty,
+        save: saveFontDraft,
+        revert: () => {
+            const base = fontBaselineRef.current
+            setFontDraft(base)
+            applyAppFontFamily(base)
+            setPersistError(null)
+        },
+    })
+
+    const handleFontChange = (e) => {
+        const name = e.target.value
+        setFontDraft(name)
+        applyAppFontFamily(name)
     }
 
-    const chooseSystem = async () => {
-        await setThemeMode('system')
+    if (!fontReady) {
+        return (
+            <div className="sp-section">
+                <h2 className="sp-section__title"><HighlightMatch text="Font" query={searchQuery} /></h2>
+                <div className="sp-loading-row">
+                    <div className="sp-spinner" />
+                    <span>Loading…</span>
+                </div>
+            </div>
+        )
     }
 
     return (
         <div className="sp-section">
-            <h2 className="sp-section__title">Theme</h2>
-            <p className="sp-section__desc">Choose the appearance for the application.</p>
+            <h2 className="sp-section__title"><HighlightMatch text="Font" query={searchQuery} /></h2>
+            <p className="sp-section__desc">
+                <HighlightMatch text="Choose the typeface used across the application. Changes apply as a preview until you save." query={searchQuery} />
+            </p>
+
+            <div className="sp-form-field sp-font-field">
+                <label htmlFor="sp-font-select"><HighlightMatch text="Font family" query={searchQuery} /></label>
+                <select
+                    id="sp-font-select"
+                    className="sp-font-select"
+                    value={fontDraft}
+                    onChange={handleFontChange}
+                >
+                    {fonts.map((font) => (
+                        <option key={font} value={font} style={{ fontFamily: `"${font}", sans-serif` }}>
+                            {font}
+                        </option>
+                    ))}
+                </select>
+                <p className="sp-section__hint">
+                    <HighlightMatch
+                        text="If your browser supports it, local fonts are listed. Allow font access when prompted to see all installed families."
+                        query={searchQuery}
+                    />
+                </p>
+            </div>
+
+            <div
+                className="sp-font-preview"
+                style={{ fontFamily: `"${fontDraft}", sans-serif` }}
+            >
+                <HighlightMatch text="The quick brown fox jumps over the lazy dog." query={searchQuery} />
+            </div>
+
+            {persistError && (
+                <div className="sp-form-message sp-form-message--error" style={{ marginTop: 12 }}>
+                    {persistError}
+                </div>
+            )}
+
+            <button
+                type="button"
+                className="sp-save-btn"
+                style={{ marginTop: 20 }}
+                onClick={() => saveFontDraft().catch(() => {})}
+                disabled={saving || !fontDirty}
+            >
+                {saving ? 'Saving…' : 'Save'}
+            </button>
+        </div>
+    )
+}
+
+function ThemeSettings({
+    accountId,
+    searchQuery = '',
+    themeDraft,
+    setThemeDraft,
+    themeBaselineRef,
+}) {
+    const { availableThemes, refreshThemes } = useTheme()
+    const themeImportInputRef = useRef(null)
+    const [importThemeBusy, setImportThemeBusy] = useState(false)
+    const [importThemeMessage, setImportThemeMessage] = useState(null)
+    const [saving, setSaving] = useState(false)
+
+    const persistThemeToBackend = useCallback(async (themeValue) => {
+        if (!accountId) return
+        const res = await fetch(apiUrl(`/api/account/${accountId}/theme`), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ theme: themeValue }),
+        })
+        if (!res.ok) throw new Error('save_failed')
+    }, [accountId])
+
+    const applyPreview = async (next) => {
+        setThemeDraft(next)
+        await applyThemePreference(next)
+    }
+
+    const chooseManual = async (name) => {
+        await applyPreview({ mode: 'manual', name })
+    }
+
+    const chooseSystem = async () => {
+        await applyPreview({ mode: 'system', name: themeDraft.name })
+    }
+
+    const handleImportThemeClick = () => {
+        setImportThemeMessage(null)
+        themeImportInputRef.current?.click()
+    }
+
+    const handleImportThemeFile = async (e) => {
+        const file = e.target.files?.[0]
+        e.target.value = ''
+        if (!file) return
+        setImportThemeBusy(true)
+        setImportThemeMessage(null)
+        try {
+            const result = await importThemeFromFile(file, { skipTempKeys: true })
+            if (!result.ok) {
+                setImportThemeMessage({ type: 'error', text: '❌ Theme file is invalid.' })
+                return
+            }
+            await refreshThemes()
+            await applyPreview({ mode: 'manual', name: result.themeName })
+            setImportThemeMessage({ type: 'success', text: '✅ Theme imported — click Save to keep it.' })
+        } catch (err) {
+            console.error(err)
+            setImportThemeMessage({ type: 'error', text: '❌ Theme file is invalid.' })
+        } finally {
+            setImportThemeBusy(false)
+        }
+    }
+
+    const persistTheme = useCallback(async () => {
+        const p = themeDraft
+        const backendVal = p.mode === 'manual' ? p.name : 'SYSTEM'
+        if (accountId) {
+            await persistThemeToBackend(backendVal)
+        }
+        setStoredThemePreference(p.mode, p.name)
+        themeBaselineRef.current = { mode: p.mode, name: p.name }
+        window.dispatchEvent(new Event('guvercin-theme-changed'))
+    }, [accountId, persistThemeToBackend, themeDraft, themeBaselineRef])
+
+    const saveThemeDraft = useCallback(async () => {
+        setSaving(true)
+        try {
+            await persistTheme()
+        } catch (e) {
+            console.error(e)
+            throw new Error('save_failed')
+        } finally {
+            setSaving(false)
+        }
+    }, [persistTheme])
+
+    const b = themeBaselineRef.current
+    const themeDirty = b != null && (
+        themeDraft.mode !== b.mode || themeDraft.name !== b.name
+    )
+
+    useSettingsDraft('theme-appearance', 'Theme', {
+        isDirty: themeDirty,
+        save: saveThemeDraft,
+        revert: () => {
+            const base = themeBaselineRef.current
+            if (!base) return
+            setThemeDraft({ mode: base.mode, name: base.name })
+            void applyThemePreference({ mode: base.mode, name: base.name })
+        },
+    })
+
+    return (
+        <div className="sp-section">
+            <h2 className="sp-section__title"><HighlightMatch text="Theme" query={searchQuery} /></h2>
+            <p className="sp-section__desc">
+                <HighlightMatch text="Choose the appearance for the application. Preview updates immediately; save to keep your choice." query={searchQuery} />
+            </p>
 
             <div className="sp-theme-grid">
                 {BUILTIN_THEMES.map((theme) => (
                     <button
                         key={theme.name}
                         type="button"
-                        className={`sp-theme-card ${themeMode === 'manual' && themeName === theme.name ? 'active' : ''}`}
+                        className={`sp-theme-card ${themeDraft.mode === 'manual' && themeDraft.name === theme.name ? 'active' : ''}`}
                         onClick={() => chooseManual(theme.name)}
                     >
                         <div className="sp-theme-card__swatches">
@@ -68,124 +499,1626 @@ function ThemeSettings() {
                                 />
                             ))}
                         </div>
-                        <div className="sp-theme-card__label">{theme.label}</div>
-                        {themeMode === 'manual' && themeName === theme.name && (
+                        <div className="sp-theme-card__label"><HighlightMatch text={theme.label} query={searchQuery} /></div>
+                        {themeDraft.mode === 'manual' && themeDraft.name === theme.name && (
                             <span className="sp-theme-card__check">✓</span>
                         )}
                     </button>
                 ))}
             </div>
 
+            {availableThemes.filter((n) => n !== 'light' && n !== 'dark').length > 0 && (
+                <div className="sp-theme-extra-list">
+                    <h4 className="sp-theme-extra-title">Other Themes</h4>
+                    <div className="sp-theme-grid">
+                        {availableThemes.filter((n) => n !== 'light' && n !== 'dark').map((name) => (
+                            <button
+                                key={name}
+                                type="button"
+                                className={`sp-theme-card ${themeDraft.mode === 'manual' && themeDraft.name === name ? 'active' : ''}`}
+                                onClick={() => chooseManual(name)}
+                            >
+                                <div className="sp-theme-card__swatches">
+                                    <span className="sp-theme-swatch" style={{ background: 'var(--bg-primary)' }} />
+                                    <span className="sp-theme-swatch" style={{ background: 'var(--brand-accent)' }} />
+                                </div>
+                                <div className="sp-theme-card__label"><HighlightMatch text={name} query={searchQuery} /></div>
+                                {themeDraft.mode === 'manual' && themeDraft.name === name && (
+                                    <span className="sp-theme-card__check">✓</span>
+                                )}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            <div className="sp-theme-actions">
+                <button
+                    type="button"
+                    className={`sp-system-btn ${themeDraft.mode !== 'manual' ? 'active' : ''}`}
+                    onClick={chooseSystem}
+                >
+                    <span className="sp-system-btn__icon">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="12" r="4" /><line x1="12" y1="2" x2="12" y2="6" /><line x1="12" y1="18" x2="12" y2="22" />
+                            <line x1="4.22" y1="4.22" x2="7.05" y2="7.05" /><line x1="16.95" y1="16.95" x2="19.78" y2="19.78" />
+                            <line x1="2" y1="12" x2="6" y2="12" /><line x1="18" y1="12" x2="22" y2="12" />
+                            <line x1="4.22" y1="19.78" x2="7.05" y2="16.95" /><line x1="16.95" y1="7.05" x2="19.78" y2="4.22" />
+                        </svg>
+                    </span>
+                    <HighlightMatch text="System (default)" query={searchQuery} />
+                    {themeDraft.mode !== 'manual' && <span className="sp-system-btn__badge">Active</span>}
+                </button>
+
+                <input
+                    ref={themeImportInputRef}
+                    type="file"
+                    accept="application/json,.json"
+                    className="sp-hidden-file-input"
+                    aria-hidden
+                    tabIndex={-1}
+                    onChange={handleImportThemeFile}
+                />
+                <button
+                    type="button"
+                    className="sp-ghost-btn"
+                    onClick={handleImportThemeClick}
+                    disabled={importThemeBusy}
+                >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" />
+                    </svg>
+                    <HighlightMatch text="Import Theme" query={searchQuery} />
+                </button>
+            </div>
+            {importThemeMessage && (
+                <div className={`sp-form-message sp-form-message--${importThemeMessage.type}`} style={{ marginTop: 14 }}>
+                    {importThemeMessage.text}
+                </div>
+            )}
+
             <button
                 type="button"
-                className={`sp-system-btn ${themeMode !== 'manual' ? 'active' : ''}`}
-                onClick={chooseSystem}
+                className="sp-save-btn"
+                style={{ marginTop: 20 }}
+                onClick={() => saveThemeDraft().catch(() => {})}
+                disabled={saving || !themeDirty}
             >
-                <span className="sp-system-btn__icon">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="12" cy="12" r="4" /><line x1="12" y1="2" x2="12" y2="6" /><line x1="12" y1="18" x2="12" y2="22" />
-                        <line x1="4.22" y1="4.22" x2="7.05" y2="7.05" /><line x1="16.95" y1="16.95" x2="19.78" y2="19.78" />
-                        <line x1="2" y1="12" x2="6" y2="12" /><line x1="18" y1="12" x2="22" y2="12" />
-                        <line x1="4.22" y1="19.78" x2="7.05" y2="16.95" /><line x1="16.95" y1="7.05" x2="19.78" y2="4.22" />
-                    </svg>
-                </span>
-                System (default)
-                {themeMode !== 'manual' && <span className="sp-system-btn__badge">Active</span>}
+                {saving ? 'Saving…' : 'Save'}
             </button>
         </div>
     )
 }
 
-/* ─── IMAP settings panel ───────────────────────────────────────── */
-function ImapSettings() {
+/* ─── Server settings (shared by IMAP and SMTP) ─────────────────── */
+function ServerSettings({ accountId, type, searchQuery = '' }) {
+    const isImap = type === 'imap'
+    const draftId = isImap ? 'imap-server' : 'smtp-server'
+    const draftLabel = isImap ? 'IMAP server' : 'SMTP server'
+    const [form, setForm] = useState({
+        server: '',
+        port: '',
+        password: '',
+        sslMode: 'STARTTLS',
+    })
+    const [loading, setLoading] = useState(true)
+    const [saving, setSaving] = useState(false)
+    const [message, setMessage] = useState(null)
+    const baselineRef = useRef(null)
+    const formRef = useRef(form)
+    useLayoutEffect(() => {
+        formRef.current = form
+    }, [form])
+
+    // Load current settings
+    useEffect(() => {
+        if (!accountId) {
+            setLoading(false)
+            return
+        }
+        let active = true
+        fetch(apiUrl(`/api/account/${accountId}/settings`), { cache: 'no-store' })
+            .then((r) => (r.ok ? r.json() : Promise.reject(r)))
+            .then((data) => {
+                if (!active) return
+                const next = {
+                    server: isImap ? (data.imapServer || '') : (data.smtpServer || ''),
+                    port: isImap ? (data.imapPort != null ? String(data.imapPort) : '') : (data.smtpPort != null ? String(data.smtpPort) : ''),
+                    password: '',
+                    sslMode: data.sslMode || 'STARTTLS',
+                }
+                baselineRef.current = { server: next.server, port: next.port, sslMode: next.sslMode }
+                setForm(next)
+                setLoading(false)
+            })
+            .catch(() => {
+                if (active) setLoading(false)
+            })
+        return () => {
+            active = false
+        }
+    }, [accountId, isImap])
+
+    const handleChange = (e) => {
+        const { name, value } = e.target
+        setForm((prev) => ({ ...prev, [name]: value }))
+    }
+
+    const persistServerSettings = useCallback(async () => {
+        if (!accountId) return
+        const f = formRef.current
+        setSaving(true)
+        setMessage(null)
+        try {
+            const body = isImap
+                ? {
+                    imapServer: f.server,
+                    imapPort: f.port,
+                    sslMode: f.sslMode,
+                    ...(f.password ? { password: f.password } : {}),
+                }
+                : {
+                    smtpServer: f.server,
+                    smtpPort: f.port,
+                    sslMode: f.sslMode,
+                    ...(f.password ? { password: f.password } : {}),
+                }
+
+            const res = await fetch(apiUrl(`/api/account/${accountId}/settings`), {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            })
+            if (!res.ok) throw new Error('Save failed')
+            baselineRef.current = { server: f.server, port: f.port, sslMode: f.sslMode }
+            setMessage({ type: 'success', text: '✅ Settings saved successfully.' })
+            setForm((prev) => ({ ...prev, password: '' }))
+        } catch {
+            setMessage({ type: 'error', text: '❌ Failed to save settings.' })
+            throw new Error('save_failed')
+        } finally {
+            setSaving(false)
+        }
+    }, [accountId, isImap])
+
+    const handleSave = (e) => {
+        e.preventDefault()
+        void persistServerSettings().catch(() => {})
+    }
+
+    const b = baselineRef.current
+    const serverDirty = !loading && b != null && (
+        form.server !== b.server
+        || form.port !== b.port
+        || form.sslMode !== b.sslMode
+        || form.password.length > 0
+    )
+    useSettingsDraft(draftId, draftLabel, {
+        isDirty: serverDirty,
+        save: persistServerSettings,
+        revert: () => {
+            const base = baselineRef.current
+            if (!base) return
+            setForm({ server: base.server, port: base.port, password: '', sslMode: base.sslMode })
+        },
+    })
+
+    if (loading) {
+        return (
+            <div className="sp-section">
+                <h2 className="sp-section__title"><HighlightMatch text={isImap ? 'IMAP' : 'SMTP'} query={searchQuery} /></h2>
+                <div className="sp-loading-row">
+                    <div className="sp-spinner" />
+                    <span>Loading settings…</span>
+                </div>
+            </div>
+        )
+    }
+
     return (
         <div className="sp-section">
-            <h2 className="sp-section__title">IMAP</h2>
-            <p className="sp-section__desc">Incoming mail server settings.</p>
-            <div className="sp-placeholder">
-                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" /><polyline points="22,6 12,13 2,6" />
-                </svg>
-                <span>IMAP ayarları yakında eklenecek</span>
+            <h2 className="sp-section__title"><HighlightMatch text={isImap ? 'IMAP' : 'SMTP'} query={searchQuery} /></h2>
+            <p className="sp-section__desc">
+                <HighlightMatch text={isImap ? 'Incoming mail server settings.' : 'Outgoing mail server settings.'} query={searchQuery} />
+            </p>
+
+            <form className="sp-server-form" onSubmit={handleSave}>
+                <div className="sp-form-row sp-form-row--2col">
+                    <div className="sp-form-field">
+                        <label htmlFor={`${type}-server`}>
+                            <HighlightMatch text={isImap ? 'IMAP Server' : 'SMTP Server'} query={searchQuery} />
+                        </label>
+                        <input
+                            id={`${type}-server`}
+                            type="text"
+                            name="server"
+                            placeholder="127.0.0.1"
+                            value={form.server}
+                            onChange={handleChange}
+                            required
+                        />
+                    </div>
+                    <div className="sp-form-field">
+                        <label htmlFor={`${type}-port`}>
+                            <HighlightMatch text={isImap ? 'IMAP Port' : 'SMTP Port'} query={searchQuery} />
+                        </label>
+                        <input
+                            id={`${type}-port`}
+                            type="number"
+                            name="port"
+                            placeholder={isImap ? '1143' : '1025'}
+                            step="1"
+                            value={form.port}
+                            onChange={handleChange}
+                            required
+                        />
+                    </div>
+                </div>
+
+                <div className="sp-form-field">
+                    <label htmlFor={`${type}-password`}><HighlightMatch text="Password" query={searchQuery} /></label>
+                    <input
+                        id={`${type}-password`}
+                        type="password"
+                        name="password"
+                        placeholder="Leave blank to keep current password"
+                        value={form.password}
+                        onChange={handleChange}
+                    />
+                </div>
+
+                <div className="sp-form-field">
+                    <label><HighlightMatch text="Connection Encryption Mode" query={searchQuery} /></label>
+                    <div className="sp-radio-group">
+                        {['STARTTLS', 'SSL', 'NONE'].map((mode) => (
+                            <label key={mode} className="sp-radio-label">
+                                <input
+                                    type="radio"
+                                    name="sslMode"
+                                    value={mode}
+                                    checked={form.sslMode === mode}
+                                    onChange={handleChange}
+                                />
+                                <HighlightMatch text={mode === 'SSL' ? 'SSL/TLS' : mode} query={searchQuery} />
+                            </label>
+                        ))}
+                    </div>
+                </div>
+
+                {message && (
+                    <div className={`sp-form-message sp-form-message--${message.type}`}>
+                        {message.text}
+                    </div>
+                )}
+
+                <button
+                    type="submit"
+                    className="sp-save-btn"
+                    disabled={saving}
+                >
+                    {saving ? 'Saving…' : 'Save Settings'}
+                </button>
+            </form>
+        </div>
+    )
+}
+
+/* ─── Offline settings panel ────────────────────────────────────── */
+function normalizeFolderPath(path) {
+    if (path.startsWith('Folders/')) return path.slice('Folders/'.length)
+    return path
+}
+function normalizeLabelPath(path) {
+    if (path.startsWith('Labels/')) return path.slice('Labels/'.length)
+    return path
+}
+function buildTreeNodes(paths, nodeType) {
+    const root = []
+    const insert = (parts) => {
+        let level = root
+        for (let i = 0; i < parts.length; i += 1) {
+            const part = parts[i]
+            const nodePath = parts.slice(0, i + 1).join('/')
+            const key = `${nodeType}:${nodePath}`
+            let node = level.find((n) => n.key === key)
+            if (!node) {
+                node = { key, name: part, nodeType, valuePath: nodePath, children: [], real: true }
+                level.push(node)
+            }
+            level = node.children
+        }
+    }
+    paths
+        .filter(Boolean)
+        .map((p) => p.trim())
+        .filter(Boolean)
+        .forEach((path) => {
+            const normalized = nodeType === 'folder' ? normalizeFolderPath(path) : normalizeLabelPath(path)
+            const parts = normalized.split('/').filter(Boolean)
+            if (parts.length) insert(parts)
+        })
+    const sortNodes = (nodes) => {
+        nodes.sort((a, b) => a.name.localeCompare(b.name))
+        nodes.forEach((n) => sortNodes(n.children))
+    }
+    sortNodes(root)
+    return root
+}
+
+function OfflineSettings({ accountId, searchQuery = '' }) {
+    const [offlineEnabled, setOfflineEnabled] = useState(false)
+    const [loading, setLoading] = useState(true)
+    const [mailboxLoading, setMailboxLoading] = useState(false)
+    const [mailboxError, setMailboxError] = useState('')
+    const [folders, setFolders] = useState([])
+    const [labels, setLabels] = useState([])
+    const [selectedPrefixes, setSelectedPrefixes] = useState(() => new Set(['all']))
+    const [excludedExact, setExcludedExact] = useState(() => new Set())
+    const [expanded, setExpanded] = useState(() => new Set(['all', 'group:folders', 'group:labels']))
+    const [policyMode, setPolicyMode] = useState('all')
+    const [policyValue, setPolicyValue] = useState('')
+    const [cacheRawRfc822, setCacheRawRfc822] = useState(true)
+    const [saving, setSaving] = useState(false)
+    const [message, setMessage] = useState(null)
+    const offlineBaselineRef = useRef(null)
+
+    const folderTree = useMemo(() => buildTreeNodes(folders, 'folder'), [folders])
+    const labelTree = useMemo(() => buildTreeNodes(labels, 'label'), [labels])
+
+    // Load offline config
+    useEffect(() => {
+        if (!accountId) { setLoading(false); return }
+        let active = true
+        fetch(apiUrl(`/api/offline/${accountId}/config`))
+            .then((r) => r.ok ? r.json() : Promise.reject(r))
+            .then((data) => {
+                if (!active) return
+                const enabled = !!data.enabled
+                const polMode = data.initial_sync_policy?.mode || 'all'
+                const polVal = data.initial_sync_policy?.value != null ? String(data.initial_sync_policy.value) : ''
+                const cacheRaw = data.cache_raw_rfc822 !== false
+                setOfflineEnabled(enabled)
+                setPolicyMode(polMode)
+                setPolicyValue(polVal)
+                setCacheRawRfc822(cacheRaw)
+                // Reconstruct selected prefixes from download rules
+                const rules = Array.isArray(data.download_rules) ? data.download_rules : []
+                const prefixes = new Set()
+                const excluded = new Set()
+                for (const rule of rules) {
+                    if (!rule.is_active) continue
+                    if (rule.rule_type === 'include_prefix') {
+                        if (rule.node_path === '*' && rule.node_type === 'folder') prefixes.add('group:folders')
+                        else if (rule.node_path === '*' && rule.node_type === 'label') prefixes.add('group:labels')
+                        else prefixes.add(`${rule.node_type}:${rule.node_path}`)
+                    } else if (rule.rule_type === 'exclude_exact') {
+                        excluded.add(`${rule.node_type}:${rule.node_path}`)
+                    }
+                }
+                if (prefixes.has('group:folders') && prefixes.has('group:labels')) {
+                    prefixes.clear()
+                    prefixes.add('all')
+                }
+                if (prefixes.size === 0) prefixes.add('all')
+                setSelectedPrefixes(prefixes)
+                setExcludedExact(excluded)
+                offlineBaselineRef.current = cloneOfflineBaseline({
+                    offlineEnabled: enabled,
+                    selectedPrefixes: new Set(prefixes),
+                    excludedExact: new Set(excluded),
+                    policyMode: polMode,
+                    policyValue: polVal,
+                    cacheRawRfc822: cacheRaw,
+                })
+                setLoading(false)
+            })
+            .catch(() => { if (active) setLoading(false) })
+        return () => { active = false }
+    }, [accountId])
+
+    // Load mailboxes from local cache (no password needed)
+    const fetchMailboxes = useCallback(async () => {
+        if (!accountId) return
+        setMailboxLoading(true)
+        setMailboxError('')
+        try {
+            const res = await fetch(apiUrl(`/api/offline/${accountId}/local-mailboxes`))
+            if (!res.ok) throw new Error('Unable to load mailboxes')
+            const data = await res.json()
+            setFolders(Array.isArray(data.folders) ? data.folders : [])
+            setLabels(Array.isArray(data.labels) ? data.labels : [])
+        } catch (err) {
+            setMailboxError(err?.message || 'Unable to load mailboxes.')
+        } finally {
+            setMailboxLoading(false)
+        }
+    }, [accountId])
+
+
+    useEffect(() => {
+        if (offlineEnabled && folders.length === 0 && !mailboxLoading && accountId) {
+            fetchMailboxes()
+        }
+    }, [offlineEnabled, accountId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+
+    const hasInheritedSelection = (node) => {
+        if (selectedPrefixes.has('all')) return true
+        if (node.nodeType === 'folder' && selectedPrefixes.has('group:folders')) return true
+        if (node.nodeType === 'label' && selectedPrefixes.has('group:labels')) return true
+        for (const prefix of selectedPrefixes) {
+            if (!prefix.includes(':')) continue
+            if (!prefix.startsWith(`${node.nodeType}:`)) continue
+            const p = prefix.split(':')[1]
+            if (node.valuePath === p || node.valuePath.startsWith(`${p}/`)) return true
+        }
+        return false
+    }
+
+    const isIncluded = (node) => {
+        if (!node.real) {
+            if (node.key === 'all') return selectedPrefixes.has('all')
+            if (node.key === 'group:folders') return selectedPrefixes.has('group:folders')
+            if (node.key === 'group:labels') return selectedPrefixes.has('group:labels')
+            return false
+        }
+        return hasInheritedSelection(node) && !excludedExact.has(node.key)
+    }
+
+    const toggleNode = (node) => {
+        const selected = isIncluded(node)
+        if (selected) {
+            if (selectedPrefixes.has(node.key)) {
+                const next = new Set(selectedPrefixes); next.delete(node.key); setSelectedPrefixes(next); return
+            }
+            if (node.real && hasInheritedSelection(node)) {
+                const nextEx = new Set(excludedExact); nextEx.add(node.key); setExcludedExact(nextEx)
+            } else if (!node.real) {
+                const next = new Set(selectedPrefixes); next.delete(node.key); setSelectedPrefixes(next)
+            }
+            return
+        }
+        if (node.real && hasInheritedSelection(node)) {
+            const nextEx = new Set(excludedExact); nextEx.delete(node.key); setExcludedExact(nextEx); return
+        }
+        const next = new Set(selectedPrefixes); next.add(node.key); setSelectedPrefixes(next)
+    }
+
+    const toggleExpand = (key) => {
+        const next = new Set(expanded)
+        if (next.has(key)) next.delete(key); else next.add(key)
+        setExpanded(next)
+    }
+
+    const offlineSnapshot = useMemo(
+        () => ({
+            offlineEnabled,
+            selectedPrefixes,
+            excludedExact,
+            policyMode,
+            policyValue,
+            cacheRawRfc822,
+        }),
+        [offlineEnabled, selectedPrefixes, excludedExact, policyMode, policyValue, cacheRawRfc822],
+    )
+
+    const offlineDirty = !loading
+        && offlineBaselineRef.current != null
+        && !offlineStateEquals(offlineSnapshot, offlineBaselineRef.current)
+
+    const persistOfflineSettings = useCallback(async () => {
+        if (!accountId) return
+        setSaving(true)
+        setMessage(null)
+        try {
+            const includeRules = []
+            const addInclude = (nodePath, nodeType, source = 'user') => {
+                includeRules.push({ node_path: nodePath, node_type: nodeType, rule_type: 'include_prefix', source })
+            }
+            if (selectedPrefixes.has('all')) {
+                addInclude('*', 'folder', 'inherited')
+                addInclude('*', 'label', 'inherited')
+            } else {
+                if (selectedPrefixes.has('group:folders')) addInclude('*', 'folder', 'inherited')
+                if (selectedPrefixes.has('group:labels')) addInclude('*', 'label', 'inherited')
+            }
+            for (const key of selectedPrefixes) {
+                if (!key.includes(':') || key === 'group:folders' || key === 'group:labels') continue
+                const [nodeType, nodePath] = key.split(':')
+                addInclude(nodePath, nodeType, 'user')
+            }
+            const excludeRules = Array.from(excludedExact).map((key) => {
+                const [nodeType, nodePath] = key.split(':')
+                return { node_path: nodePath, node_type: nodeType, rule_type: 'exclude_exact', source: 'user' }
+            })
+            const dedupe = new Map()
+            for (const rule of [...includeRules, ...excludeRules]) {
+                dedupe.set(`${rule.node_type}|${rule.rule_type}|${rule.node_path}`, rule)
+            }
+            const downloadRules = Array.from(dedupe.values())
+            const normalizedValue = policyMode === 'all' ? null : Number(policyValue || 0)
+
+            const res = await fetch(apiUrl(`/api/offline/${accountId}/config`), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    enabled: offlineEnabled,
+                    download_rules: downloadRules,
+                    initial_sync_policy: {
+                        mode: policyMode,
+                        value: normalizedValue && normalizedValue > 0 ? normalizedValue : null,
+                    },
+                    cache_raw_rfc822: cacheRawRfc822,
+                }),
+            })
+            if (!res.ok) throw new Error('Save failed')
+            offlineBaselineRef.current = cloneOfflineBaseline({
+                offlineEnabled,
+                selectedPrefixes,
+                excludedExact,
+                policyMode,
+                policyValue,
+                cacheRawRfc822,
+            })
+            setMessage({ type: 'success', text: '✅ Offline settings saved.' })
+        } catch {
+            setMessage({ type: 'error', text: '❌ Failed to save offline settings.' })
+            throw new Error('save_failed')
+        } finally {
+            setSaving(false)
+        }
+    }, [accountId, offlineEnabled, selectedPrefixes, excludedExact, policyMode, policyValue, cacheRawRfc822])
+
+    const handleSave = () => {
+        void persistOfflineSettings().catch(() => {})
+    }
+
+    useSettingsDraft('offline', 'Offline', {
+        isDirty: offlineDirty,
+        save: persistOfflineSettings,
+        revert: () => {
+            const base = offlineBaselineRef.current
+            if (!base) return
+            setOfflineEnabled(base.offlineEnabled)
+            setSelectedPrefixes(new Set(base.selectedPrefixes))
+            setExcludedExact(new Set(base.excludedExact))
+            setPolicyMode(base.policyMode)
+            setPolicyValue(base.policyValue)
+            setCacheRawRfc822(base.cacheRawRfc822)
+        },
+    })
+
+    const renderNode = (node, depth = 0) => {
+        const hasChildren = Array.isArray(node.children) && node.children.length > 0
+        const open = expanded.has(node.key)
+        return (
+            <div key={node.key} className="sp-off-node">
+                <div className="sp-off-node__row" style={{ paddingLeft: `${depth * 14}px` }}>
+                    {hasChildren ? (
+                        <button type="button" className={`sp-off-chevron ${open ? 'open' : ''}`} onClick={() => toggleExpand(node.key)}>❯</button>
+                    ) : (
+                        <span className="sp-off-chevron-placeholder" />
+                    )}
+                    <label className="sp-off-node__label">
+                        <input type="checkbox" checked={isIncluded(node)} onChange={() => toggleNode(node)} />
+                        <span><HighlightMatch text={node.name} query={searchQuery} /></span>
+                    </label>
+                </div>
+                {hasChildren && open && (
+                    <div className="sp-off-node__children">{node.children.map((child) => renderNode(child, depth + 1))}</div>
+                )}
+            </div>
+        )
+    }
+
+    const tree = [{
+        key: 'all', name: 'all', real: false,
+        children: [
+            { key: 'group:folders', name: 'Folders', real: false, children: folderTree },
+            { key: 'group:labels', name: 'Labels', real: false, children: labelTree },
+        ],
+    }]
+
+    if (loading) {
+        return (
+            <div className="sp-section">
+                <h2 className="sp-section__title"><HighlightMatch text="Offline" query={searchQuery} /></h2>
+                <div className="sp-loading-row"><div className="sp-spinner" /><span>Loading…</span></div>
+            </div>
+        )
+    }
+
+    return (
+        <div className="sp-section">
+            <h2 className="sp-section__title"><HighlightMatch text="Offline" query={searchQuery} /></h2>
+            <p className="sp-section__desc"><HighlightMatch text="Configure offline sync and email caching." query={searchQuery} /></p>
+
+            {/* Toggle */}
+            <div className="sp-toggle-row">
+                <div className="sp-toggle-row__info">
+                    <span className="sp-toggle-row__label"><HighlightMatch text="Enable Offline Mode" query={searchQuery} /></span>
+                    <span className="sp-toggle-row__sub"><HighlightMatch text="Download emails locally for offline access" query={searchQuery} /></span>
+                </div>
+                <button
+                    type="button"
+                    role="switch"
+                    aria-checked={offlineEnabled}
+                    className={`sp-toggle ${offlineEnabled ? 'on' : ''}`}
+                    onClick={() => setOfflineEnabled((v) => !v)}
+                >
+                    <span className="sp-toggle__knob" />
+                </button>
+            </div>
+
+            {offlineEnabled && (
+                <>
+                    <div className="sp-section-divider" style={{ margin: '20px 0' }} />
+
+                    {/* Mailbox selector */}
+                    <div className="sp-off-section">
+                        <h3 className="sp-off-section__title"><HighlightMatch text="Folders & Labels to Sync" query={searchQuery} /></h3>
+                        {mailboxLoading ? (
+                            <div className="sp-loading-row"><div className="sp-spinner" /><span>Loading mailboxes…</span></div>
+                        ) : mailboxError ? (
+                            <div className="sp-off-error">
+                                <p>{mailboxError}</p>
+                                <button type="button" className="sp-ghost-btn" onClick={fetchMailboxes}>Try again</button>
+                            </div>
+                        ) : (
+                            <div className="sp-off-tree">{tree.map((node) => renderNode(node))}</div>
+                        )}
+                    </div>
+
+                    <div className="sp-section-divider" style={{ margin: '20px 0' }} />
+
+                    {/* Download policy */}
+                    <div className="sp-off-section">
+                        <h3 className="sp-off-section__title"><HighlightMatch text="Initial Download Policy" query={searchQuery} /></h3>
+                        <div className="sp-radio-group">
+                            {[
+                                { value: 'all', label: 'All Emails' },
+                                { value: 'by_days', label: 'By Days' },
+                                { value: 'by_count', label: 'By Mail Count' },
+                            ].map(({ value, label }) => (
+                                <label key={value} className="sp-radio-label">
+                                    <input
+                                        type="radio"
+                                        name="offlinePolicyMode"
+                                        value={value}
+                                        checked={policyMode === value}
+                                        onChange={() => setPolicyMode(value)}
+                                    />
+                                    <HighlightMatch text={label} query={searchQuery} />
+                                </label>
+                            ))}
+                        </div>
+                        {policyMode !== 'all' && (
+                            <input
+                                className="sp-number-input"
+                                type="number"
+                                min="1"
+                                value={policyValue}
+                                placeholder={policyMode === 'by_days' ? '30' : '1000'}
+                                onChange={(e) => setPolicyValue(e.target.value)}
+                            />
+                        )}
+                        <label className="sp-checkbox-label" style={{ marginTop: '14px' }}>
+                            <input
+                                type="checkbox"
+                                checked={cacheRawRfc822}
+                                onChange={(e) => setCacheRawRfc822(e.target.checked)}
+                            />
+                            <span><HighlightMatch text="Cache attachments for offline use" query={searchQuery} /></span>
+                        </label>
+                    </div>
+                </>
+            )}
+
+            {message && (
+                <div className={`sp-form-message sp-form-message--${message.type}`} style={{ marginTop: '16px' }}>
+                    {message.text}
+                </div>
+            )}
+
+            <button
+                type="button"
+                className="sp-save-btn"
+                style={{ marginTop: '20px' }}
+                disabled={saving}
+                onClick={handleSave}
+            >
+                {saving ? 'Saving…' : 'Save Offline Settings'}
+            </button>
+        </div>
+    )
+}
+
+/* ─── Encryption settings panel ─────────────────────────────────── */
+function EncryptionSettings({ searchQuery = '' }) {
+    const [dataEncrypted, setDataEncrypted] = useState(true)
+    const [loginPolicy, setLoginPolicy] = useState('pc_only')
+    const [loading, setLoading] = useState(true)
+    const [saving, setSaving] = useState(false)
+    const [saveMsg, setSaveMsg] = useState(null)
+    const [confirmDisable, setConfirmDisable] = useState(false) // show confirmation dialog
+    const baselineEncRef = useRef(null)
+    const encStateRef = useRef({ dataEncrypted: true, loginPolicy: 'pc_only' })
+    useLayoutEffect(() => {
+        encStateRef.current = { dataEncrypted, loginPolicy }
+    }, [dataEncrypted, loginPolicy])
+
+    // Load from backend on mount
+    useEffect(() => {
+        let active = true
+        fetch(apiUrl('/api/security/settings'))
+            .then((r) => r.ok ? r.json() : Promise.reject(r))
+            .then((data) => {
+                if (!active) return
+                const enc = data.data_encrypted !== false
+                const pol = data.login_policy || 'pc_only'
+                baselineEncRef.current = { dataEncrypted: enc, loginPolicy: pol }
+                setDataEncrypted(enc)
+                setLoginPolicy(pol)
+                setLoading(false)
+            })
+            .catch(() => { if (active) setLoading(false) })
+        return () => { active = false }
+    }, [])
+
+    const handleToggleEncryption = () => {
+        if (dataEncrypted) {
+            // About to disable — show confirmation first
+            setConfirmDisable(true)
+        } else {
+            // Re-enabling is safe — no confirmation needed
+            setDataEncrypted(true)
+            setSaveMsg(null)
+        }
+    }
+
+    const confirmDisableEncryption = () => {
+        setDataEncrypted(false)
+        setConfirmDisable(false)
+        setSaveMsg(null)
+    }
+
+    const persistEncryptionSettings = useCallback(async () => {
+        setSaving(true)
+        setSaveMsg(null)
+        try {
+            const { dataEncrypted: enc, loginPolicy: pol } = encStateRef.current
+            const res = await fetch(apiUrl('/api/security/settings'), {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ data_encrypted: enc, login_policy: pol }),
+            })
+            if (!res.ok) throw new Error('Save failed')
+            baselineEncRef.current = { dataEncrypted: enc, loginPolicy: pol }
+            setSaveMsg({
+                type: 'success',
+                text: enc
+                    ? '✅ Settings saved.'
+                    : '✅ Settings saved. Restart the app — data will be decrypted on next launch.',
+            })
+        } catch {
+            setSaveMsg({ type: 'error', text: '❌ Failed to save settings.' })
+            throw new Error('save_failed')
+        } finally {
+            setSaving(false)
+        }
+    }, [])
+
+    const handleSave = () => {
+        void persistEncryptionSettings().catch(() => {})
+    }
+
+    const bEnc = baselineEncRef.current
+    const encDirty = !loading && bEnc != null && (
+        dataEncrypted !== bEnc.dataEncrypted
+        || loginPolicy !== bEnc.loginPolicy
+    )
+    useSettingsDraft('encryption', 'Encryption', {
+        isDirty: encDirty,
+        save: persistEncryptionSettings,
+        revert: () => {
+            const base = baselineEncRef.current
+            if (!base) return
+            setDataEncrypted(base.dataEncrypted)
+            setLoginPolicy(base.loginPolicy)
+        },
+    })
+
+    const LOGIN_POLICIES = [
+        {
+            value: 'none',
+            label: 'Do not ask for a password',
+            sub: 'The app opens without any password prompt',
+        },
+        {
+            value: 'pc_only',
+            label: 'PC password only',
+            sub: 'Your system keyring protects the encryption key — no extra prompt',
+            recommended: true,
+        },
+        {
+            value: 'both',
+            label: 'PC password + account password',
+            sub: 'Two-step: system keyring unlock + your email account password',
+        },
+        {
+            value: 'account_only',
+            label: 'Account password only',
+            sub: 'Only your email account password is required on launch',
+            unrecommended: true,
+        },
+    ]
+
+    if (loading) {
+        return (
+            <div className="sp-section">
+                <h2 className="sp-section__title"><HighlightMatch text="Encryption" query={searchQuery} /></h2>
+                <div className="sp-loading-row"><div className="sp-spinner" /><span>Loading…</span></div>
+            </div>
+        )
+    }
+
+    return (
+        <div className="sp-section">
+            <h2 className="sp-section__title"><HighlightMatch text="Encryption" query={searchQuery} /></h2>
+            <p className="sp-section__desc">
+                <HighlightMatch text="Control how your data is protected at rest and which credential is required on launch." query={searchQuery} />
+            </p>
+
+            {/* Disable-encryption confirmation dialog */}
+            {confirmDisable && (
+                <div className="sp-confirm-box sp-confirm-box--warn">
+                    <div className="sp-confirm-box__icon" aria-hidden="true">⚠️</div>
+                    <div className="sp-confirm-box__body">
+                        <p className="sp-confirm-box__title">Disable encryption?</p>
+                        <p className="sp-confirm-box__desc">
+                            This will decrypt all locally stored emails and credentials on the next app
+                            restart. Your data will be stored as plain SQLite — anyone with file access
+                            can read it. <strong>Not recommended.</strong>
+                        </p>
+                        <div className="sp-confirm-box__actions">
+                            <button
+                                type="button"
+                                className="sp-confirm-btn sp-confirm-btn--danger"
+                                onClick={confirmDisableEncryption}
+                            >
+                                Disable encryption (not recommended)
+                            </button>
+                            <button
+                                type="button"
+                                className="sp-ghost-btn"
+                                onClick={() => setConfirmDisable(false)}
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Data encryption toggle */}
+            <div className="sp-toggle-row" style={{ marginBottom: '20px' }}>
+                <div className="sp-toggle-row__info">
+                    <span className="sp-toggle-row__label">
+                        <HighlightMatch text="Encrypt stored data" query={searchQuery} />
+                        {dataEncrypted
+                            ? <span className="sp-badge sp-badge--recommended">Recommended</span>
+                            : <span className="sp-badge sp-badge--warn">Not recommended</span>}
+                    </span>
+                    <span className="sp-toggle-row__sub">
+                        <HighlightMatch
+                            text={dataEncrypted
+                                ? 'AES-256 (SQLCipher + XChaCha20) — all local data is encrypted'
+                                : 'Encryption disabled — data stored as plaintext SQLite'}
+                            query={searchQuery}
+                        />
+                    </span>
+                </div>
+                <button
+                    type="button"
+                    role="switch"
+                    aria-checked={dataEncrypted}
+                    className={`sp-toggle ${dataEncrypted ? 'on' : ''}`}
+                    onClick={handleToggleEncryption}
+                >
+                    <span className="sp-toggle__knob" />
+                </button>
+            </div>
+
+            <div className="sp-section-divider" style={{ margin: '0 0 20px' }} />
+
+            {/* Login password policy */}
+            <div className="sp-enc-policy">
+                <h3 className="sp-off-section__title"><HighlightMatch text="Password prompt on launch" query={searchQuery} /></h3>
+                <div className="sp-enc-policy-list">
+                    {LOGIN_POLICIES.map(({ value, label, sub, recommended, unrecommended }) => (
+                        <label
+                            key={value}
+                            className={`sp-policy-card ${loginPolicy === value ? 'active' : ''} ${unrecommended ? 'unrecommended' : ''}`}
+                        >
+                            <input
+                                type="radio"
+                                name="loginPolicy"
+                                value={value}
+                                checked={loginPolicy === value}
+                                onChange={() => setLoginPolicy(value)}
+                            />
+                            <div className="sp-policy-card__body">
+                                <span className="sp-policy-card__label">
+                                    <HighlightMatch text={label} query={searchQuery} />
+                                    {recommended && <span className="sp-badge sp-badge--recommended">Recommended</span>}
+                                    {unrecommended && <span className="sp-badge sp-badge--warn">Not recommended</span>}
+                                </span>
+                                <span className="sp-policy-card__sub"><HighlightMatch text={sub} query={searchQuery} /></span>
+                            </div>
+                        </label>
+                    ))}
+                </div>
+            </div>
+
+            {saveMsg && (
+                <div className={`sp-form-message sp-form-message--${saveMsg.type}`} style={{ marginTop: '16px' }}>
+                    {saveMsg.text}
+                </div>
+            )}
+
+            <button
+                type="button"
+                className="sp-save-btn"
+                style={{ marginTop: '20px' }}
+                onClick={handleSave}
+                disabled={saving}
+            >
+                {saving ? 'Saving…' : 'Save Settings'}
+            </button>
+        </div>
+    )
+}
+
+/* ─── Blocked Senders setting panel ─────────────────────────────────── */
+function BlockedSendersSettings({ accountId, searchQuery = '' }) {
+    const [rules, setRules] = useState([])
+    const [loading, setLoading] = useState(true)
+    const [actioning, setActioning] = useState(false)
+    const [message, setMessage] = useState(null)
+    const [newSender, setNewSender] = useState('')
+    const [newAction, setNewAction] = useState('Trash')
+    const [folders, setFolders] = useState([])
+    const [newTargetFolder, setNewTargetFolder] = useState('')
+
+    const fetchRules = useCallback(async () => {
+        if (!accountId) return
+        setLoading(true)
+        try {
+            const res = await fetch(apiUrl(`/api/offline/${accountId}/blocked-senders`))
+            if (res.ok) setRules(await res.json())
+        } catch (e) {
+            setMessage({ type: 'error', text: 'Failed to load blocked senders' })
+        } finally {
+            setLoading(false)
+        }
+    }, [accountId])
+
+    const fetchFolders = useCallback(async () => {
+        if (!accountId) return
+        try {
+            const res = await fetch(apiUrl(`/api/offline/${accountId}/local-mailboxes`))
+            if (res.ok) {
+                const data = await res.json()
+                const f = Array.isArray(data.folders) ? data.folders : []
+                setFolders(f)
+                if (f.length > 0) setNewTargetFolder(f[0])
+            }
+        } catch (e) {}
+    }, [accountId])
+
+    useEffect(() => { 
+        fetchRules()
+        fetchFolders()
+    }, [fetchRules, fetchFolders])
+
+    const unblock = async (id) => {
+        if (!accountId) return
+        setActioning(true)
+        setMessage(null)
+        try {
+            const res = await fetch(apiUrl(`/api/offline/${accountId}/blocked-senders/${id}`), { method: 'DELETE' })
+            if (!res.ok) throw new Error()
+            setRules(prev => prev.filter(r => r.id !== id))
+            setMessage({ type: 'success', text: 'Unblocked successfully.' })
+        } catch {
+            setMessage({ type: 'error', text: 'Failed to unblock sender.' })
+        } finally {
+            setActioning(false)
+        }
+    }
+
+    const addRule = async (e) => {
+        e.preventDefault()
+        if (!accountId || !newSender) return
+        setActioning(true)
+        setMessage(null)
+        let targetFolder = null
+        let actionEnum = 'move'
+        if (newAction === 'Delete') actionEnum = 'delete'
+        else if (newAction === 'Archive') targetFolder = 'Archive'
+        else if (newAction === 'Spam') targetFolder = 'Spam'
+        else if (newAction === 'Folder') {
+            if (!newTargetFolder) {
+                setMessage({ type: 'error', text: 'Please select a specific folder.' })
+                setActioning(false)
+                return
+            }
+            targetFolder = newTargetFolder
+        }
+        else targetFolder = 'Trash'
+
+        try {
+            const res = await fetch(apiUrl(`/api/offline/${accountId}/blocked-senders`), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sender: newSender.trim(),
+                    action_type: actionEnum,
+                    target_folder: targetFolder,
+                    apply_to_existing: false
+                })
+            })
+            if (!res.ok) throw new Error()
+            const created = await res.json()
+            setRules(prev => [created, ...prev])
+            setNewSender('')
+            setMessage({ type: 'success', text: 'Added to blocked list.' })
+        } catch {
+            setMessage({ type: 'error', text: 'Failed to add block rule.' })
+        } finally {
+            setActioning(false)
+        }
+    }
+
+    if (loading) {
+        return (
+            <div className="sp-section">
+                <h2 className="sp-section__title"><HighlightMatch text="Blocked Senders" query={searchQuery} /></h2>
+                <div className="sp-loading-row"><div className="sp-spinner" /><span>Loading…</span></div>
+            </div>
+        )
+    }
+
+    return (
+        <div className="sp-section">
+            <h2 className="sp-section__title"><HighlightMatch text="Blocked Senders" query={searchQuery} /></h2>
+            <p className="sp-section__desc"><HighlightMatch text="Manage email addresses that are automatically deleted, moved to spam, or archived." query={searchQuery} /></p>
+            
+            <form onSubmit={addRule} className="sp-add-block-form" style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+                <input 
+                    type="text" 
+                    className="sp-search-input" 
+                    placeholder="example@spam.com" 
+                    value={newSender}
+                    onChange={e => setNewSender(e.target.value)}
+                    style={{ flex: 1, border: '1px solid var(--border-color)', padding: '0 12px', borderRadius: '6px', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-color)' }}
+                    required
+                />
+                <select 
+                    className="sp-search-input" 
+                    value={newAction}
+                    onChange={e => setNewAction(e.target.value)}
+                    style={{ minWidth: '140px', width: 'auto', border: '1px solid var(--border-color)', padding: '0 12px', borderRadius: '6px', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-color)' }}
+                >
+                    <option value="Trash">Move to Trash</option>
+                    <option value="Spam">Move to Spam</option>
+                    <option value="Delete">Delete</option>
+                    <option value="Archive">Archive</option>
+                    <option value="Folder">Move to Folder...</option>
+                </select>
+                
+                {newAction === 'Folder' && (
+                    <select 
+                        className="sp-search-input" 
+                        value={newTargetFolder}
+                        onChange={e => setNewTargetFolder(e.target.value)}
+                        style={{ minWidth: '140px', width: 'auto', border: '1px solid var(--border-color)', padding: '0 12px', borderRadius: '6px', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-color)' }}
+                    >
+                        <option value="" disabled>Select Folder...</option>
+                        {folders.map(f => (
+                            <option key={f} value={f}>{f.split('/').pop() || f}</option>
+                        ))}
+                    </select>
+                )}
+                
+                <button type="submit" className="sp-save-btn" disabled={actioning} style={{ padding: '0 16px', margin: 0, height: '36px' }}>Add</button>
+            </form>
+
+            <div className="sp-block-list" style={{ border: '1px solid var(--border-color)', borderRadius: '6px', overflow: 'hidden' }}>
+                {rules.length === 0 ? (
+                    <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px' }}>
+                        No blocked senders.
+                    </div>
+                ) : (
+                    rules.map(r => (
+                        <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', borderBottom: '1px solid var(--border-color)', fontSize: '13px' }}>
+                            <div>
+                                <div style={{ fontWeight: 500, color: 'var(--text-color)' }}>{r.sender}</div>
+                                <div style={{ color: 'var(--text-muted)', fontSize: '12px', marginTop: '2px' }}>
+                                    {r.action_type === 'delete' ? 'Delete immediately' : `Move to ${r.target_folder}`}
+                                </div>
+                            </div>
+                            <button 
+                                type="button" 
+                                onClick={() => unblock(r.id)}
+                                disabled={actioning}
+                                className="sp-ghost-btn"
+                                style={{ padding: '4px 8px', color: 'var(--color-danger)' }}
+                            >
+                                Unblock
+                            </button>
+                        </div>
+                    ))
+                )}
+            </div>
+            
+            {message && (
+                <div className={`sp-form-message sp-form-message--${message.type}`} style={{ marginTop: '16px' }}>
+                    {message.text}
+                </div>
+            )}
+        </div>
+    )
+}
+
+function isLabelMailbox(value) {
+    return /^(Labels|Labels|\[Labels\])(\/|$)/i.test((value || '').trim())
+}
+function isMailboxSectionRoot(value) {
+    return ['Folders', 'Labels', 'Labels'].includes((value || '').trim())
+}
+const MAILBOX_COUNT_DISPLAY_OPTIONS = [
+    { value: 'unread_only', label: 'Unread count only' },
+    { value: 'total_only', label: 'Total count only' },
+    { value: 'both', label: 'Both counts' },
+    { value: 'none', label: 'Hide counts' },
+]
+
+function MailboxListCountDisplaySettings({ accountId, onRefreshAccount, searchQuery = '' }) {
+    const [mode, setMode] = useState('both')
+    const [loading, setLoading] = useState(true)
+    const [saving, setSaving] = useState(false)
+    const [message, setMessage] = useState(null)
+    const baselineModeRef = useRef(null)
+
+    useEffect(() => {
+        if (!accountId) {
+            setLoading(false)
+            return
+        }
+        let active = true
+        fetch(apiUrl(`/api/account/${accountId}/settings`), { cache: 'no-store' })
+            .then((r) => (r.ok ? r.json() : Promise.reject(r)))
+            .then((data) => {
+                if (!active) return
+                const m = ((data.mailboxCountDisplay ?? data.mailbox_count_display) || 'both').toString().toLowerCase()
+                const next = ['unread_only', 'total_only', 'both', 'none'].includes(m) ? m : 'both'
+                baselineModeRef.current = next
+                setMode(next)
+                setLoading(false)
+            })
+            .catch(() => {
+                if (active) setLoading(false)
+            })
+        return () => {
+            active = false
+        }
+    }, [accountId])
+
+    const modeRef = useRef(mode)
+    useLayoutEffect(() => {
+        modeRef.current = mode
+    }, [mode])
+
+    const persistMailboxCountMode = useCallback(async () => {
+        if (!accountId) return
+        setSaving(true)
+        setMessage(null)
+        try {
+            const current = modeRef.current
+            const resp = await fetch(apiUrl(`/api/account/${accountId}/mailbox-count-display`), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: current }),
+            })
+            if (!resp.ok) throw new Error('Save failed')
+            baselineModeRef.current = current
+            setMessage({ type: 'success', text: '✅ Sidebar counts preference saved.' })
+            if (onRefreshAccount) onRefreshAccount()
+        } catch {
+            setMessage({ type: 'error', text: '❌ Failed to save.' })
+            throw new Error('save_failed')
+        } finally {
+            setSaving(false)
+        }
+    }, [accountId, onRefreshAccount])
+
+    const handleSave = () => {
+        void persistMailboxCountMode().catch(() => {})
+    }
+
+    const countDirty = !loading && baselineModeRef.current != null && mode !== baselineModeRef.current
+    useSettingsDraft('mailbox-count-display', 'Sidebar counts', {
+        isDirty: countDirty,
+        save: persistMailboxCountMode,
+        revert: () => {
+            if (baselineModeRef.current != null) setMode(baselineModeRef.current)
+        },
+    })
+
+    if (loading) {
+        return (
+            <div className="sp-section">
+                <div className="sp-loading-row">
+                    <div className="sp-spinner" />
+                    <span>Loading…</span>
+                </div>
+            </div>
+        )
+    }
+
+    return (
+        <div className="sp-section">
+            <h2 className="sp-section__title"><HighlightMatch text="Sidebar mail counts" query={searchQuery} /></h2>
+            <p className="sp-section__desc">
+                <HighlightMatch text="Choose how unread and total message counts appear next to each mailbox and label in the sidebar." query={searchQuery} />
+            </p>
+            <div className="sp-radio-group sp-radio-group--stacked">
+                {MAILBOX_COUNT_DISPLAY_OPTIONS.map((opt) => (
+                    <label key={opt.value} className="sp-radio-label">
+                        <input
+                            type="radio"
+                            name="mailboxCountDisplay"
+                            value={opt.value}
+                            checked={mode === opt.value}
+                            onChange={() => setMode(opt.value)}
+                        />
+                        <HighlightMatch text={opt.label} query={searchQuery} />
+                    </label>
+                ))}
+            </div>
+            {message && (
+                <div className={`sp-form-message sp-form-message--${message.type}`} style={{ marginTop: 16 }}>
+                    {message.text}
+                </div>
+            )}
+            <button type="button" className="sp-save-btn" style={{ marginTop: 20 }} onClick={handleSave} disabled={saving}>
+                {saving ? 'Saving…' : 'Save'}
+            </button>
+        </div>
+    )
+}
+
+/* ─── Mailbox and Label list (order) settings ────────────────────────── */
+function MailboxOrderSettings({ accountId, onRefreshAccount, searchQuery = '' }) {
+    const [mailboxes, setMailboxes] = useState([])
+    const [loading, setLoading] = useState(true)
+    const [saving, setSaving] = useState(false)
+    const [message, setMessage] = useState(null)
+    const baselineMailboxJsonRef = useRef(null)
+    const mailboxesRef = useRef(mailboxes)
+    useLayoutEffect(() => {
+        mailboxesRef.current = mailboxes
+    }, [mailboxes])
+
+    const loadSettings = useCallback(async () => {
+        if (!accountId) return
+        setLoading(true)
+        try {
+            const [boxRes, setRes] = await Promise.all([
+                fetch(apiUrl(`/api/offline/${accountId}/local-mailboxes`), { cache: 'no-store' }),
+                fetch(apiUrl(`/api/account/${accountId}/settings`), { cache: 'no-store' }),
+            ])
+            const boxData = await boxRes.json()
+            const setData = await setRes.json()
+
+            const normalized = normalizeMailboxResponse(boxData)
+            let list = dedupeStringsCaseInsensitive(normalized.allMailboxes).filter(
+                (m) => !isLabelMailbox(m) && !isMailboxSectionRoot(m),
+            )
+
+            const savedOrder = parseSavedOrderFromSettings(setData, 'mailboxOrder', 'mailbox_order')
+            list = sortWithSavedOrder(list, savedOrder, compareMailboxesDefaultOrder)
+            baselineMailboxJsonRef.current = JSON.stringify(list)
+            setMailboxes(list)
+        } catch (err) {
+            console.error(err)
+        } finally {
+            setLoading(false)
+        }
+    }, [accountId])
+
+    useEffect(() => {
+        loadSettings()
+    }, [loadSettings])
+
+    const move = (index, direction) => {
+        const next = [...mailboxes]
+        const target = index + direction
+        if (target < 0 || target >= next.length) return
+        const [moved] = next.splice(index, 1)
+        next.splice(target, 0, moved)
+        setMailboxes(next)
+    }
+
+    const persistMailboxOrder = useCallback(async () => {
+        if (!accountId) return
+        setSaving(true)
+        setMessage(null)
+        try {
+            const order = mailboxesRef.current
+            const resp = await fetch(apiUrl(`/api/account/${accountId}/mailbox-order`), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ order }),
+            })
+            if (!resp.ok) throw new Error('Save failed')
+            baselineMailboxJsonRef.current = JSON.stringify(order)
+            setMessage({ type: 'success', text: '✅ Mailbox order saved.' })
+            if (onRefreshAccount) onRefreshAccount()
+        } catch (err) {
+            setMessage({ type: 'error', text: `❌ Error: ${err.message}` })
+            throw err
+        } finally {
+            setSaving(false)
+        }
+    }, [accountId, onRefreshAccount])
+
+    const handleSave = () => {
+        void persistMailboxOrder().catch(() => {})
+    }
+
+    const orderDirty = !loading
+        && baselineMailboxJsonRef.current != null
+        && JSON.stringify(mailboxes) !== baselineMailboxJsonRef.current
+    useSettingsDraft('mailbox-order', 'Mailbox order', {
+        isDirty: orderDirty,
+        save: persistMailboxOrder,
+        revert: () => {
+            const raw = baselineMailboxJsonRef.current
+            if (raw != null) setMailboxes(JSON.parse(raw))
+        },
+    })
+
+    const handleReset = () => {
+        setMailboxes((prev) => sortWithSavedOrder([...prev], [], compareMailboxesDefaultOrder))
+    }
+
+    if (loading) return <div className="sp-section"><div className="sp-loading-row"><div className="sp-spinner" /><span>Loading…</span></div></div>
+
+    return (
+        <div className="sp-section">
+            <h2 className="sp-section__title"><HighlightMatch text="Mailbox list" query={searchQuery} /></h2>
+            <p className="sp-section__desc"><HighlightMatch text="Use the arrows to reorder mailboxes in the sidebar." query={searchQuery} /></p>
+            <div className="sp-order-list">
+                {mailboxes.map((m, i) => (
+                    <div key={m} className="sp-order-item">
+                        <span className="sp-order-item__label"><HighlightMatch text={m.split('/').pop() || m} query={searchQuery} /></span>
+                        <div className="sp-order-item__actions">
+                            <button onClick={() => move(i, -1)} disabled={i === 0}>↑</button>
+                            <button onClick={() => move(i, 1)} disabled={i === mailboxes.length - 1}>↓</button>
+                        </div>
+                    </div>
+                ))}
+            </div>
+            {message && <div className={`sp-form-message sp-form-message--${message.type}`} style={{marginTop: 16}}>{message.text}</div>}
+            <div style={{display: 'flex', gap: 12, marginTop: 20}}>
+                <button className="sp-save-btn" onClick={handleSave} disabled={saving}>Save Order</button>
+                <button className="sp-save-btn" style={{background: 'var(--c-surface-3)', color: 'var(--c-text-1)'}} onClick={handleReset} disabled={saving}>Reset to Default</button>
             </div>
         </div>
     )
 }
 
-/* ─── SMTP settings panel ───────────────────────────────────────── */
-function SmtpSettings() {
+function LabelOrderSettings({ accountId, onRefreshAccount, searchQuery = '' }) {
+    const [labels, setLabels] = useState([])
+    const [loading, setLoading] = useState(true)
+    const [saving, setSaving] = useState(false)
+    const [message, setMessage] = useState(null)
+    const baselineLabelsJsonRef = useRef(null)
+    const labelsRef = useRef(labels)
+    useLayoutEffect(() => {
+        labelsRef.current = labels
+    }, [labels])
+
+    const loadSettings = useCallback(async () => {
+        if (!accountId) return
+        setLoading(true)
+        try {
+            const [boxRes, setRes] = await Promise.all([
+                fetch(apiUrl(`/api/offline/${accountId}/local-mailboxes`), { cache: 'no-store' }),
+                fetch(apiUrl(`/api/account/${accountId}/settings`), { cache: 'no-store' }),
+            ])
+            const boxData = await boxRes.json()
+            const setData = await setRes.json()
+
+            const normalized = normalizeMailboxResponse(boxData)
+            let list = dedupeStringsCaseInsensitive(normalized.labels)
+
+            const savedOrder = parseSavedOrderFromSettings(setData, 'labelOrder', 'label_order')
+            list = sortWithSavedOrder(list, savedOrder, (a, b) => a.localeCompare(b))
+            baselineLabelsJsonRef.current = JSON.stringify(list)
+            setLabels(list)
+        } catch (err) {
+            console.error(err)
+        } finally {
+            setLoading(false)
+        }
+    }, [accountId])
+
+    useEffect(() => {
+        loadSettings()
+    }, [loadSettings])
+
+    const move = (index, direction) => {
+        const next = [...labels]
+        const target = index + direction
+        if (target < 0 || target >= next.length) return
+        const [moved] = next.splice(index, 1)
+        next.splice(target, 0, moved)
+        setLabels(next)
+    }
+
+    const persistLabelOrder = useCallback(async () => {
+        if (!accountId) return
+        setSaving(true)
+        setMessage(null)
+        try {
+            const order = labelsRef.current
+            const resp = await fetch(apiUrl(`/api/account/${accountId}/label-order`), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ order }),
+            })
+            if (!resp.ok) throw new Error('Save failed')
+            baselineLabelsJsonRef.current = JSON.stringify(order)
+            setMessage({ type: 'success', text: '✅ Label order saved.' })
+            if (onRefreshAccount) onRefreshAccount()
+        } catch (err) {
+            setMessage({ type: 'error', text: `❌ Error: ${err.message}` })
+            throw err
+        } finally {
+            setSaving(false)
+        }
+    }, [accountId, onRefreshAccount])
+
+    const handleSave = () => {
+        void persistLabelOrder().catch(() => {})
+    }
+
+    const labelOrderDirty = !loading
+        && baselineLabelsJsonRef.current != null
+        && JSON.stringify(labels) !== baselineLabelsJsonRef.current
+    useSettingsDraft('label-order', 'Label order', {
+        isDirty: labelOrderDirty,
+        save: persistLabelOrder,
+        revert: () => {
+            const raw = baselineLabelsJsonRef.current
+            if (raw != null) setLabels(JSON.parse(raw))
+        },
+    })
+
+    const handleReset = () => {
+        setLabels((prev) => sortWithSavedOrder([...prev], [], (a, b) => a.localeCompare(b)))
+    }
+
+    if (loading) return <div className="sp-section"><div className="sp-loading-row"><div className="sp-spinner" /><span>Loading…</span></div></div>
+
     return (
         <div className="sp-section">
-            <h2 className="sp-section__title">SMTP</h2>
-            <p className="sp-section__desc">Outgoing mail server settings.</p>
-            <div className="sp-placeholder">
-                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
-                </svg>
-                <span>SMTP ayarları yakında eklenecek</span>
+            <h2 className="sp-section__title"><HighlightMatch text="Label list" query={searchQuery} /></h2>
+            <p className="sp-section__desc"><HighlightMatch text="Reorder labels in the sidebar using the arrows below." query={searchQuery} /></p>
+            <div className="sp-order-list">
+                {labels.length === 0 && <div className="sp-empty-row">No labels found.</div>}
+                {labels.map((m, i) => (
+                    <div key={m} className="sp-order-item">
+                        <span className="sp-order-item__label"><HighlightMatch text={m.split('/').pop() || m} query={searchQuery} /></span>
+                        <div className="sp-order-item__actions">
+                            <button onClick={() => move(i, -1)} disabled={i === 0}>↑</button>
+                            <button onClick={() => move(i, 1)} disabled={i === labels.length - 1}>↓</button>
+                        </div>
+                    </div>
+                ))}
+            </div>
+            {message && <div className={`sp-form-message sp-form-message--${message.type}`} style={{marginTop: 16}}>{message.text}</div>}
+            <div style={{display: 'flex', gap: 12, marginTop: 20}}>
+                <button className="sp-save-btn" onClick={handleSave} disabled={saving}>Save Order</button>
+                <button className="sp-save-btn" style={{background: 'var(--c-surface-3)', color: 'var(--c-text-1)'}} onClick={handleReset} disabled={saving}>Reset to Default</button>
             </div>
         </div>
     )
 }
-
 /* ─── Content renderer ──────────────────────────────────────────── */
-function renderContent(selection) {
+function renderContent(selection, accountId, onClose, onRefreshAccount, searchQuery = '', appearance) {
     if (!selection) return null
 
-    // Top-level category → show all children's panels
     const parentCat = CATEGORIES.find((c) => c.id === selection)
     if (parentCat) {
-        return parentCat.children.map((child) => (
+        return parentCat.children.map((child, idx) => (
             <React.Fragment key={child.id}>
-                {renderSinglePanel(child.id)}
-                {parentCat.children.indexOf(child) < parentCat.children.length - 1 && (
-                    <div className="sp-section-divider" />
-                )}
+                {renderSinglePanel(child.id, accountId, onClose, onRefreshAccount, searchQuery, appearance)}
+                {idx < parentCat.children.length - 1 && <div className="sp-section-divider" />}
             </React.Fragment>
         ))
     }
 
-    return renderSinglePanel(selection)
+    return renderSinglePanel(selection, accountId, onClose, onRefreshAccount, searchQuery, appearance)
 }
 
-function renderSinglePanel(id) {
+function renderSinglePanel(id, accountId, onClose, onRefreshAccount, searchQuery = '', appearance) {
+    const q = searchQuery.trim().toLowerCase()
+    const {
+        themeDraft,
+        setThemeDraft,
+        themeBaselineRef,
+        fontDraft,
+        setFontDraft,
+        fontBaselineRef,
+        fontReady,
+    } = appearance
     switch (id) {
-        case 'theme': return <ThemeSettings />
-        case 'imap': return <ImapSettings />
-        case 'smtp': return <SmtpSettings />
+        case 'theme': return (
+            <ThemeSettings
+                accountId={accountId}
+                searchQuery={q}
+                themeDraft={themeDraft}
+                setThemeDraft={setThemeDraft}
+                themeBaselineRef={themeBaselineRef}
+            />
+        )
+        case 'font': return (
+            <FontSettings
+                accountId={accountId}
+                searchQuery={q}
+                fontDraft={fontDraft}
+                setFontDraft={setFontDraft}
+                fontBaselineRef={fontBaselineRef}
+                fontReady={fontReady}
+            />
+        )
+        case 'mailbox_label_list': return (
+            <>
+                <MailboxListCountDisplaySettings accountId={accountId} onRefreshAccount={onRefreshAccount} searchQuery={q} />
+                <div className="sp-section-divider" style={{ margin: '32px 0' }} />
+                <MailboxOrderSettings accountId={accountId} onRefreshAccount={onRefreshAccount} searchQuery={q} />
+                <div className="sp-section-divider" style={{ margin: '40px 0' }} />
+                <LabelOrderSettings accountId={accountId} onRefreshAccount={onRefreshAccount} searchQuery={q} />
+            </>
+        )
+        case 'imap': return <ServerSettings accountId={accountId} type="imap" key={`imap-${accountId}`} searchQuery={q} />
+        case 'smtp': return <ServerSettings accountId={accountId} type="smtp" key={`smtp-${accountId}`} searchQuery={q} />
+        case 'offline': return <OfflineSettings accountId={accountId} key={`offline-${accountId}`} searchQuery={q} />
+        case 'blocked': return <BlockedSendersSettings accountId={accountId} key={`blocked-${accountId}`} searchQuery={q} />
+        case 'encryption': return <EncryptionSettings searchQuery={q} />
         default: return null
     }
 }
 
 /* ─── Main component ────────────────────────────────────────────── */
-function SettingsPage({ onClose }) {
+function SettingsPage(props) {
+    const { onClose, onRefreshAccount } = props
     const [search, setSearch] = useState('')
-    const [expanded, setExpanded] = useState({ customization: true, email: true })
-    const [selected, setSelected] = useState('customization')
-    const searchRef = useRef(null)
-
-    // Auto-focus search on open
-    useEffect(() => {
-        searchRef.current?.focus()
-    }, [])
-
-    // Close on Escape
-    useEffect(() => {
-        const handler = (e) => { if (e.key === 'Escape') onClose() }
-        document.addEventListener('keydown', handler)
-        return () => document.removeEventListener('keydown', handler)
-    }, [onClose])
-
     const searchQuery = search.trim().toLowerCase()
-
     const filteredCategories = useMemo(() => {
         if (!searchQuery) return CATEGORIES
         return CATEGORIES
             .map((cat) => {
                 const catMatches = cat.label.toLowerCase().includes(searchQuery)
-                const filteredChildren = cat.children.filter((ch) =>
-                    ch.label.toLowerCase().includes(searchQuery)
-                )
+                const filteredChildren = cat.children.filter((ch) => {
+                    const labelMatches = ch.label.toLowerCase().includes(searchQuery)
+                    const contentMatches = panelMatchesSearch(ch.id, searchQuery)
+                    return labelMatches || contentMatches
+                })
                 if (catMatches || filteredChildren.length > 0) {
                     return { ...cat, children: catMatches ? cat.children : filteredChildren }
                 }
@@ -193,6 +2126,218 @@ function SettingsPage({ onClose }) {
             })
             .filter(Boolean)
     }, [searchQuery])
+    const [expanded, setExpanded] = useState({ appearance: true, email: true, security: true })
+    const [selected, setSelected] = useState('appearance')
+    const searchRef = useRef(null)
+
+    const draftsRef = useRef(new Map())
+    const [draftTick, setDraftTick] = useState(0)
+    const bumpDrafts = useCallback(() => setDraftTick((t) => t + 1), [])
+    const registerDraft = useCallback(
+        (id, entry) => {
+            draftsRef.current.set(id, entry)
+            bumpDrafts()
+        },
+        [bumpDrafts],
+    )
+    const unregisterDraft = useCallback(
+        (id) => {
+            if (draftsRef.current.delete(id)) bumpDrafts()
+        },
+        [bumpDrafts],
+    )
+    const draftContextValue = useMemo(
+        () => ({ register: registerDraft, unregister: unregisterDraft }),
+        [registerDraft, unregisterDraft],
+    )
+
+    const dirtyDraftEntries = useMemo(
+        () => Array.from(draftsRef.current.entries()).map(([id, data]) => ({ id, ...data })),
+        [draftTick],
+    )
+    const dirtyCount = dirtyDraftEntries.length
+
+    const [dockExpanded, setDockExpanded] = useState(false)
+    const [dockSaving, setDockSaving] = useState(false)
+    const [rowSavingId, setRowSavingId] = useState(null)
+    const [quitOpen, setQuitOpen] = useState(false)
+
+    const themeBaselineRef = useRef(getStoredThemePreference())
+    const [themeDraft, setThemeDraft] = useState(() => ({ ...getStoredThemePreference() }))
+    const fontBaselineRef = useRef((localStorage.getItem('font') || 'Inter').trim() || 'Inter')
+    const [fontDraft, setFontDraft] = useState(() => fontBaselineRef.current)
+    const [fontReady, setFontReady] = useState(false)
+
+    const finalizeClose = useCallback(() => {
+        setQuitOpen(false)
+        onClose()
+    }, [onClose])
+
+    const requestClose = useCallback(() => {
+        if (quitOpen) {
+            setQuitOpen(false)
+            return
+        }
+        if (draftsRef.current.size > 0) {
+            setQuitOpen(true)
+            return
+        }
+        onClose()
+    }, [onClose, quitOpen])
+
+    const runSaveAll = useCallback(async () => {
+        const entries = Array.from(draftsRef.current.values())
+        for (const e of entries) {
+            await e.save()
+        }
+        if (onRefreshAccount) await onRefreshAccount()
+    }, [onRefreshAccount])
+
+    const handleDockSaveAll = useCallback(async () => {
+        setDockSaving(true)
+        try {
+            await runSaveAll()
+        } catch (err) {
+            console.error(err)
+        } finally {
+            setDockSaving(false)
+        }
+    }, [runSaveAll])
+
+    const handleDockRevertAll = useCallback(() => {
+        Array.from(draftsRef.current.values()).forEach((e) => e.revert())
+    }, [])
+
+    const handleQuitSaveAll = useCallback(async () => {
+        setDockSaving(true)
+        try {
+            await runSaveAll()
+            finalizeClose()
+        } catch (err) {
+            console.error(err)
+        } finally {
+            setDockSaving(false)
+        }
+    }, [runSaveAll, finalizeClose])
+
+    const handleQuitDiscard = useCallback(() => {
+        Array.from(draftsRef.current.values()).forEach((e) => e.revert())
+        finalizeClose()
+    }, [finalizeClose])
+
+    const handleRowSave = useCallback(
+        async (rowId) => {
+            const e = draftsRef.current.get(rowId)
+            if (!e) return
+            setRowSavingId(rowId)
+            try {
+                await e.save()
+                if (onRefreshAccount) await onRefreshAccount()
+            } catch (err) {
+                console.error(err)
+            } finally {
+                setRowSavingId(null)
+            }
+        },
+        [onRefreshAccount],
+    )
+
+    const handleRowRevert = useCallback((rowId) => {
+        const e = draftsRef.current.get(rowId)
+        if (e) e.revert()
+    }, [])
+
+    // Get current account id from localStorage
+    const accountId = useMemo(() => {
+        const id = localStorage.getItem('current_account_id')
+        return id ? Number(id) : null
+    }, [])
+
+    useEffect(() => {
+        if (!accountId) {
+            const f = (localStorage.getItem('font') || 'Inter').trim() || 'Inter'
+            fontBaselineRef.current = f
+            setFontDraft(f)
+            applyAppFontFamily(f)
+            setFontReady(true)
+            return
+        }
+        let active = true
+        setFontReady(false)
+        fetch(apiUrl(`/api/account/${accountId}/settings`), { cache: 'no-store' })
+            .then((r) => (r.ok ? r.json() : Promise.reject(r)))
+            .then((data) => {
+                if (!active) return
+                const raw = (data.font ?? '').toString().trim()
+                const next = raw || 'Inter'
+                fontBaselineRef.current = next
+                setFontDraft(next)
+                applyAppFontFamily(next)
+                setFontReady(true)
+            })
+            .catch(() => {
+                if (!active) return
+                const f = (localStorage.getItem('font') || 'Inter').trim() || 'Inter'
+                fontBaselineRef.current = f
+                setFontDraft(f)
+                applyAppFontFamily(f)
+                setFontReady(true)
+            })
+        return () => {
+            active = false
+        }
+    }, [accountId])
+
+    const appearance = useMemo(
+        () => ({
+            themeDraft,
+            setThemeDraft,
+            themeBaselineRef,
+            fontDraft,
+            setFontDraft,
+            fontBaselineRef,
+            fontReady,
+        }),
+        [themeDraft, fontDraft, fontReady],
+    )
+
+    useEffect(() => {
+        searchRef.current?.focus()
+    }, [])
+
+    useEffect(() => {
+        if (dirtyCount === 0) setDockExpanded(false)
+    }, [dirtyCount])
+
+    useEffect(() => {
+        if (searchQuery.trim()) {
+            setSelected('search_results')
+        } else {
+            setSelected((prev) => (prev === 'search_results' ? 'appearance' : prev))
+        }
+    }, [searchQuery])
+
+    const handleSelectSearchResults = useCallback(() => {
+        setSelected('search_results')
+    }, [])
+
+    const handleSelectPanelFromSearch = useCallback((panelId) => {
+        const parent = CATEGORIES.find((c) => c.children.some((ch) => ch.id === panelId))
+        if (parent) {
+            setExpanded((prev) => ({ ...prev, [parent.id]: true }))
+        }
+        setSelected(panelId)
+    }, [])
+
+    useEffect(() => {
+        const handler = (e) => {
+            if (e.key !== 'Escape') return
+            e.preventDefault()
+            requestClose()
+        }
+        document.addEventListener('keydown', handler)
+        return () => document.removeEventListener('keydown', handler)
+    }, [requestClose])
 
     const toggleExpand = (id, e) => {
         e.stopPropagation()
@@ -201,14 +2346,15 @@ function SettingsPage({ onClose }) {
 
     const handleSelectParent = (id) => {
         setSelected(id)
-        // Auto-expand when clicking parent
         setExpanded((prev) => ({ ...prev, [id]: true }))
     }
 
     return (
-        <div className="sp-backdrop" onClick={onClose}>
-            <div className="sp-modal" onClick={(e) => e.stopPropagation()}>
-
+        <div className="sp-backdrop" onClick={requestClose}>
+            <div className="sp-settings-wrap">
+            <SettingsDraftContext.Provider value={draftContextValue}>
+                <div className="sp-modal" onClick={(e) => e.stopPropagation()}>
+                    <div className="sp-modal__body">
                 {/* ── Sidebar ── */}
                 <aside className="sp-sidebar">
                     <div className="sp-sidebar__header">
@@ -216,7 +2362,7 @@ function SettingsPage({ onClose }) {
                         <button
                             type="button"
                             className="sp-close-btn"
-                            onClick={onClose}
+                            onClick={requestClose}
                             aria-label="Close settings"
                         >
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
@@ -251,12 +2397,24 @@ function SettingsPage({ onClose }) {
 
                     {/* Tree */}
                     <nav className="sp-tree">
-                        {filteredCategories.length === 0 && (
+                        {searchQuery.trim() && (
+                            <div className="sp-tree__group">
+                                <div
+                                    className={`sp-tree__parent ${selected === 'search_results' ? 'active' : ''}`}
+                                    onClick={handleSelectSearchResults}
+                                    role="button"
+                                    tabIndex={0}
+                                    onKeyDown={(e) => e.key === 'Enter' && handleSelectSearchResults()}
+                                >
+                                    <span className="sp-tree__parent-label">Search Results</span>
+                                </div>
+                            </div>
+                        )}
+                        {filteredCategories.length === 0 && !searchQuery.trim() && (
                             <div className="sp-tree__empty">No results</div>
                         )}
                         {filteredCategories.map((cat) => (
                             <div key={cat.id} className="sp-tree__group">
-                                {/* Parent row */}
                                 <div
                                     className={`sp-tree__parent ${selected === cat.id ? 'active' : ''}`}
                                     onClick={() => handleSelectParent(cat.id)}
@@ -264,7 +2422,9 @@ function SettingsPage({ onClose }) {
                                     tabIndex={0}
                                     onKeyDown={(e) => e.key === 'Enter' && handleSelectParent(cat.id)}
                                 >
-                                    <span className="sp-tree__parent-label">{cat.label}</span>
+                                    <span className="sp-tree__parent-label">
+                                        <HighlightMatch text={cat.label} query={searchQuery} />
+                                    </span>
                                     <button
                                         type="button"
                                         className={`sp-tree__chevron ${expanded[cat.id] ? 'expanded' : ''}`}
@@ -277,7 +2437,6 @@ function SettingsPage({ onClose }) {
                                     </button>
                                 </div>
 
-                                {/* Children */}
                                 {expanded[cat.id] && (
                                     <div className="sp-tree__children">
                                         {cat.children.map((child) => (
@@ -290,7 +2449,7 @@ function SettingsPage({ onClose }) {
                                                 onKeyDown={(e) => e.key === 'Enter' && setSelected(child.id)}
                                             >
                                                 <span className="sp-tree__child-dot" aria-hidden="true" />
-                                                {child.label}
+                                                <HighlightMatch text={child.label} query={searchQuery} />
                                             </div>
                                         ))}
                                     </div>
@@ -303,10 +2462,135 @@ function SettingsPage({ onClose }) {
                 {/* ── Content ── */}
                 <main className="sp-content">
                     <div className="sp-content__inner">
-                        {renderContent(selected)}
+                        {selected === 'search_results' ? (
+                            <SearchResultsPage
+                                filteredCategories={filteredCategories}
+                                searchQuery={searchQuery}
+                                onSelectPanel={handleSelectPanelFromSearch}
+                                onSelectCategory={handleSelectParent}
+                                accountId={accountId}
+                                onClose={requestClose}
+                                onRefreshAccount={onRefreshAccount}
+                                appearance={appearance}
+                            />
+                        ) : (
+                            renderContent(selected, accountId, requestClose, onRefreshAccount, searchQuery, appearance)
+                        )}
                     </div>
                 </main>
+                    </div>
+                </div>
+            </SettingsDraftContext.Provider>
+
+            {dirtyCount > 0 && (
+                <div className="sp-dock" role="region" aria-label="Unsaved settings" onClick={(e) => e.stopPropagation()}>
+                    <div className="sp-dock__main">
+                        <button
+                            type="button"
+                            className="sp-dock__toggle"
+                            onClick={() => setDockExpanded((v) => !v)}
+                            aria-expanded={dockExpanded}
+                            aria-label={dockExpanded ? 'Collapse' : 'Expand'}
+                        >
+                            {dockExpanded ? '▼' : '▶'}
+                        </button>
+                        <span className="sp-dock__summary">
+                            Settings changed ({dirtyCount})
+                        </span>
+                        <div className="sp-dock__actions">
+                            <button
+                                type="button"
+                                className="sp-dock__btn sp-dock__btn--primary"
+                                onClick={handleDockSaveAll}
+                                disabled={dockSaving || rowSavingId != null}
+                            >
+                                {dockSaving ? 'Saving…' : 'Save all'}
+                            </button>
+                            <button
+                                type="button"
+                                className="sp-dock__btn"
+                                onClick={handleDockRevertAll}
+                                disabled={dockSaving || rowSavingId != null}
+                            >
+                                Discard all
+                            </button>
+                        </div>
+                    </div>
+                    {dockExpanded && (
+                        <ul className="sp-dock__list">
+                            {dirtyDraftEntries.map((row) => (
+                                <li key={row.id} className="sp-dock__row">
+                                    <span className="sp-dock__row-label">{row.label}</span>
+                                    <div className="sp-dock__row-actions">
+                                        <button
+                                            type="button"
+                                            className="sp-dock__btn sp-dock__btn--small"
+                                            onClick={() => handleRowSave(row.id)}
+                                            disabled={dockSaving || rowSavingId != null}
+                                        >
+                                            {rowSavingId === row.id ? '…' : 'Save'}
+                                        </button>
+                                        <button
+                                            type="button"
+                                            className="sp-dock__btn sp-dock__btn--small sp-dock__btn--ghost"
+                                            onClick={() => handleRowRevert(row.id)}
+                                            disabled={dockSaving || rowSavingId != null}
+                                        >
+                                            Cancel
+                                        </button>
+                                    </div>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
             </div>
+
+            {quitOpen && (
+                <div
+                    className="sp-quit-layer"
+                    role="dialog"
+                    aria-modal="true"
+                    aria-labelledby="sp-quit-title"
+                    onClick={() => setQuitOpen(false)}
+                >
+                    <div className="sp-quit-card" onClick={(e) => e.stopPropagation()}>
+                        <p id="sp-quit-title" className="sp-quit-card__title">
+                            Unsaved changes
+                        </p>
+                        <p className="sp-quit-card__desc">
+                            Your changes will be lost if you leave without saving.
+                        </p>
+                        <div className="sp-quit-card__actions">
+                            <button
+                                type="button"
+                                className="sp-dock__btn sp-dock__btn--primary sp-quit-card__btn-wide"
+                                onClick={handleQuitSaveAll}
+                                disabled={dockSaving}
+                            >
+                                {dockSaving ? 'Saving…' : 'Save all'}
+                            </button>
+                            <button
+                                type="button"
+                                className="sp-dock__btn"
+                                onClick={handleQuitDiscard}
+                                disabled={dockSaving}
+                            >
+                                Discard all
+                            </button>
+                            <button
+                                type="button"
+                                className="sp-dock__btn sp-dock__btn--ghost"
+                                onClick={() => setQuitOpen(false)}
+                                disabled={dockSaving}
+                            >
+                                Stay
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     )
 }

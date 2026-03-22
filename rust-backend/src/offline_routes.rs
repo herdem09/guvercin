@@ -583,6 +583,38 @@ pub async fn get_local_mailboxes(
     Ok(Json(MailboxListResponse::from_mailboxes(mailboxes)))
 }
 
+pub async fn get_mailbox_counts_cached(
+    State(state): State<Arc<MailAppState>>,
+    Path(account_id): Path<i64>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let pool = match db::get_user_db_pool(&state._db, account_id).await {
+        Ok(p) => p,
+        Err(_) => return Ok(Json(json!({ "counts": {} }))),
+    };
+
+    let rows = sqlx::query(
+        r#"
+        SELECT folder AS folder,
+               COUNT(*) AS total,
+               COALESCE(SUM(CASE WHEN COALESCE(seen, 0) = 0 THEN 1 ELSE 0 END), 0) AS unread
+        FROM local_mail_cache
+        GROUP BY folder
+        "#,
+    )
+    .fetch_all(&pool)
+    .await?;
+
+    let mut counts = serde_json::Map::new();
+    for row in rows {
+        let folder: String = row.try_get("folder").unwrap_or_default();
+        let total: i64 = row.try_get::<i64, _>("total").unwrap_or(0);
+        let unread: i64 = row.try_get::<i64, _>("unread").unwrap_or(0);
+        counts.insert(folder, json!({ "total": total, "unread": unread }));
+    }
+
+    Ok(Json(json!({ "counts": counts })))
+}
+
 pub async fn get_local_mail_list(
     State(state): State<Arc<MailAppState>>,
     Path(account_id): Path<i64>,
@@ -2227,6 +2259,13 @@ async fn sync_specific_uids(
     )
     .await;
 
+    let blocked_rules = sqlx::query_as::<_, crate::models::BlockedSenderRecord>(
+        "SELECT id, sender, action_type, target_folder, created_at FROM blocked_senders"
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
     let mut done = 0i64;
     let mut max_uid_synced = 0u32;
 
@@ -2250,6 +2289,39 @@ async fn sync_specific_uids(
 
         let aligned = align_previews_to_uids(&chunk_uids, &mails);
         for (uid, mut mail) in aligned {
+            let mut is_blocked = false;
+            for rule in &blocked_rules {
+                if mail.address.eq_ignore_ascii_case(&rule.sender) {
+                    is_blocked = true;
+                    let action = rule.action_type.clone();
+                    let target_folder = rule.target_folder.clone().unwrap_or_default();
+                    let action_payload = if action == "move" {
+                        json!({ "destination": target_folder })
+                    } else {
+                        json!({})
+                    };
+                    let _ = sqlx::query(
+                        r#"
+                        INSERT INTO offline_sync_queue (action_type, target_uid, target_folder, payload_json)
+                        VALUES (?, ?, ?, ?)
+                        "#,
+                    )
+                    .bind(&action)
+                    .bind(uid.to_string())
+                    .bind(&mailbox)
+                    .bind(action_payload.to_string())
+                    .execute(pool)
+                    .await;
+                    break;
+                }
+            }
+
+            if is_blocked {
+                max_uid_synced = bump_max_uid_synced(max_uid_synced, uid);
+                done += 1;
+                continue;
+            }
+
             max_uid_synced = bump_max_uid_synced(max_uid_synced, uid);
             let uid_str = uid.to_string();
             mail.id = uid_str.clone();
@@ -2681,6 +2753,13 @@ async fn sync_single_mailbox(
     )
     .await;
 
+    let blocked_rules = sqlx::query_as::<_, crate::models::BlockedSenderRecord>(
+        "SELECT id, sender, action_type, target_folder, created_at FROM blocked_senders"
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default();
+
     let mut synced_count = 0usize;
     let mut max_uid_synced: u32 = last_synced_uid;
 
@@ -2712,6 +2791,39 @@ async fn sync_single_mailbox(
                 .is_some_and(|threshold| mail_date_before_threshold(&mail.date, threshold))
             {
                 break 'outer;
+            }
+
+            let mut is_blocked = false;
+            for rule in &blocked_rules {
+                if mail.address.eq_ignore_ascii_case(&rule.sender) {
+                    is_blocked = true;
+                    let action = rule.action_type.clone();
+                    let target_folder = rule.target_folder.clone().unwrap_or_default();
+                    let action_payload = if action == "move" {
+                        json!({ "destination": target_folder })
+                    } else {
+                        json!({})
+                    };
+                    let _ = sqlx::query(
+                        r#"
+                        INSERT INTO offline_sync_queue (action_type, target_uid, target_folder, payload_json)
+                        VALUES (?, ?, ?, ?)
+                        "#,
+                    )
+                    .bind(&action)
+                    .bind(uid.to_string())
+                    .bind(&mailbox)
+                    .bind(action_payload.to_string())
+                    .execute(pool)
+                    .await;
+                    break;
+                }
+            }
+
+            if is_blocked {
+                max_uid_synced = bump_max_uid_synced(max_uid_synced, uid);
+                synced_count += 1;
+                continue;
             }
 
             max_uid_synced = bump_max_uid_synced(max_uid_synced, uid);
@@ -2835,6 +2947,112 @@ fn mail_date_before_threshold(date_value: &str, threshold: &DateTime<Utc>) -> bo
     DateTime::parse_from_rfc2822(date_value)
         .map(|value| value.with_timezone(&Utc) < *threshold)
         .unwrap_or(false)
+}
+
+pub async fn get_blocked_senders(
+    State(state): State<Arc<MailAppState>>,
+    Path(account_id): Path<i64>,
+) -> Result<Json<Vec<crate::models::BlockedSenderRecord>>, AppError> {
+    let pool = db::get_user_db_pool(&state._db, account_id).await?;
+    let records = sqlx::query_as::<_, crate::models::BlockedSenderRecord>(
+        r#"
+        SELECT id, sender, action_type, target_folder, created_at
+        FROM blocked_senders
+        ORDER BY created_at DESC
+        "#,
+    )
+    .fetch_all(&pool)
+    .await?;
+    Ok(Json(records))
+}
+
+pub async fn add_blocked_sender(
+    State(state): State<Arc<MailAppState>>,
+    Path(account_id): Path<i64>,
+    Json(payload): Json<crate::models::CreateBlockedSenderRequest>,
+) -> Result<Json<crate::models::BlockedSenderRecord>, AppError> {
+    let pool = db::get_user_db_pool(&state._db, account_id).await?;
+    
+    let result = sqlx::query(
+        r#"
+        INSERT INTO blocked_senders (sender, action_type, target_folder, created_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        "#,
+    )
+    .bind(&payload.sender)
+    .bind(&payload.action_type)
+    .bind(&payload.target_folder)
+    .execute(&pool)
+    .await?;
+
+    let new_id = result.last_insert_rowid();
+
+    let record = sqlx::query_as::<_, crate::models::BlockedSenderRecord>(
+        "SELECT id, sender, action_type, target_folder, created_at FROM blocked_senders WHERE id = ?"
+    )
+    .bind(new_id)
+    .fetch_one(&pool)
+    .await?;
+
+    if payload.apply_to_existing {
+        let pattern = format!("%{}%", payload.sender);
+        let rows = sqlx::query(
+            "SELECT uid, folder FROM local_mail_cache WHERE LOWER(COALESCE(sender_address, '')) LIKE LOWER(?)"
+        )
+        .bind(&pattern)
+        .fetch_all(&pool)
+        .await?;
+        
+        for row in rows {
+            let uid = row.try_get::<String, _>("uid").unwrap_or_default();
+            let folder = row.try_get::<String, _>("folder").unwrap_or_default();
+            
+            let action = payload.action_type.clone(); 
+            let target_folder = payload.target_folder.clone().unwrap_or_default();
+            
+            let action_payload = if action == "move" {
+                json!({ "destination": target_folder })
+            } else {
+                json!({})
+            };
+
+            let _ = apply_local_action_side_effects(
+                &pool,
+                &action,
+                Some(&uid),
+                Some(&folder),
+                &action_payload
+            )
+            .await;
+            
+            let _ = sqlx::query(
+                r#"
+                INSERT INTO offline_sync_queue (action_type, target_uid, target_folder, payload_json)
+                VALUES (?, ?, ?, ?)
+                "#,
+            )
+            .bind(&action)
+            .bind(&uid)
+            .bind(&folder)
+            .bind(action_payload.to_string())
+            .execute(&pool)
+            .await;
+        }
+    }
+
+    Ok(Json(record))
+}
+
+pub async fn delete_blocked_sender(
+    State(state): State<Arc<MailAppState>>,
+    Path((account_id, rule_id)): Path<(i64, i64)>,
+) -> Result<Json<serde_json::Value>, AppError> {
+    let pool = db::get_user_db_pool(&state._db, account_id).await?;
+    sqlx::query("DELETE FROM blocked_senders WHERE id = ?")
+        .bind(rule_id)
+        .execute(&pool)
+        .await?;
+    Ok(Json(json!({ "status": "ok" })))
 }
 
 #[cfg(test)]

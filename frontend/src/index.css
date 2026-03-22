@@ -12,14 +12,11 @@
 html, body, #root {
   height: 100%;
   width: 100%;
+  min-width: 800px;
 }
 
 body {
   font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  background-image: url('/background.png');
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
   background-color: var(--c-bg);
   display: flex;
   justify-content: center;
@@ -86,8 +83,8 @@ body {
   justify-content: center;
   align-items: center;
   text-align: center;
-  background: var(--grad-startup);
-  color: var(--c-text-inverse);
+  background: var(--c-bg);
+  color: var(--c-text-1);
   flex-direction: column;
   padding: 2rem;
 }
@@ -97,6 +94,7 @@ body {
   font-size: 1rem;
   line-height: 1.5;
   font-weight: 500;
+  color: var(--c-text-2);
 }
 
 .startup-router__actions {

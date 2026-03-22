@@ -13,9 +13,11 @@ use crate::{
     i18n::tr,
     imap_client,
     models::{
-        AccountSummary, AccountsResponse, FinalizeAccountBody, FinalizeAccountData, SetThemeBody,
-        FinalizeSuccessResponse, MailboxPreviewRequest, MailboxPreviewResponse, SetupAccountForm,
-        SetupFailureFormData, SetupFailureResponse, SetupSuccessResponse,
+        AccountSettingsResponse, AccountSummary, AccountsResponse, FinalizeAccountBody,
+        FinalizeAccountData,         FinalizeSuccessResponse, MailboxPreviewRequest,
+        MailboxPreviewResponse, SetFontBody, SetMailboxCountDisplayBody, SetOrderBody, SetThemeBody,
+        SetupAccountForm, SetupFailureFormData,
+        SetupFailureResponse, SetupSuccessResponse, UpdateAccountSettingsBody,
     },
     offline_routes,
 };
@@ -34,7 +36,8 @@ pub async fn get_accounts(
         r#"
         SELECT account_id, email_address, display_name, provider_type,
                imap_host, imap_port, smtp_host, smtp_port, sync_status,
-               last_sync_time, language, theme, font, ssl_mode
+               last_sync_time, language, theme, font, ssl_mode, mailbox_order, label_order,
+               mailbox_count_display
         FROM accounts
         "#,
     )
@@ -320,5 +323,177 @@ pub async fn set_account_theme(
         .execute(&state.ensure_ready(false).await?.general_pool)
         .await?;
 
-    Ok((StatusCode::OK, Json(json!({ "status": "success" }))))
+    Ok((StatusCode::OK, Json(serde_json::json!({ "status": "success" }))))
+}
+
+pub async fn set_account_font(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(account_id): axum::extract::Path<i64>,
+    Json(payload): Json<SetFontBody>,
+) -> Result<impl IntoResponse, AppError> {
+    let font = payload.font.trim();
+    if font.is_empty() {
+        return Err(AppError::BadRequest(tr("No data provided")));
+    }
+
+    sqlx::query("UPDATE accounts SET font = ? WHERE account_id = ?")
+        .bind(font)
+        .bind(account_id)
+        .execute(&state.ensure_ready(false).await?.general_pool)
+        .await?;
+
+    Ok((StatusCode::OK, Json(serde_json::json!({ "status": "success" }))))
+}
+
+pub async fn set_mailbox_count_display(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(account_id): axum::extract::Path<i64>,
+    Json(payload): Json<SetMailboxCountDisplayBody>,
+) -> Result<impl IntoResponse, AppError> {
+    let mode = payload.mode.trim().to_lowercase();
+    if !matches!(
+        mode.as_str(),
+        "unread_only" | "total_only" | "both" | "none"
+    ) {
+        return Err(AppError::BadRequest(tr("Invalid display mode")));
+    }
+
+    sqlx::query("UPDATE accounts SET mailbox_count_display = ? WHERE account_id = ?")
+        .bind(&mode)
+        .bind(account_id)
+        .execute(&state.ensure_ready(false).await?.general_pool)
+        .await?;
+
+    Ok((StatusCode::OK, Json(serde_json::json!({ "status": "success" }))))
+}
+
+pub async fn set_mailbox_order(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(account_id): axum::extract::Path<i64>,
+    Json(payload): Json<SetOrderBody>,
+) -> Result<impl IntoResponse, AppError> {
+    let order_json = serde_json::to_string(&payload.order).unwrap_or_else(|_| "[]".to_string());
+    
+    sqlx::query("UPDATE accounts SET mailbox_order = ? WHERE account_id = ?")
+        .bind(order_json)
+        .bind(account_id)
+        .execute(&state.ensure_ready(false).await?.general_pool)
+        .await?;
+
+    Ok((StatusCode::OK, Json(serde_json::json!({ "status": "success" }))))
+}
+
+pub async fn set_label_order(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(account_id): axum::extract::Path<i64>,
+    Json(payload): Json<SetOrderBody>,
+) -> Result<impl IntoResponse, AppError> {
+    let order_json = serde_json::to_string(&payload.order).unwrap_or_else(|_| "[]".to_string());
+    
+    sqlx::query("UPDATE accounts SET label_order = ? WHERE account_id = ?")
+        .bind(order_json)
+        .bind(account_id)
+        .execute(&state.ensure_ready(false).await?.general_pool)
+        .await?;
+
+    Ok((StatusCode::OK, Json(serde_json::json!({ "status": "success" }))))
+}
+
+pub async fn get_account_settings(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(account_id): axum::extract::Path<i64>,
+) -> Result<Json<AccountSettingsResponse>, AppError> {
+    let row = sqlx::query(
+        r#"
+        SELECT account_id, email_address, display_name, imap_host, imap_port,
+               smtp_host, smtp_port, ssl_mode, font, mailbox_order, label_order,
+               mailbox_count_display
+        FROM accounts WHERE account_id = ?
+        "#,
+    )
+    .bind(account_id)
+    .fetch_optional(&state.ensure_ready(false).await?.general_pool)
+    .await?;
+
+    let row = row.ok_or_else(|| AppError::BadRequest(tr("Account not found")))?;
+
+    use sqlx::Row;
+    Ok(Json(AccountSettingsResponse {
+        account_id: row.try_get("account_id").unwrap_or(account_id),
+        email_address: row.try_get("email_address").ok(),
+        display_name: row.try_get("display_name").ok(),
+        imap_server: row.try_get("imap_host").ok(),
+        imap_port: row.try_get("imap_port").ok(),
+        smtp_server: row.try_get("smtp_host").ok(),
+        smtp_port: row.try_get("smtp_port").ok(),
+        ssl_mode: row.try_get("ssl_mode").ok(),
+        font: row.try_get("font").ok(),
+        mailbox_order: row.try_get("mailbox_order").ok(),
+        label_order: row.try_get("label_order").ok(),
+        mailbox_count_display: row.try_get("mailbox_count_display").ok(),
+    }))
+}
+
+pub async fn update_account_settings(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(account_id): axum::extract::Path<i64>,
+    Json(payload): Json<UpdateAccountSettingsBody>,
+) -> Result<impl IntoResponse, AppError> {
+    let pool = &state.ensure_ready(false).await?.general_pool;
+
+    // Retrieve existing values
+    let row = sqlx::query(
+        "SELECT imap_host, imap_port, smtp_host, smtp_port, ssl_mode, auth_token FROM accounts WHERE account_id = ?",
+    )
+    .bind(account_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let row = row.ok_or_else(|| AppError::BadRequest(tr("Account not found")))?;
+    use sqlx::Row;
+
+    let imap_server = payload.imap_server
+        .as_deref().map(str::trim).map(str::to_string)
+        .or_else(|| row.try_get::<Option<String>, _>("imap_host").ok().flatten())
+        .unwrap_or_default();
+    let imap_port: i64 = payload.imap_port
+        .as_deref().map(str::trim)
+        .and_then(|s| s.parse().ok())
+        .or_else(|| row.try_get::<Option<i64>, _>("imap_port").ok().flatten())
+        .unwrap_or(143);
+    let smtp_server = payload.smtp_server
+        .as_deref().map(str::trim).map(str::to_string)
+        .or_else(|| row.try_get::<Option<String>, _>("smtp_host").ok().flatten())
+        .unwrap_or_default();
+    let smtp_port: Option<i64> = payload.smtp_port
+        .as_deref().map(str::trim)
+        .and_then(|s| s.parse().ok())
+        .or_else(|| row.try_get::<Option<i64>, _>("smtp_port").ok().flatten());
+    let ssl_mode = payload.ssl_mode
+        .as_deref().map(str::trim).map(str::to_string)
+        .or_else(|| row.try_get::<Option<String>, _>("ssl_mode").ok().flatten())
+        .unwrap_or_else(|| "STARTTLS".to_string());
+    let password = payload.password
+        .as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
+        .or_else(|| row.try_get::<Option<String>, _>("auth_token").ok().flatten());
+
+    sqlx::query(
+        r#"
+        UPDATE accounts
+        SET imap_host = ?, imap_port = ?, smtp_host = ?, smtp_port = ?,
+            ssl_mode = ?, auth_token = ?
+        WHERE account_id = ?
+        "#,
+    )
+    .bind(&imap_server)
+    .bind(imap_port)
+    .bind(&smtp_server)
+    .bind(smtp_port)
+    .bind(&ssl_mode)
+    .bind(password)
+    .bind(account_id)
+    .execute(pool)
+    .await?;
+
+    Ok((StatusCode::OK, Json(serde_json::json!({ "status": "success" }))))
 }

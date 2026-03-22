@@ -17,6 +17,9 @@ pub struct AccountSummary {
     pub theme: Option<String>,
     pub font: Option<String>,
     pub ssl_mode: Option<String>,
+    pub mailbox_order: Option<String>,
+    pub label_order: Option<String>,
+    pub mailbox_count_display: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -114,6 +117,49 @@ pub struct FinalizeAccountData {
 #[derive(Deserialize)]
 pub struct SetThemeBody {
     pub theme: String,
+}
+
+#[derive(Deserialize)]
+pub struct SetFontBody {
+    pub font: String,
+}
+
+#[derive(Deserialize)]
+pub struct SetMailboxCountDisplayBody {
+    pub mode: String,
+}
+
+#[derive(Deserialize)]
+pub struct SetOrderBody {
+    pub order: Vec<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateAccountSettingsBody {
+    pub imap_server: Option<String>,
+    pub imap_port: Option<String>,
+    pub smtp_server: Option<String>,
+    pub smtp_port: Option<String>,
+    pub password: Option<String>,
+    pub ssl_mode: Option<String>,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AccountSettingsResponse {
+    pub account_id: i64,
+    pub email_address: Option<String>,
+    pub display_name: Option<String>,
+    pub imap_server: Option<String>,
+    pub imap_port: Option<i64>,
+    pub smtp_server: Option<String>,
+    pub smtp_port: Option<i64>,
+    pub ssl_mode: Option<String>,
+    pub font: Option<String>,
+    pub mailbox_order: Option<String>,
+    pub label_order: Option<String>,
+    pub mailbox_count_display: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone)]
@@ -226,4 +272,21 @@ pub struct TransferProgress {
     pub detail: Option<String>,
     
     pub updated_at_ms: i64,
+}
+
+#[derive(Serialize, FromRow, Clone)]
+pub struct BlockedSenderRecord {
+    pub id: i64,
+    pub sender: String,
+    pub action_type: String,
+    pub target_folder: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Deserialize)]
+pub struct CreateBlockedSenderRequest {
+    pub sender: String,
+    pub action_type: String,
+    pub target_folder: Option<String>,
+    pub apply_to_existing: bool,
 }

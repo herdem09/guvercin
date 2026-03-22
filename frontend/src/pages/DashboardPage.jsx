@@ -1,8 +1,13 @@
 import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { apiUrl } from '../utils/api'
-import { normalizeMailboxResponse } from '../utils/mailboxes'
+import {
+    normalizeMailboxResponse,
+    dedupeStringsCaseInsensitive,
+    indexInOrderIgnoreCase,
+    defaultMailboxSidebarPriority,
+} from '../utils/mailboxes'
 import { useOfflineSync } from '../context/OfflineSyncContext.jsx'
 import { useTheme } from '../context/ThemeContext.jsx'
 import Avatar from '../components/Avatar.jsx'
@@ -202,7 +207,7 @@ function useClock() {
     }, [])
 
     const hour12 = systemHour12Preference()
-    const timeOptions = { hour: '2-digit', minute: '2-digit', second: '2-digit' }
+    const timeOptions = { hour: '2-digit', minute: '2-digit' }
     if (typeof hour12 === 'boolean') timeOptions.hour12 = hour12
 
     const timeStr = new Intl.DateTimeFormat(undefined, timeOptions).format(now)
@@ -394,20 +399,6 @@ function createDefaultAdvancedSearchDraft() {
         readStatus: 'all',
         hasAttachments: false,
     }
-}
-
-function dedupeStringsCaseInsensitive(values) {
-    const next = []
-    const seen = new Set()
-        ; (values || []).forEach((value) => {
-            const trimmed = (value || '').toString().trim()
-            if (!trimmed) return
-            const key = trimmed.toLowerCase()
-            if (seen.has(key)) return
-            seen.add(key)
-            next.push(trimmed)
-        })
-    return next
 }
 
 function buildAdvancedSearchPayload(draft) {
@@ -939,6 +930,7 @@ function printMailHtml(html) {
 const DashboardPage = () => {
     const { t } = useTranslation()
     const navigate = useNavigate()
+    const location = useLocation()
     const { time, date } = useClock()
     const {
         networkOnline,
@@ -973,6 +965,7 @@ const DashboardPage = () => {
     const [connecting, setConnecting] = useState(false)
     const [folders, setFolders] = useState([])
     const [labels, setLabels] = useState([])
+    const [mailboxCounts, setMailboxCounts] = useState({})
     const [selectedFolder, setSelectedFolder] = useState('INBOX')
     const [searchText, setSearchText] = useState('')
     const [listMode, setListMode] = useState('mailbox')
@@ -993,7 +986,6 @@ const DashboardPage = () => {
     const [loadingTab, setLoadingTab] = useState(false)
 
     const [accountMenuOpen, setAccountMenuOpen] = useState(false)
-    const [settingsMenuOpen, setSettingsMenuOpen] = useState(false)
     const [settingsPageOpen, setSettingsPageOpen] = useState(false)
     const [isMailFullscreen, setIsMailFullscreen] = useState(false)
     const [isSyncing, setIsSyncing] = useState(false)
@@ -1002,8 +994,6 @@ const DashboardPage = () => {
 
     const accountButtonRef = useRef(null)
     const accountMenuRef = useRef(null)
-    const settingsButtonRef = useRef(null)
-    const settingsMenuRef = useRef(null)
     const iframeRef = useRef(null)
     const syncAbortRef = useRef(null)
     const isSyncingRef = useRef(false)
@@ -1024,6 +1014,32 @@ const DashboardPage = () => {
     )
 
     useEffect(() => {
+        if (location.state?.openSettings) {
+            setSettingsPageOpen(true)
+            navigate(location.pathname, { replace: true, state: {} })
+        }
+    }, [location.pathname, location.state, navigate])
+
+    const fetchMailboxCounts = useCallback(async () => {
+        if (!accountId || !backendReachable) return
+        try {
+            const res = await fetch(apiUrl(`/api/offline/${accountId}/mailbox-counts`), { cache: 'no-store' })
+            if (!res.ok) return
+            const data = await res.json()
+            if (data.counts && typeof data.counts === 'object') {
+                setMailboxCounts(data.counts)
+            }
+        } catch {
+            /* keep previous */
+        }
+    }, [accountId, backendReachable])
+
+    const mailboxCountDisplayMode = useMemo(() => {
+        const m = (accountForm.mailbox_count_display || 'both').toString().toLowerCase()
+        return ['unread_only', 'total_only', 'both', 'none'].includes(m) ? m : 'both'
+    }, [accountForm.mailbox_count_display])
+
+    useEffect(() => {
         const storedId = localStorage.getItem('current_account_id')
         if (storedId) {
             setAccountId(storedId)
@@ -1034,9 +1050,13 @@ const DashboardPage = () => {
         }
     }, [navigate, refreshStatus])
 
+    useEffect(() => {
+        setMailboxCounts({})
+    }, [accountId])
+
     const fetchAccount = async (id) => {
         try {
-            const res = await fetch(apiUrl('/api/auth/accounts'))
+            const res = await fetch(apiUrl('/api/auth/accounts'), { cache: 'no-store' })
             const data = await res.json()
             const accounts = Array.isArray(data?.accounts) ? data.accounts : []
             const acc = accounts.find((a) => a.account_id?.toString() === id.toString())
@@ -1054,60 +1074,6 @@ const DashboardPage = () => {
 
     const handleAccountButtonClick = () => setAccountMenuOpen(!accountMenuOpen)
     const closeAccountMenu = () => setAccountMenuOpen(false)
-    const closeSettingsMenu = () => setSettingsMenuOpen(false)
-
-    useEffect(() => {
-        if (actionNotices.length === 0) return undefined
-        const timer = window.setInterval(() => setNoticeNow(Date.now()), 100)
-        return () => window.clearInterval(timer)
-    }, [actionNotices.length])
-
-    useEffect(() => () => {
-        pendingNoticeActionsRef.current.forEach((entry) => window.clearTimeout(entry.timeoutId))
-        pendingNoticeActionsRef.current.clear()
-    }, [])
-
-    useEffect(() => {
-        const handleClickOutside = (event) => {
-            if (accountMenuRef.current && !accountMenuRef.current.contains(event.target) &&
-                accountButtonRef.current && !accountButtonRef.current.contains(event.target)) {
-                closeAccountMenu()
-            }
-            if (settingsMenuRef.current && !settingsMenuRef.current.contains(event.target) &&
-                settingsButtonRef.current && !settingsButtonRef.current.contains(event.target)) {
-                closeSettingsMenu()
-            }
-        }
-        document.addEventListener('mousedown', handleClickOutside)
-        return () => document.removeEventListener('mousedown', handleClickOutside)
-    }, [])
-
-    const persistThemeToBackend = useCallback(async (themeValue) => {
-        if (!backendReachable || !accountId) return
-        try {
-            await fetch(apiUrl(`/api/account/${accountId}/theme`), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ theme: themeValue }),
-            })
-        } catch {
-
-        }
-    }, [accountId, backendReachable])
-
-    const chooseSystemTheme = useCallback(async () => {
-        closeSettingsMenu()
-        await setThemeMode('system')
-        await persistThemeToBackend('SYSTEM')
-    }, [persistThemeToBackend, setThemeMode])
-
-    const chooseManualTheme = useCallback(async (name) => {
-        closeSettingsMenu()
-        await setThemeMode('manual')
-        await setThemeName(name)
-        await persistThemeToBackend(name)
-    }, [persistThemeToBackend, setThemeMode, setThemeName])
-
     const handleAccountSettings = () => {
         closeAccountMenu()
         navigate('/account-select')
@@ -1172,8 +1138,10 @@ const DashboardPage = () => {
         } catch {
             setFolders([])
             setLabels([])
+        } finally {
+            void fetchMailboxCounts()
         }
-    }, [accountId, backendReachable, canUseRemoteMail, ensureImapConnected, networkOnline])
+    }, [accountId, backendReachable, canUseRemoteMail, ensureImapConnected, networkOnline, fetchMailboxCounts])
 
     const handleReconnectImap = useCallback(async () => {
         if (!accountId || !backendReachable || !networkOnline || connecting) return
@@ -1305,9 +1273,10 @@ const DashboardPage = () => {
                 if (!loaded) setMails([])
             } finally {
                 setLoadingMails(false)
+                void fetchMailboxCounts()
             }
         },
-        [accountId, backendReachable, canUseRemoteMail, listMode, loadMailsFromCache],
+        [accountId, backendReachable, canUseRemoteMail, listMode, loadMailsFromCache, fetchMailboxCounts],
     )
 
     const exitSearchMode = useCallback(() => {
@@ -1944,65 +1913,6 @@ const DashboardPage = () => {
                         </div>
                     </div>
                     <button className="db-icon-btn" title="Notifications"><img src="/img/icons/notification.svg" className="svg-icon-inline" /></button>
-                    <div className="db-settings-wrapper">
-                        <button
-                            type="button"
-                            className="db-icon-btn"
-                            title="Settings"
-                            ref={settingsButtonRef}
-                            onClick={async () => {
-                                const next = !settingsMenuOpen
-                                setSettingsMenuOpen(next)
-                                if (next) await refreshThemes()
-                            }}
-                        >
-                            <img src="/img/icons/settings.svg" className="svg-icon-inline" />
-                        </button>
-                        {settingsMenuOpen && (
-                            <div className="db-settings-menu" ref={settingsMenuRef}>
-                                <div className="db-settings-menu__title">{t('Theme')}</div>
-                                <button
-                                    type="button"
-                                    className={`db-settings-menu__item ${themeMode !== 'manual' ? 'active' : ''}`}
-                                    onClick={chooseSystemTheme}
-                                >
-                                    {t('System (default)')}
-                                </button>
-                                <div className="db-settings-menu__divider" />
-                                {['light', 'dark'].filter((n) => availableThemes.includes(n)).map((name) => (
-                                    <button
-                                        key={name}
-                                        type="button"
-                                        className={`db-settings-menu__item ${themeMode === 'manual' && themeName === name ? 'active' : ''}`}
-                                        onClick={() => chooseManualTheme(name)}
-                                    >
-                                        {t(name === 'light' ? 'Light' : 'Dark')}
-                                    </button>
-                                ))}
-                                {availableThemes.filter((n) => n !== 'light' && n !== 'dark').map((name) => (
-                                    <button
-                                        key={name}
-                                        type="button"
-                                        className={`db-settings-menu__item ${themeMode === 'manual' && themeName === name ? 'active' : ''}`}
-                                        onClick={() => chooseManualTheme(name)}
-                                    >
-                                        {name}
-                                    </button>
-                                ))}
-                                <div className="db-settings-menu__divider" />
-                                <button
-                                    type="button"
-                                    className="db-settings-menu__item"
-                                    onClick={() => {
-                                        closeSettingsMenu()
-                                        navigate('/theme-import')
-                                    }}
-                                >
-                                    {t('Import Theme')}
-                                </button>
-                            </div>
-                        )}
-                    </div>
                     <div className="db-account-wrapper">
                         <button className="db-account-btn" ref={accountButtonRef} onClick={handleAccountButtonClick}>
                             <Avatar
@@ -2134,6 +2044,9 @@ const DashboardPage = () => {
                                 loadingTab={loadingTab}
                                 setLoadingTab={setLoadingTab}
                                 nextTabId={nextTabId}
+                                accountForm={accountForm}
+                                mailboxCounts={mailboxCounts}
+                                mailboxCountDisplayMode={mailboxCountDisplayMode}
                             />
                         )}
                         {activeSection === 'calendar' && <CalendarSection />}
@@ -2365,7 +2278,11 @@ const DashboardPage = () => {
                 </div>
             )}
             {settingsPageOpen && (
-                <SettingsPage onClose={() => setSettingsPageOpen(false)} accountId={accountId} />
+                <SettingsPage 
+                    onClose={() => setSettingsPageOpen(false)} 
+                    accountId={accountId} 
+                    onRefreshAccount={() => fetchAccount(accountId)}
+                />
             )}
         </div>
     )
@@ -2389,7 +2306,10 @@ function MailSection({
     isMailFullscreen, toggleMailFullscreen,
     deleteMailsOptimistic, moveMailsOptimistic, setMailsSeenState, queueAction, createMailbox,
     canUseRemoteMail, inlineComposeSession, setInlineComposeSession, sendComposedMail, saveComposeDraft, enqueueUndoableAction,
-    tabs, setTabs, activeTabId, setActiveTabId, tabContents, setTabContents, loadingTab, setLoadingTab, nextTabId,
+    tabs, setTabs, activeTabId, setActiveTabId, tabContents, setTabContents, loadingTab, setLoadingTab,     nextTabId,
+    accountForm,
+    mailboxCounts,
+    mailboxCountDisplayMode,
 }) {
     const { t } = useTranslation()
     const hasFolderAccess = folders.length > 0
@@ -2429,6 +2349,9 @@ function MailSection({
     const [dragOverTarget, setDragOverTarget] = useState(null)
     const [composeExitPrompt, setComposeExitPrompt] = useState(null)
     const [composeActionBusy, setComposeActionBusy] = useState(false)
+    const [blockSenderModal, setBlockSenderModal] = useState(null)
+    const [blockSenderApplyExisting, setBlockSenderApplyExisting] = useState(false)
+    const [blockSenderSelectedFolder, setBlockSenderSelectedFolder] = useState('')
     const displayCols = isMailFullscreen ? layoutCols : 1
     const perPageValue = Math.max(1, Number.parseInt(perPage, 10) || 50)
 
@@ -3794,7 +3717,7 @@ function MailSection({
         setIsSelectionMenuOpen(false)
     }, [visibleMails])
 
-    const buildTree = (list, namespaceRoots = []) => {
+    const buildTree = useCallback((list, namespaceRoots = []) => {
         const tree = []
         const normalizedNamespaceRoots = namespaceRoots.map((root) => root.toLowerCase())
 
@@ -3823,26 +3746,34 @@ function MailSection({
             })
         })
 
-        const priorityMap = {
-            'INBOX': 1,
-            'STARRED': 2,
-            'SNOOZED': 3,
-            'SENT': 4,
-            'SENT ITEMS': 4,
-            'ALL MAIL': 5,
-            'DRAFTS': 6,
-            'ARCHIVE': 7,
-            'TRASH': 8,
-            'SPAM': 9,
-            'JUNK': 9,
-            'FOLDERS': 10,
-            'LABELS': 20,
-            'ETIKETLER': 21
-        }
-
         const sortFn = (a, b) => {
-            const pa = priorityMap[a.name.toUpperCase()] || 999
-            const pb = priorityMap[b.name.toUpperCase()] || 999
+            let mailboxOrder = []
+            let labelOrder = []
+            try {
+                if (accountForm.mailbox_order) mailboxOrder = JSON.parse(accountForm.mailbox_order)
+            } catch {
+                mailboxOrder = []
+            }
+            try {
+                if (accountForm.label_order) labelOrder = JSON.parse(accountForm.label_order)
+            } catch {
+                labelOrder = []
+            }
+
+            const isLabel = isLabelMailbox(a.fullPath) || isLabelMailbox(b.fullPath)
+            const currentOrder = isLabel ? labelOrder : mailboxOrder
+
+            if (currentOrder.length > 0) {
+                const ia = indexInOrderIgnoreCase(currentOrder, a.fullPath)
+                const ib = indexInOrderIgnoreCase(currentOrder, b.fullPath)
+
+                if (ia !== -1 && ib !== -1) return ia - ib
+                if (ia !== -1) return -1
+                if (ib !== -1) return 1
+            }
+
+            const pa = defaultMailboxSidebarPriority(a.name)
+            const pb = defaultMailboxSidebarPriority(b.name)
             if (pa !== pb) return pa - pb
             return a.name.localeCompare(b.name)
         }
@@ -3856,7 +3787,7 @@ function MailSection({
 
         sortTree(tree)
         return tree
-    }
+    }, [accountForm])
 
     const toggleExpand = (e, path) => {
         e.stopPropagation()
@@ -3871,6 +3802,31 @@ function MailSection({
     )
     const folderTree = buildTree(folderMailboxes, ['Folders'])
     const labelTree = buildTree(labels, ['Labels', 'Labels', '[Labels]'])
+
+    const renderFolderCountBadges = (fullPath) => {
+        if (!mailboxCountDisplayMode || mailboxCountDisplayMode === 'none') return null
+        const raw = mailboxCounts?.[fullPath]
+        if (!raw || typeof raw !== 'object') return null
+        const unread = Number(raw.unread) || 0
+        const total = Number(raw.total) || 0
+        const showUnread = mailboxCountDisplayMode === 'unread_only' || mailboxCountDisplayMode === 'both'
+        const showTotal = mailboxCountDisplayMode === 'total_only' || mailboxCountDisplayMode === 'both'
+        if (!showUnread && !showTotal) return null
+        return (
+            <span className="db-folder-counts">
+                {showUnread && (
+                    <span className="db-folder-count-pill db-folder-count-pill--unread" title="Unread">
+                        {unread}
+                    </span>
+                )}
+                {showTotal && (
+                    <span className="db-folder-count-pill db-folder-count-pill--total" title="Total">
+                        {total}
+                    </span>
+                )}
+            </span>
+        )
+    }
 
     const renderFolderItem = (node, depth = 0) => {
         const info = folderInfo(node.fullPath)
@@ -3936,15 +3892,18 @@ function MailSection({
                             }
                         } : undefined}
                     >
-                        {hasChildren ? (
-                            <span className={`db-folder-chevron ${isExpanded ? 'expanded' : ''}`} onClick={(e) => toggleExpand(e, node.fullPath)}>
-                                <img src="/img/icons/dock-shown.svg" className="svg-icon-inline" />
-                            </span>
-                        ) : (
-                            <span className="db-folder-chevron-placeholder" />
-                        )}
-                        <span className="db-folder-icon">{info.icon}</span>
-                        <span className="db-folder-text">{info.label}</span>
+                        <div className="db-folder-item-main">
+                            {hasChildren ? (
+                                <span className={`db-folder-chevron ${isExpanded ? 'expanded' : ''}`} onClick={(e) => toggleExpand(e, node.fullPath)}>
+                                    <img src="/img/icons/dock-shown.svg" className="svg-icon-inline" />
+                                </span>
+                            ) : (
+                                <span className="db-folder-chevron-placeholder" />
+                            )}
+                            <span className="db-folder-icon">{info.icon}</span>
+                            <span className="db-folder-text">{info.label}</span>
+                        </div>
+                        {renderFolderCountBadges(node.fullPath)}
                     </div>
                 </li>
                 {hasChildren && isExpanded && (
@@ -4015,6 +3974,59 @@ function MailSection({
     const handleArchiveAction = async () => {
         if (!hasAnyActionMail) return
         await handleMoveAction(resolveFolderDestination('Archive'))
+    }
+
+    const handleBlockSenderAction = async (mail, actionType) => {
+        if (!mail) return
+        const mailsToProcess = Array.isArray(mail) ? mail : [mail]
+        const sender = mailsToProcess[0]?.address
+        if (!sender) return
+        
+        let targetFolder = null
+        if (actionType === 'Spam') targetFolder = resolveFolderDestination('Spam')
+        else if (actionType === 'Trash') targetFolder = resolveFolderDestination('Trash')
+        else if (actionType === 'Archive') targetFolder = resolveFolderDestination('Archive')
+        else if (actionType === 'Folder') {
+            if (!blockSenderSelectedFolder) {
+                alert('Please select a folder')
+                return
+            }
+            targetFolder = blockSenderSelectedFolder
+        }
+
+        const action = actionType === 'Delete' ? 'delete' : 'move'
+
+        try {
+            const res = await fetch(`/api/offline/${activeAccount?.account_id}/blocked-senders`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sender,
+                    action_type: action,
+                    target_folder: targetFolder,
+                    apply_to_existing: blockSenderApplyExisting
+                })
+            })
+
+            if (!res.ok) throw new Error('Failed to block sender')
+
+            const idsToRemove = blockSenderApplyExisting 
+                ? Array.isArray(mails) ? mails.filter(m => m.address?.toLowerCase() === sender.toLowerCase()).map(m => m.id) : []
+                : mailsToProcess.map(m => m.id)
+
+            if (idsToRemove.length > 0) {
+                if (action === 'delete') {
+                    await deleteMailsOptimistic(idsToRemove)
+                } else {
+                    await moveMailsOptimistic(idsToRemove, targetFolder)
+                }
+            }
+            
+            setBlockSenderModal(null)
+        } catch (error) {
+            console.error('Failed to block sender:', error)
+            alert('Failed to block sender')
+        }
     }
 
     const handleMoveToTrashAction = async () => {
@@ -4531,6 +4543,11 @@ function MailSection({
                                     )}
                                 </li>
                                 <li><button disabled={!hasAnyActionMail} onClick={handleReadToggleAction}><img src="/img/icons/read.svg" className="svg-icon-inline" /> {readToggleLabel}</button></li>
+                                <li>
+                                    <button disabled={!hasAnyActionMail} onClick={() => setBlockSenderModal(actionableMails)}>
+                                        <img src="/img/icons/close.svg" className="svg-icon-inline" /> Block Sender
+                                    </button>
+                                </li>
                             </ul>
                         )}
                         {!activeTabId && activeRibbonTab === 'file' && (
@@ -5278,6 +5295,16 @@ function MailSection({
                                                     <button type="button" className="db-submenu-popover__item" onClick={handleMailItemMenuReadToggle}>
                                                         <img src="/img/icons/read.svg" className="svg-icon-inline" /> {mailItemReadLabel}
                                                     </button>
+                                                    <button 
+                                                        type="button" 
+                                                        className="db-submenu-popover__item" 
+                                                        onClick={() => {
+                                                            setBlockSenderModal([mailItemMenuMail])
+                                                            closeMailItemMenu()
+                                                        }}
+                                                    >
+                                                        <img src="/img/icons/close.svg" className="svg-icon-inline" /> Block Sender
+                                                    </button>
                                                 </div>
                                                 {mailItemMenu.moveMenuOpen && (
                                                     <div
@@ -5502,6 +5529,85 @@ function MailSection({
                             >
                                 Save to Drafts
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {blockSenderModal && (
+                <div className="db-advanced-search-modal" onMouseDown={() => setBlockSenderModal(null)}>
+                    <div
+                        className="db-compose-exit-panel"
+                        onMouseDown={(event) => event.stopPropagation()}
+                        role="dialog"
+                        aria-modal="true"
+                        style={{ minWidth: '400px' }}
+                    >
+                        <div className="db-compose-exit-panel__header">
+                            <div className="db-compose-exit-panel__title">Block Sender</div>
+                            <button type="button" className="db-advanced-search-panel__close" onClick={() => setBlockSenderModal(null)}>
+                                <img src="/img/icons/close.svg" className="svg-icon-inline" />
+                            </button>
+                        </div>
+                        <div className="db-compose-exit-panel__body" style={{ paddingBottom: '8px' }}>
+                            <p style={{ margin: '0 0 12px 0' }}>What would you like to do with emails from this sender?</p>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: 'var(--text-color)' }}>
+                                <input 
+                                    type="checkbox" 
+                                    checked={blockSenderApplyExisting}
+                                    onChange={e => setBlockSenderApplyExisting(e.target.checked)}
+                                />
+                                Apply to all existing emails from this sender
+                            </label>
+                        </div>
+                        <div className="db-compose-exit-panel__actions" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px', padding: '16px' }}>
+                            <button
+                                type="button"
+                                className="db-advanced-search-btn db-advanced-search-btn--secondary"
+                                onClick={() => handleBlockSenderAction(blockSenderModal, 'Spam')}
+                            >
+                                Move to Spam
+                            </button>
+                            <button
+                                type="button"
+                                className="db-advanced-search-btn db-advanced-search-btn--secondary"
+                                onClick={() => handleBlockSenderAction(blockSenderModal, 'Trash')}
+                            >
+                                Move to Trash
+                            </button>
+                            <button
+                                type="button"
+                                className="db-advanced-search-btn db-advanced-search-btn--secondary"
+                                onClick={() => handleBlockSenderAction(blockSenderModal, 'Delete')}
+                            >
+                                Delete Completely
+                            </button>
+                            <button
+                                type="button"
+                                className="db-advanced-search-btn db-advanced-search-btn--secondary"
+                                onClick={() => handleBlockSenderAction(blockSenderModal, 'Archive')}
+                            >
+                                Archive
+                            </button>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                                <select 
+                                    className="db-advanced-search-input" 
+                                    style={{ flex: 1 }}
+                                    value={blockSenderSelectedFolder}
+                                    onChange={e => setBlockSenderSelectedFolder(e.target.value)}
+                                >
+                                    <option value="" disabled>Select Folder...</option>
+                                    {folders.map(f => (
+                                        <option key={f} value={f}>{folderInfo(f).label}</option>
+                                    ))}
+                                </select>
+                                <button
+                                    type="button"
+                                    className="db-advanced-search-btn db-advanced-search-btn--secondary"
+                                    onClick={() => handleBlockSenderAction(blockSenderModal, 'Folder')}
+                                >
+                                    Move
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>

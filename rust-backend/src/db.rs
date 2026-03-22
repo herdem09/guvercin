@@ -16,6 +16,8 @@ use crate::models::TransferSnapshot;
 #[derive(Clone)]
 pub struct AppState {
     pub databases_dir: PathBuf,
+    /// true = SQLCipher (default), false = plaintext SQLite
+    pub encryption_enabled: bool,
     pub transfer_progress: Arc<Mutex<HashMap<i64, TransferSnapshot>>>,
     user_db_pools: Arc<Mutex<HashMap<i64, SqlitePool>>>,
     inner: Arc<RwLock<Option<Arc<AppStateInner>>>>,
@@ -24,7 +26,8 @@ pub struct AppState {
 #[derive(Clone)]
 pub struct AppStateInner {
     pub general_pool: SqlitePool,
-    pub crypto: Arc<CryptoManager>,
+    /// None when encryption_enabled = false
+    pub crypto: Option<Arc<CryptoManager>>,
 }
 
 impl AppState {
@@ -38,40 +41,87 @@ impl AppState {
         tokio::fs::create_dir_all(&databases_dir).await.map_err(|e| AppError::BadRequest(format!("Failed to create DB dir: {e}")))?;
         tracing::info!("Using databases directory: {:?}", databases_dir);
 
+        // Read encryption setting from security_settings.json
+        let security_file = databases_dir.join("security_settings.json");
+        let encryption_enabled = match tokio::fs::read_to_string(&security_file).await {
+            Ok(s) => {
+                let v: serde_json::Value = serde_json::from_str(&s).unwrap_or_default();
+                v.get("data_encrypted").and_then(|b| b.as_bool()).unwrap_or(true)
+            }
+            Err(_) => true, // default: encrypted
+        };
+        tracing::info!("Encryption enabled: {encryption_enabled}");
+
         let general_db_path = databases_dir.join("general.db");
         let general_db_path_str = general_db_path.to_string_lossy().into_owned();
-        tracing::info!("General database path: {:?}", general_db_path);
 
-        let inner = match keystore::load_master_key(crate::crypto::KEYRING_PROMPT).await {
-            Ok(raw) => {
-                let crypto = Arc::new(
-                    CryptoManager::from_raw(raw)
-                        .map_err(|e| AppError::KeyringUnavailable(format!("master key invalid: {e}")))?,
-                );
-                let general_pool = connect_sqlite(&general_db_path, &crypto)
-                    .await
-                    .map_err(|e| AppError::db(e, &general_db_path_str))?;
-                init_general_db(&general_pool)
-                    .await
-                    .map_err(|e| AppError::db(e, &general_db_path_str))?;
-                Some(Arc::new(AppStateInner {
-                    general_pool,
-                    crypto,
-                }))
+        let inner = if !encryption_enabled {
+            // ── Unencrypted mode ─────────────────────────────────────────
+            // If existing DB is SQLCipher, migrate to plaintext first.
+            let exists = general_db_path.exists() && tokio::fs::metadata(&general_db_path).await.map(|m| m.len() > 0).unwrap_or(false);
+            if exists && !is_plaintext_sqlite(&general_db_path).await {
+                tracing::info!("Migrating general.db from SQLCipher to plaintext…");
+                match keystore::load_master_key(crate::crypto::KEYRING_PROMPT).await {
+                    Ok(raw) => {
+                        let crypto = CryptoManager::from_raw(raw)
+                            .map_err(|e| AppError::KeyringUnavailable(e.to_string()))?;
+                        let key_hex = crypto.sqlcipher_key_hex_for_db(&general_db_path)
+                            .map_err(|e| AppError::db(sqlx::Error::Protocol(e.to_string()), &general_db_path_str))?;
+                        migrate_sqlcipher_to_plaintext(&general_db_path, &key_hex)
+                            .await
+                            .map_err(|e| AppError::db(e, &general_db_path_str))?;
+                        tracing::info!("Migration complete.");
+                    }
+                    Err(KeyStoreError::NotFound) => {
+                        tracing::warn!("No keyring key found; assuming general.db is already plaintext.");
+                    }
+                    Err(KeyStoreError::Denied) => {
+                        return Err(AppError::KeyringDenied("Keyring access denied during migration.".to_string()));
+                    }
+                    Err(KeyStoreError::Other(e)) => {
+                        return Err(AppError::KeyringUnavailable(e));
+                    }
+                }
             }
-            Err(KeyStoreError::NotFound) => None,
-            Err(KeyStoreError::Denied) => {
-                return Err(AppError::KeyringDenied(
-                    "Keyring access denied. Unlock keyring to continue.".to_string()
-                ))
-            }
-            Err(KeyStoreError::Other(e)) => {
-                return Err(AppError::KeyringUnavailable(format!("keyring error: {e}")))
+            let pool = connect_plain(&general_db_path)
+                .await
+                .map_err(|e| AppError::db(e, &general_db_path_str))?;
+            init_general_db(&pool).await.map_err(|e| AppError::db(e, &general_db_path_str))?;
+            Some(Arc::new(AppStateInner { general_pool: pool, crypto: None }))
+        } else {
+            // ── Encrypted mode (default) ──────────────────────────────────
+            match keystore::load_master_key(crate::crypto::KEYRING_PROMPT).await {
+                Ok(raw) => {
+                    let crypto = Arc::new(
+                        CryptoManager::from_raw(raw)
+                            .map_err(|e| AppError::KeyringUnavailable(format!("master key invalid: {e}")))?,
+                    );
+                    let general_pool = connect_sqlite(&general_db_path, &crypto)
+                        .await
+                        .map_err(|e| AppError::db(e, &general_db_path_str))?;
+                    init_general_db(&general_pool)
+                        .await
+                        .map_err(|e| AppError::db(e, &general_db_path_str))?;
+                    Some(Arc::new(AppStateInner {
+                        general_pool,
+                        crypto: Some(crypto),
+                    }))
+                }
+                Err(KeyStoreError::NotFound) => None,
+                Err(KeyStoreError::Denied) => {
+                    return Err(AppError::KeyringDenied(
+                        "Keyring access denied. Unlock keyring to continue.".to_string()
+                    ))
+                }
+                Err(KeyStoreError::Other(e)) => {
+                    return Err(AppError::KeyringUnavailable(format!("keyring error: {e}")))
+                }
             }
         };
 
         Ok(Self {
             databases_dir,
+            encryption_enabled,
             transfer_progress: Arc::new(Mutex::new(HashMap::new())),
             user_db_pools: Arc::new(Mutex::new(HashMap::new())),
             inner: Arc::new(RwLock::new(inner)),
@@ -85,6 +135,11 @@ impl AppState {
     pub async fn ensure_ready(&self, create_if_missing: bool) -> Result<Arc<AppStateInner>, AppError> {
         if let Some(inner) = self.ready_or_none().await {
             return Ok(inner);
+        }
+
+        if !self.encryption_enabled {
+            // Unencrypted mode: create plain pool on demand
+            return self.init_plain().await;
         }
 
         if !create_if_missing {
@@ -148,8 +203,26 @@ impl AppState {
 
         let inner = Arc::new(AppStateInner {
             general_pool,
-            crypto,
+            crypto: Some(crypto),
         });
+        *guard = Some(inner.clone());
+        Ok(inner)
+    }
+
+    async fn init_plain(&self) -> Result<Arc<AppStateInner>, AppError> {
+        let mut guard = self.inner.write().await;
+        if let Some(inner) = guard.as_ref() {
+            return Ok(inner.clone());
+        }
+        let general_db_path = self.databases_dir.join("general.db");
+        let general_db_path_str = general_db_path.to_string_lossy().into_owned();
+        let general_pool = connect_plain(&general_db_path)
+            .await
+            .map_err(|e| AppError::db(e, &general_db_path_str))?;
+        init_general_db(&general_pool)
+            .await
+            .map_err(|e| AppError::db(e, &general_db_path_str))?;
+        let inner = Arc::new(AppStateInner { general_pool, crypto: None });
         *guard = Some(inner.clone());
         Ok(inner)
     }
@@ -280,6 +353,59 @@ async fn migrate_plaintext_to_sqlcipher(path: &Path, key_hex: &str) -> sqlx::Res
     Ok(())
 }
 
+/// Decrypt an SQLCipher DB to a plaintext SQLite file, in-place.
+async fn migrate_sqlcipher_to_plaintext(path: &Path, key_hex: &str) -> sqlx::Result<()> {
+    let tmp_path = path.with_extension("db.dec");
+    let backup_path = path.with_extension("db.enc.bak");
+    let _ = tokio::fs::remove_file(&tmp_path).await;
+
+    {
+        // Open the encrypted source
+        let opts = SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(false)
+            .pragma("key", format!("\"x'{}'\"", key_hex));
+        let mut conn = SqliteConnection::connect_with(&opts).await?;
+        // Attach a plaintext target (empty key = unencrypted)
+        let attach = format!(
+            "ATTACH DATABASE '{}' AS plain KEY '';",
+            tmp_path.to_string_lossy()
+        );
+        sqlx::query(&attach).execute(&mut conn).await?;
+        sqlx::query("SELECT sqlcipher_export('plain');")
+            .execute(&mut conn)
+            .await?;
+        sqlx::query("DETACH DATABASE plain;").execute(&mut conn).await?;
+    }
+
+    tokio::fs::rename(path, &backup_path).await?;
+    tokio::fs::rename(&tmp_path, path).await?;
+    Ok(())
+}
+
+/// Open a plain (unencrypted) SQLite pool.
+async fn connect_plain(path: &Path) -> sqlx::Result<SqlitePool> {
+    let opts = SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(true)
+        .busy_timeout(Duration::from_secs(10))
+        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+        .synchronous(sqlx::sqlite::SqliteSynchronous::Normal);
+
+    SqlitePoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(Duration::from_secs(30))
+        .after_connect(|conn, _| {
+            Box::pin(async move {
+                sqlx::query("PRAGMA foreign_keys = ON;").execute(&mut *conn).await?;
+                sqlx::query("PRAGMA busy_timeout = 10000;").execute(&mut *conn).await?;
+                Ok(())
+            })
+        })
+        .connect_with(opts)
+        .await
+}
+
 pub async fn get_user_db_pool(state: &AppState, account_id: i64) -> Result<SqlitePool, AppError> {
     if let Some(pool) = state.user_db_pools.lock().await.get(&account_id).cloned() {
         return Ok(pool);
@@ -290,9 +416,32 @@ pub async fn get_user_db_pool(state: &AppState, account_id: i64) -> Result<Sqlit
 
     let inner = state.ensure_ready(false).await?;
 
-    let pool = connect_sqlite(&user_db_path, &inner.crypto)
-        .await
-        .map_err(|e| AppError::db(e, &user_db_path_str))?;
+    let pool = if let Some(crypto) = inner.crypto.as_ref() {
+        // Encrypted mode
+        connect_sqlite(&user_db_path, crypto)
+            .await
+            .map_err(|e| AppError::db(e, &user_db_path_str))?
+    } else {
+        // Unencrypted mode: migrate if needed
+        let exists = user_db_path.exists()
+            && tokio::fs::metadata(&user_db_path).await.map(|m| m.len() > 0).unwrap_or(false);
+        if exists && !is_plaintext_sqlite(&user_db_path).await {
+            // DB is still SQLCipher — try to migrate using keyring key
+            match keystore::load_master_key(crate::crypto::KEYRING_PROMPT).await {
+                Ok(raw) => {
+                    if let Ok(crypto) = CryptoManager::from_raw(raw) {
+                        if let Ok(key_hex) = crypto.sqlcipher_key_hex_for_db(&user_db_path) {
+                            let _ = migrate_sqlcipher_to_plaintext(&user_db_path, &key_hex).await;
+                        }
+                    }
+                }
+                Err(_) => {}
+            }
+        }
+        connect_plain(&user_db_path)
+            .await
+            .map_err(|e| AppError::db(e, &user_db_path_str))?
+    };
 
     init_user_db(&pool)
         .await
@@ -338,6 +487,20 @@ async fn init_general_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let _ = sqlx::query("UPDATE accounts SET theme = 'SYSTEM' WHERE theme IS NULL OR theme = '' OR theme = 'LIGHT'")
         .execute(pool)
         .await;
+
+    let _ = sqlx::query("ALTER TABLE accounts ADD COLUMN mailbox_order TEXT")
+        .execute(pool)
+        .await;
+
+    let _ = sqlx::query("ALTER TABLE accounts ADD COLUMN label_order TEXT")
+        .execute(pool)
+        .await;
+
+    let _ = sqlx::query(
+        "ALTER TABLE accounts ADD COLUMN mailbox_count_display TEXT DEFAULT 'both'",
+    )
+    .execute(pool)
+    .await;
 
     sqlx::query(
         r#"
@@ -742,6 +905,20 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         r#"
         CREATE INDEX IF NOT EXISTS idx_draft_attachments_uid_sort
         ON draft_attachments(draft_uid, sort_order, id)
+        "#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS blocked_senders (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sender TEXT UNIQUE NOT NULL,
+            action_type TEXT NOT NULL,
+            target_folder TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
         "#,
     )
     .execute(pool)

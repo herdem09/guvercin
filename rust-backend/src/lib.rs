@@ -12,11 +12,12 @@ mod mail_routes;
 mod models;
 mod offline_routes;
 mod routes;
+mod security_routes;
 pub mod smtp_send;
 
 use axum::{
     extract::DefaultBodyLimit,
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post, put},
     Router,
 };
 use std::{net::SocketAddr, sync::Arc};
@@ -65,7 +66,22 @@ pub async fn run(db_dir: Option<PathBuf>) -> Result<(), crate::error::AppError> 
         )
         .route("/api/account/finalize", post(routes::finalize_account))
         .route("/api/account/:account_id/theme", post(routes::set_account_theme))
+        .route("/api/account/:account_id/font", post(routes::set_account_font))
+        .route(
+            "/api/account/:account_id/mailbox-count-display",
+            post(routes::set_mailbox_count_display),
+        )
+        .route("/api/account/:account_id/mailbox-order", post(routes::set_mailbox_order))
+        .route("/api/account/:account_id/label-order", post(routes::set_label_order))
+        .route(
+            "/api/account/:account_id/settings",
+            get(routes::get_account_settings).patch(routes::update_account_settings),
+        )
         .route("/api/avatar/:account_id", get(avatar_routes::get_avatar))
+        .route("/api/security/settings",
+            get(security_routes::get_security_settings)
+                .put(security_routes::put_security_settings))
+        .route("/api/security/verify-password", post(security_routes::verify_password))
         .with_state(db_state);
 
     let mail_router = Router::new()
@@ -112,6 +128,10 @@ pub async fn run(db_dir: Option<PathBuf>) -> Result<(), crate::error::AppError> 
             get(offline_routes::get_local_mailboxes),
         )
         .route(
+            "/api/offline/:account_id/mailbox-counts",
+            get(offline_routes::get_mailbox_counts_cached),
+        )
+        .route(
             "/api/offline/:account_id/actions",
             post(offline_routes::post_offline_action)
                 .layer(DefaultBodyLimit::max(32 * 1024 * 1024)),
@@ -147,6 +167,14 @@ pub async fn run(db_dir: Option<PathBuf>) -> Result<(), crate::error::AppError> 
         .route(
             "/api/offline/:account_id/inline-assets/:asset_id",
             get(offline_routes::get_inline_asset),
+        )
+        .route(
+            "/api/offline/:account_id/blocked-senders",
+            get(offline_routes::get_blocked_senders).post(offline_routes::add_blocked_sender),
+        )
+        .route(
+            "/api/offline/:account_id/blocked-senders/:rule_id",
+            delete(offline_routes::delete_blocked_sender),
         )
         .with_state(mail_state);
 

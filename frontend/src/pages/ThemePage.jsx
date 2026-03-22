@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import { useTheme } from '../context/ThemeContext.jsx'
+import { importThemeFromFile } from '../theme/importThemeFile.js'
 import './ThemePage.css'
 
 const BUILTIN = [
@@ -12,7 +13,10 @@ const BUILTIN = [
 function ThemePage() {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const { setThemeMode, setThemeName, themeMode, themeName } = useTheme()
+  const { setThemeMode, setThemeName, themeMode, themeName, refreshThemes } = useTheme()
+  const themeImportInputRef = useRef(null)
+  const [importBusy, setImportBusy] = useState(false)
+  const [importMsg, setImportMsg] = useState(null)
 
   const initial = useMemo(() => {
     const storedMode = localStorage.getItem('temp_theme_mode') || themeMode || 'system'
@@ -50,6 +54,36 @@ function ThemePage() {
     navigate('/offline-setup')
   }
 
+  const handleOthersClick = () => {
+    setImportMsg(null)
+    themeImportInputRef.current?.click()
+  }
+
+  const handleImportFile = async (e) => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setImportBusy(true)
+    setImportMsg(null)
+    try {
+      const result = await importThemeFromFile(file)
+      if (!result.ok) {
+        setImportMsg({ type: 'error', text: t('Theme file is invalid.') })
+        return
+      }
+      await refreshThemes()
+      await setThemeMode('manual')
+      await setThemeName(result.themeName)
+      setMode('manual')
+      setSelected(result.themeName)
+      setImportMsg({ type: 'success', text: t('Theme imported successfully.') })
+    } catch {
+      setImportMsg({ type: 'error', text: t('Theme file is invalid.') })
+    } finally {
+      setImportBusy(false)
+    }
+  }
+
   return (
     <div className="theme-page">
       <div className="theme-container">
@@ -78,10 +112,30 @@ function ThemePage() {
           <button type="button" className={`theme-system ${mode === 'system' ? 'active' : ''}`} onClick={chooseSystem}>
             {t('System (default)')}
           </button>
-          <button type="button" className="theme-others" onClick={() => navigate('/theme-import')}>
+          <input
+            ref={themeImportInputRef}
+            type="file"
+            accept="application/json,.json"
+            className="theme-hidden-file-input"
+            aria-hidden
+            tabIndex={-1}
+            onChange={handleImportFile}
+          />
+          <button type="button" className="theme-others" onClick={handleOthersClick} disabled={importBusy}>
             {t('Others')}
           </button>
         </div>
+
+        {importMsg?.type === 'error' && (
+          <div className="theme-import-inline-msg theme-import-inline-msg--error" role="alert">
+            {importMsg.text}
+          </div>
+        )}
+        {importMsg?.type === 'success' && (
+          <div className="theme-import-inline-msg theme-import-inline-msg--success" role="status">
+            {importMsg.text}
+          </div>
+        )}
 
         <button type="button" className="continue-button" onClick={handleContinue}>
           {t('Continue')}
