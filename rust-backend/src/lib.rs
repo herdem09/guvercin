@@ -17,7 +17,7 @@ pub mod smtp_send;
 
 use axum::{
     extract::DefaultBodyLimit,
-    routing::{delete, get, patch, post, put},
+    routing::{delete, get, post},
     Router,
 };
 use std::{net::SocketAddr, sync::Arc};
@@ -67,6 +67,7 @@ pub async fn run(db_dir: Option<PathBuf>) -> Result<(), crate::error::AppError> 
         .route("/api/account/finalize", post(routes::finalize_account))
         .route("/api/account/:account_id/theme", post(routes::set_account_theme))
         .route("/api/account/:account_id/font", post(routes::set_account_font))
+        .route("/api/account/:account_id/layout", post(routes::set_account_layout))
         .route(
             "/api/account/:account_id/mailbox-count-display",
             post(routes::set_mailbox_count_display),

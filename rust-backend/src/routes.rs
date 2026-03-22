@@ -15,7 +15,7 @@ use crate::{
     models::{
         AccountSettingsResponse, AccountSummary, AccountsResponse, FinalizeAccountBody,
         FinalizeAccountData,         FinalizeSuccessResponse, MailboxPreviewRequest,
-        MailboxPreviewResponse, SetFontBody, SetMailboxCountDisplayBody, SetOrderBody, SetThemeBody,
+        MailboxPreviewResponse, SetFontBody, SetLayoutBody, SetMailboxCountDisplayBody, SetOrderBody, SetThemeBody,
         SetupAccountForm, SetupFailureFormData,
         SetupFailureResponse, SetupSuccessResponse, UpdateAccountSettingsBody,
     },
@@ -36,7 +36,7 @@ pub async fn get_accounts(
         r#"
         SELECT account_id, email_address, display_name, provider_type,
                imap_host, imap_port, smtp_host, smtp_port, sync_status,
-               last_sync_time, language, theme, font, ssl_mode, mailbox_order, label_order,
+               last_sync_time, language, theme, font, layout, ssl_mode, mailbox_order, label_order,
                mailbox_count_display
         FROM accounts
         "#,
@@ -345,6 +345,25 @@ pub async fn set_account_font(
     Ok((StatusCode::OK, Json(serde_json::json!({ "status": "success" }))))
 }
 
+pub async fn set_account_layout(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(account_id): axum::extract::Path<i64>,
+    Json(payload): Json<SetLayoutBody>,
+) -> Result<impl IntoResponse, AppError> {
+    let layout = payload.layout.trim();
+    if layout.is_empty() {
+        return Err(AppError::BadRequest(tr("No data provided")));
+    }
+
+    sqlx::query("UPDATE accounts SET layout = ? WHERE account_id = ?")
+        .bind(layout)
+        .bind(account_id)
+        .execute(&state.ensure_ready(false).await?.general_pool)
+        .await?;
+
+    Ok((StatusCode::OK, Json(serde_json::json!({ "status": "success" }))))
+}
+
 pub async fn set_mailbox_count_display(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(account_id): axum::extract::Path<i64>,
@@ -406,7 +425,7 @@ pub async fn get_account_settings(
     let row = sqlx::query(
         r#"
         SELECT account_id, email_address, display_name, imap_host, imap_port,
-               smtp_host, smtp_port, ssl_mode, font, mailbox_order, label_order,
+               smtp_host, smtp_port, ssl_mode, font, layout, mailbox_order, label_order,
                mailbox_count_display
         FROM accounts WHERE account_id = ?
         "#,
@@ -428,6 +447,7 @@ pub async fn get_account_settings(
         smtp_port: row.try_get("smtp_port").ok(),
         ssl_mode: row.try_get("ssl_mode").ok(),
         font: row.try_get("font").ok(),
+        layout: row.try_get("layout").ok(),
         mailbox_order: row.try_get("mailbox_order").ok(),
         label_order: row.try_get("label_order").ok(),
         mailbox_count_display: row.try_get("mailbox_count_display").ok(),

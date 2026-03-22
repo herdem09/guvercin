@@ -957,6 +957,12 @@ const DashboardPage = () => {
     } = useTheme()
 
     const [activeSection, setActiveSection] = useState('mail')
+    const [appLayout, setAppLayout] = useState({
+        top: ['main', 'tabs'],
+        bottom: ['tools'],
+        left: ['apps', 'mailboxes', 'maillist'],
+        right: []
+    })
     const [accountId, setAccountId] = useState(null)
     const [accountForm, setAccountForm] = useState({})
     const [email, setEmail] = useState('')
@@ -1065,6 +1071,20 @@ const DashboardPage = () => {
     }, [accountForm.mailbox_count_display])
 
     useEffect(() => {
+        const loadLayout = () => {
+            const l = localStorage.getItem('layout')
+            if (l) {
+                try {
+                    setAppLayout(JSON.parse(l))
+                } catch (e) {}
+            }
+        }
+        loadLayout()
+        window.addEventListener('guvercin-layout-changed', loadLayout)
+        return () => window.removeEventListener('guvercin-layout-changed', loadLayout)
+    }, [])
+
+    useEffect(() => {
         const storedId = localStorage.getItem('current_account_id')
         if (storedId) {
             setAccountId(storedId)
@@ -1088,6 +1108,13 @@ const DashboardPage = () => {
             if (acc) {
                 setAccountForm(acc)
                 setEmail(acc.email_address || '')
+                if (acc.layout) {
+                    try {
+                        const parsed = JSON.parse(acc.layout)
+                        setAppLayout(parsed)
+                        localStorage.setItem('layout', acc.layout)
+                    } catch (e) {}
+                }
             }
         } catch {
 
@@ -1096,6 +1123,37 @@ const DashboardPage = () => {
 
     const accountLabel = accountForm.display_name || accountForm.email_address || 'User'
     const accountEmailLabel = accountForm.email_address || ''
+
+    const layoutRegions = useMemo(() => {
+        const fallback = {
+            top: ['main', 'tabs'],
+            bottom: ['tools'],
+            left: ['apps', 'mailboxes', 'maillist'],
+            right: []
+        }
+        const source = appLayout || fallback
+        const map = {
+            main: 'top',
+            tabs: 'top',
+            tools: 'bottom',
+            apps: 'left',
+            mailboxes: 'left',
+            maillist: 'left'
+        }
+        const zones = ['top', 'bottom', 'left', 'right']
+        zones.forEach((zone) => {
+            const items = Array.isArray(source[zone]) ? source[zone] : []
+            items.forEach((item) => {
+                map[item] = zone
+            })
+        })
+        return map
+    }, [appLayout])
+
+    const mainBarRegion = layoutRegions.main || 'top'
+    const isMainBarVertical = mainBarRegion === 'left' || mainBarRegion === 'right'
+    const isMailboxesRight = layoutRegions.mailboxes === 'right'
+    const isMaillistRight = layoutRegions.maillist === 'right'
 
     const handleAccountButtonClick = () => setAccountMenuOpen(!accountMenuOpen)
     const closeAccountMenu = () => setAccountMenuOpen(false)
@@ -1854,139 +1912,193 @@ const DashboardPage = () => {
         }
     }, [mailContent])
 
-    return (
-        <div className="dashboard-page">
-            <div className="db-navbar">
-                <button className="db-logo-btn" style={{ padding: 0, height: '40px', background: 'transparent', minWidth: '130px', border: 'none' }}>
+    const nowForClock = new Date()
+    const hour12Pref = systemHour12Preference()
+    const timeFormatter = new Intl.DateTimeFormat(undefined, {
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: typeof hour12Pref === 'boolean' ? hour12Pref : undefined
+    })
+    const timeStr = timeFormatter.format(nowForClock)
+    const dateDayMonth = new Intl.DateTimeFormat(undefined, { day: '2-digit', month: '2-digit' })
+        .format(nowForClock)
+        .replace(/[\/-]/g, '.')
+    const dateYear = new Intl.DateTimeFormat(undefined, { year: 'numeric' }).format(nowForClock)
+    const [timeMain, timeSuffix] = timeStr.includes(' ')
+        ? timeStr.split(' ')
+        : [timeStr, '']
+    const [timeTop, timeBottomRaw] = timeMain.includes(':')
+        ? timeMain.split(':')
+        : [timeMain, '']
+    const timeBottom = timeSuffix ? `${timeBottomRaw} ${timeSuffix}`.trim() : timeBottomRaw
+
+    const mainBarNode = (
+            <div className={`db-navbar db-navbar--${mainBarRegion}`}>
+                <button
+                    className="db-logo-btn"
+                    style={{
+                        padding: 0,
+                        height: '40px',
+                        background: 'transparent',
+                        minWidth: isMainBarVertical ? '0' : '130px',
+                        border: 'none'
+                    }}
+                >
                     <img src="/img/logo/guvercin-righttext-nobackground.svg" alt="Guvercin" style={{ height: '100%', width: 'auto', display: 'block' }} />
                 </button>
-                <div className="db-search">
-                    <input
-                        type="text"
-                        placeholder="Search..."
-                        value={searchText}
-                        onChange={(e) => setSearchText(e.target.value)}
-                        onKeyDown={(e) => {
-                            if (e.key !== 'Enter') return
-                            const trimmed = searchText.trim()
-                            if (!trimmed) {
-                                setIsAdvancedSearchOpen(true)
-                                return
-                            }
-                            executeAdvancedSearch({ draftOverride: { keywords: trimmed } })
-                        }}
-                    />
+                {isMainBarVertical ? (
                     <button
                         type="button"
-                        className="db-search-filters-btn"
+                        className="db-search-compact-btn"
                         onClick={() => setIsAdvancedSearchOpen(true)}
                         title={t('Advanced search')}
-                    >
-                        <img src="/img/icons/more-choice.svg" className="svg-icon-inline" />
-                    </button>
-                    <button
-                        type="button"
-                        className="db-search-btn"
-                        onClick={() => {
-                            const trimmed = searchText.trim()
-                            if (!trimmed) {
-                                setIsAdvancedSearchOpen(true)
-                                return
-                            }
-                            executeAdvancedSearch({ draftOverride: { keywords: trimmed } })
-                        }}
-                        aria-label={t('Search')}
-                        title={t('Search')}
+                        aria-label={t('Advanced search')}
                     >
                         <img src="/img/icons/search.svg" className="svg-icon-inline" />
                     </button>
-                </div>
+                ) : (
+                    <div className="db-search">
+                        <input
+                            type="text"
+                            placeholder="Search..."
+                            value={searchText}
+                            onChange={(e) => setSearchText(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key !== 'Enter') return
+                                const trimmed = searchText.trim()
+                                if (!trimmed) {
+                                    setIsAdvancedSearchOpen(true)
+                                    return
+                                }
+                                executeAdvancedSearch({ draftOverride: { keywords: trimmed } })
+                            }}
+                        />
+                        <button
+                            type="button"
+                            className="db-search-filters-btn"
+                            onClick={() => setIsAdvancedSearchOpen(true)}
+                            title={t('Advanced search')}
+                        >
+                            <img src="/img/icons/more-choice.svg" className="svg-icon-inline" />
+                        </button>
+                        <button
+                            type="button"
+                            className="db-search-btn"
+                            onClick={() => {
+                                const trimmed = searchText.trim()
+                                if (!trimmed) {
+                                    setIsAdvancedSearchOpen(true)
+                                    return
+                                }
+                                executeAdvancedSearch({ draftOverride: { keywords: trimmed } })
+                            }}
+                            aria-label={t('Search')}
+                            title={t('Search')}
+                        >
+                            <img src="/img/icons/search.svg" className="svg-icon-inline" />
+                        </button>
+                    </div>
+                )}
                 <div className="db-navbar-right">
-                    <div className="db-clock">
-                        <span className="db-clock-item">{time}</span>
-                        <span className="db-clock-item">{date}</span>
-                    </div>
-                    <div className={`db-sync-indicator ${syncState === 'syncing' ? 'is-syncing' : ''}`}>
-                        <button type="button" className="db-icon-btn db-sync-indicator__btn" aria-label="Sync and network status">
-                            {networkOnline && canUseRemoteMail ? <img src="/img/icons/online.svg" className="svg-icon-inline" /> : (networkOnline ? <img src="/img/icons/online-but-problem.svg" className="svg-icon-inline" /> : <img src="/img/icons/offline.svg" className="svg-icon-inline" />)}
-                            <span
-                                className={`db-sync-indicator__dot ${canUseRemoteMail ? 'live' : 'offline'} ${syncState === 'syncing' ? 'syncing' : ''}`}
-                                aria-hidden="true"
-                            />
-                        </button>
-                        <div className="db-sync-popover" role="tooltip">
-                            <div className="db-sync-popover__title">Network</div>
-                            <div className="db-sync-popover__row">Internet: {networkOnline ? 'online' : 'offline'}</div>
-                            <div className="db-sync-popover__row">Mode: {canUseRemoteMail ? 'Live' : 'Offline Cache'}</div>
-                            <div className="db-sync-popover__row">Sync: {syncState}</div>
-                            <div className="db-sync-popover__row">Queue: {queueDepth}</div>
-                            <div className="db-sync-popover__row">Backend: {backendReachable ? 'reachable' : 'down'}</div>
-                            <div className="db-sync-popover__row">IMAP: {imapReachable ? 'reachable' : 'down'}</div>
-                            <div className="db-sync-popover__row">SMTP: {smtpReachable ? 'configured' : 'not set'}</div>
-                            <button
-                                type="button"
-                                className="db-sync-popover__action"
-                                onClick={handleReconnectImap}
-                                disabled={!networkOnline || !backendReachable || connecting}
-                            >
-                                {connecting ? 'Reconnecting...' : 'Reconnect IMAP'}
-                            </button>
-                            {lastSyncAt && <div className="db-sync-popover__row">Last sync: {lastSyncAt}</div>}
-                            {formatTransfer(transfer?.receiving) && <div className="db-sync-popover__row">{formatTransfer(transfer.receiving)}</div>}
-                            {formatTransfer(transfer?.sending) && <div className="db-sync-popover__row">{formatTransfer(transfer.sending)}</div>}
-                            {lastError && <div className="db-sync-popover__error">Error: {lastError}</div>}
+                    <div className="db-navbar-right__top">
+                        <div className={`db-clock${isMainBarVertical ? ' db-clock--stack' : ''}`}>
+                            {isMainBarVertical ? (
+                                <>
+                                    <span className="db-clock-item db-clock-item--stack">{timeTop} {timeBottom}</span>
+                                    <span className="db-clock-item db-clock-item--stack">{dateDayMonth} {dateYear}</span>
+                                </>
+                            ) : (
+                                <>
+                                    <span className="db-clock-item">{time}</span>
+                                    <span className="db-clock-item">{date}</span>
+                                </>
+                            )}
                         </div>
-                    </div>
-                    <button className="db-icon-btn" title="Notifications"><img src="/img/icons/notification.svg" className="svg-icon-inline" /></button>
-                    <div className="db-account-wrapper" ref={accountWrapperRef}>
-                        <button className="db-account-btn" ref={accountButtonRef} onClick={handleAccountButtonClick}>
-                            <Avatar
-                                email={accountEmailLabel}
-                                name={accountLabel}
-                                accountId={accountId}
-                                size={32}
-                            />
-                        </button>
-                        {accountMenuOpen && (
-                            <div
-                                className="account-popover"
-                                ref={accountMenuRef}
-                                onWheel={(e) => e.stopPropagation()}
-                            >
-                                <div className="account-popover__avatar-row">
-                                    <div className="account-popover__avatar">
-                                        <Avatar
-                                            email={accountEmailLabel}
-                                            name={accountLabel}
-                                            accountId={accountId}
-                                            size={64}
-                                        />
-                                    </div>
-                                    <button
-                                        type="button"
-                                        className="account-popover__settings-btn"
-                                        title="Settings"
-                                        onClick={() => {
-                                            closeAccountMenu()
-                                            setSettingsPageOpen(true)
-                                        }}
-                                    >
-                                        <img src="/img/icons/settings.svg" className="svg-icon-inline" alt="Settings" />
-                                    </button>
-                                </div>
-                                <div className="account-popover__name">{accountLabel}</div>
-                                <div className="account-popover__email">{accountEmailLabel}</div>
-                                <div className="account-popover__actions">
-                                    <button type="button" className="account-popover__btn" onClick={handleAccountSettings}>{t('Account Settings')}</button>
-                                    <button type="button" className="account-popover__btn account-popover__btn--danger" onClick={handleLogout}>{t('Logout')}</button>
-                                </div>
+                        <div className={`db-sync-indicator ${syncState === 'syncing' ? 'is-syncing' : ''}`}>
+                            <button type="button" className="db-icon-btn db-sync-indicator__btn" aria-label="Sync and network status">
+                                {networkOnline && canUseRemoteMail ? <img src="/img/icons/online.svg" className="svg-icon-inline" /> : (networkOnline ? <img src="/img/icons/online-but-problem.svg" className="svg-icon-inline" /> : <img src="/img/icons/offline.svg" className="svg-icon-inline" />)}
+                                <span
+                                    className={`db-sync-indicator__dot ${canUseRemoteMail ? 'live' : 'offline'} ${syncState === 'syncing' ? 'syncing' : ''}`}
+                                    aria-hidden="true"
+                                />
+                            </button>
+                            <div className="db-sync-popover" role="tooltip">
+                                <div className="db-sync-popover__title">Network</div>
+                                <div className="db-sync-popover__row">Internet: {networkOnline ? 'online' : 'offline'}</div>
+                                <div className="db-sync-popover__row">Mode: {canUseRemoteMail ? 'Live' : 'Offline Cache'}</div>
+                                <div className="db-sync-popover__row">Sync: {syncState}</div>
+                                <div className="db-sync-popover__row">Queue: {queueDepth}</div>
+                                <div className="db-sync-popover__row">Backend: {backendReachable ? 'reachable' : 'down'}</div>
+                                <div className="db-sync-popover__row">IMAP: {imapReachable ? 'reachable' : 'down'}</div>
+                                <div className="db-sync-popover__row">SMTP: {smtpReachable ? 'configured' : 'not set'}</div>
+                                <button
+                                    type="button"
+                                    className="db-sync-popover__action"
+                                    onClick={handleReconnectImap}
+                                    disabled={!networkOnline || !backendReachable || connecting}
+                                >
+                                    {connecting ? 'Reconnecting...' : 'Reconnect IMAP'}
+                                </button>
+                                {lastSyncAt && <div className="db-sync-popover__row">Last sync: {lastSyncAt}</div>}
+                                {formatTransfer(transfer?.receiving) && <div className="db-sync-popover__row">{formatTransfer(transfer.receiving)}</div>}
+                                {formatTransfer(transfer?.sending) && <div className="db-sync-popover__row">{formatTransfer(transfer.sending)}</div>}
+                                {lastError && <div className="db-sync-popover__error">Error: {lastError}</div>}
                             </div>
-                        )}
+                        </div>
+                        <button className="db-icon-btn" title="Notifications"><img src="/img/icons/notification.svg" className="svg-icon-inline" /></button>
+                    </div>
+                    <div className="db-navbar-right__bottom">
+                        <div className="db-account-wrapper" ref={accountWrapperRef}>
+                            <button className="db-account-btn" ref={accountButtonRef} onClick={handleAccountButtonClick}>
+                                <Avatar
+                                    email={accountEmailLabel}
+                                    name={accountLabel}
+                                    accountId={accountId}
+                                    size={32}
+                                />
+                            </button>
+                            {accountMenuOpen && (
+                                <div
+                                    className="account-popover"
+                                    ref={accountMenuRef}
+                                    onWheel={(e) => e.stopPropagation()}
+                                >
+                                    <div className="account-popover__avatar-row">
+                                        <div className="account-popover__avatar">
+                                            <Avatar
+                                                email={accountEmailLabel}
+                                                name={accountLabel}
+                                                accountId={accountId}
+                                                size={64}
+                                            />
+                                        </div>
+                                        <button
+                                            type="button"
+                                            className="account-popover__settings-btn"
+                                            title="Settings"
+                                            onClick={() => {
+                                                closeAccountMenu()
+                                                setSettingsPageOpen(true)
+                                            }}
+                                        >
+                                            <img src="/img/icons/settings.svg" className="svg-icon-inline" alt="Settings" />
+                                        </button>
+                                    </div>
+                                    <div className="account-popover__name">{accountLabel}</div>
+                                    <div className="account-popover__email">{accountEmailLabel}</div>
+                                    <div className="account-popover__actions">
+                                        <button type="button" className="account-popover__btn" onClick={handleAccountSettings}>{t('Account Settings')}</button>
+                                        <button type="button" className="account-popover__btn account-popover__btn--danger" onClick={handleLogout}>{t('Logout')}</button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
             </div>
+    )
 
-            <div className="db-main-container">
+    const appsBarNode = (
                 <div className={`db-sidebar${appMenuVisible ? '' : ' db-sidebar--hidden'}`}>
                     {[
                         { key: 'mail', icon: <img src="/img/icons/mail.svg" alt="Mail" className="svg-icon-inline" />, label: t('Mail') },
@@ -2004,12 +2116,13 @@ const DashboardPage = () => {
                         </button>
                     ))}
                 </div>
+    )
 
-                <div className="db-content-area">
-
-                    <div className="db-section-area">
-                        {activeSection === 'mail' && (
+    const dashboardContent = activeSection === 'mail' ? (
                             <MailSection
+                                injectedMainBar={mainBarNode}
+                                injectedAppsBar={appsBarNode}
+                                appLayout={appLayout}
                                 accountId={accountId}
                                 accountEmail={accountEmailLabel}
                                 backendReachable={backendReachable}
@@ -2075,13 +2188,25 @@ const DashboardPage = () => {
                                 appMenuVisible={appMenuVisible}
                                 setAppMenuVisible={setAppMenuVisible}
                             />
-                        )}
+    ) : (
+        <>
+            {mainBarNode}
+            <div className="db-main-container">
+                {appsBarNode}
+                <div className="db-content-area">
+                    <div className="db-section-area">
                         {activeSection === 'calendar' && <CalendarSection />}
                         {activeSection === 'contacts' && <ContactsSection />}
                         {activeSection === 'todo' && <TodoSection />}
                     </div>
                 </div>
             </div>
+        </>
+    )
+
+    return (
+        <div className="dashboard-page">
+            {dashboardContent}
             {actionNotices.length > 0 && (
                 <div className="db-action-notices" aria-live="polite">
                     {actionNotices.map((notice) => {
@@ -2140,6 +2265,44 @@ const DashboardPage = () => {
                             >
                                 <img src="/img/icons/close.svg" className="svg-icon-inline" />
                             </button>
+                        </div>
+
+                        <div className="db-advanced-search-topbar">
+                            <div className="db-search db-search--advanced">
+                                <input
+                                    type="text"
+                                    placeholder="Search..."
+                                    value={searchText}
+                                    onChange={(e) => setSearchText(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key !== 'Enter') return
+                                        const trimmed = searchText.trim()
+                                        if (!trimmed) return
+                                        executeAdvancedSearch({ draftOverride: { keywords: trimmed } })
+                                    }}
+                                />
+                                <button
+                                    type="button"
+                                    className="db-search-filters-btn"
+                                    onClick={() => setIsAdvancedSearchOpen(true)}
+                                    title={t('Advanced search')}
+                                >
+                                    <img src="/img/icons/more-choice.svg" className="svg-icon-inline" />
+                                </button>
+                                <button
+                                    type="button"
+                                    className="db-search-btn"
+                                    onClick={() => {
+                                        const trimmed = searchText.trim()
+                                        if (!trimmed) return
+                                        executeAdvancedSearch({ draftOverride: { keywords: trimmed } })
+                                    }}
+                                    aria-label={t('Search')}
+                                    title={t('Search')}
+                                >
+                                    <img src="/img/icons/search.svg" className="svg-icon-inline" />
+                                </button>
+                            </div>
                         </div>
 
                         <div className="db-advanced-search-form">
@@ -2316,6 +2479,9 @@ const DashboardPage = () => {
 }
 
 function MailSection({
+    injectedMainBar,
+    injectedAppsBar,
+    appLayout,
     accountId,
     accountEmail,
     backendReachable,
@@ -2384,6 +2550,35 @@ function MailSection({
     const displayCols = isMailFullscreen ? layoutCols : 1
     const perPageValue = Math.max(1, Number.parseInt(perPage, 10) || 50)
     const appMenuLeftPad = appMenuVisible ? 48 : 0
+
+    const layoutRegions = useMemo(() => {
+        const fallback = {
+            top: ['main', 'tabs'],
+            bottom: ['tools'],
+            left: ['apps', 'mailboxes', 'maillist'],
+            right: []
+        }
+        const source = appLayout || fallback
+        const map = {
+            main: 'top',
+            tabs: 'top',
+            tools: 'bottom',
+            apps: 'left',
+            mailboxes: 'left',
+            maillist: 'left'
+        }
+        const zones = ['top', 'bottom', 'left', 'right']
+        zones.forEach((zone) => {
+            const items = Array.isArray(source[zone]) ? source[zone] : []
+            items.forEach((item) => {
+                map[item] = zone
+            })
+        })
+        return map
+    }, [appLayout])
+
+    const isMailboxesRight = layoutRegions.mailboxes === 'right'
+    const isMaillistRight = layoutRegions.maillist === 'right'
 
     const visibleMails = useMemo(() => {
         const copy = Array.isArray(mails) ? mails.slice() : []
@@ -4409,9 +4604,7 @@ function MailSection({
         })
     }, [inlineComposeSession, requestComposeExit])
 
-    return (
-        <div className="mail-section-wrapper">
-            { }
+    const tabsBarNode = (
             <div className="mail-tab-bar">
                 <button
                     className={`mail-tab-item main-tab ${!activeTabId ? 'active' : ''}`}
@@ -4430,7 +4623,10 @@ function MailSection({
                     </button>
                 ))}
             </div>
+    )
 
+    const toolsBarNode = (
+        <div className="db-tools-bar">
             {!activeTabId && (
                 <div className="db-main-menu">
                     <ul>
@@ -4688,12 +4884,12 @@ function MailSection({
                                 </li>
                             </ul>
                         )}
-                    </SubmenuBar>
+                </SubmenuBar>
             </div>
+        </div>
+    )
 
-
-            { }
-            {activeTabId ? (
+    const centerPlaneTabNode = activeTabId ? (
                 <div className="mail-tab-content">
                     {activeTab?.kind === 'mail' && loadingTab ? (
                         <div className="db-loading" style={{ paddingTop: 60 }}><div className="db-spinner" />Loading...</div>
@@ -4765,22 +4961,17 @@ function MailSection({
                         </div>
                     ) : null}
                 </div>
-            ) : (
-                <div
-                    className={`mail-section-container mail-section-container--${layoutMode}`}
-                    data-fullscreen-mail={isMailFullscreen}
-                    ref={containerRef}
-                >
-                    {/* Backdrop in narrow or medium overlay mode */}
-                    {overlayPanel && (
+    ) : null;
+
+    const backdropNode = overlayPanel ? (
                         <div
                             className="db-panel-backdrop"
                             onClick={() => setOverlayPanel(null)}
                         />
-                    )}
+    ) : null;
 
-                    {/* Collapsed tab buttons shown when panels are auto-hidden */}
-                    <div className="db-dock-tabs db-dock-tabs--left">
+    const foldedTabsNode = (
+                    <div className={`db-dock-tabs ${isMailboxesRight ? 'db-dock-tabs--right' : 'db-dock-tabs--left'}`}>
                         {foldersHidden && (
                             <CollapsedTab
                                 label={t('Mailboxes')}
@@ -4806,11 +4997,20 @@ function MailSection({
                             />
                         )}
                     </div>
+    )
 
-                    {/* Folder panel — shown inline (non-narrow) or as overlay (narrow) */}
+    const mailboxesBarNode = (
+        <React.Fragment>
                     {!foldersHidden && (
                         <>
-                            <div className="db-folder-panel" style={{ width: folderWidth }}>
+                            {isMailboxesRight && layoutMode !== 'narrow' && (
+                                <div
+                                    className="db-resizer"
+                                    onMouseDown={() => { isResizingFolder.current = true; document.body.classList.add('resizing') }}
+                                    title="Resize mailboxes"
+                                />
+                            )}
+                            <div className={`db-folder-panel${isMailboxesRight ? ' db-folder-panel--right' : ''}`} style={{ width: folderWidth }}>
                                 <div className="db-panel-header">
                                     <span className="db-panel-title">{t('Mailboxes')}</span>
                                     <button
@@ -4855,7 +5055,7 @@ function MailSection({
                                     </div>
                                 )}
                             </div>
-                            {layoutMode !== 'narrow' && (
+                            {!isMailboxesRight && layoutMode !== 'narrow' && (
                                 <div
                                     className="db-resizer"
                                     onMouseDown={() => { isResizingFolder.current = true; document.body.classList.add('resizing') }}
@@ -4867,7 +5067,7 @@ function MailSection({
 
                     {/* Narrow or medium mode: folders shown as overlay (doesn't push mail content) */}
                     {foldersHidden && overlayPanel === 'folders' && (
-                        <div className="db-folder-panel db-folder-panel--overlay" style={{ width: folderWidth }}>
+                        <div className={`db-folder-panel db-folder-panel--overlay${isMailboxesRight ? ' db-folder-panel--right' : ''}`} style={{ width: folderWidth }}>
                             <div className="db-panel-header">
                                 <span className="db-panel-title">{t('Mailboxes')}</span>
                                 <button
@@ -4902,33 +5102,44 @@ function MailSection({
                             )}
                         </div>
                     )}
+        </React.Fragment>
+    )
 
-                    <div className="db-mail-main">
+    const maillistBarNode = (
+        <React.Fragment>
                         {(!mailsHidden || (layoutMode === 'narrow' && overlayPanel === 'mails')) && (
-                            <div
-                                className={`db-center-panel${layoutMode === 'narrow' && mailsHidden && overlayPanel === 'mails' ? ' db-center-panel--overlay' : ''}`}
-                                style={
-                                    isMailFullscreen
-                                        ? { flex: 1, width: 'auto' }
-                                        : { width: Math.max(listWidth, minListWidth), '--db-list-min': `${minListWidth}px` }
-                                }
-                            >
-                                <div className="db-mail-toolbar" ref={mailToolbarRef}>
-                                    <button
-                                        type="button"
-                                        className="db-mail-toolbar-btn"
-                                        onClick={() => {
-                                            if (layoutMode === 'narrow') {
-                                                setOverlayPanel(null)
-                                            } else {
-                                                userClosedMails.current = true
-                                                setMailsHidden(true)
-                                            }
-                                        }}
-                                        title={t('Hide mails')}
-                                    >
-                                        <img src="/img/icons/dock-shown.svg" className="svg-icon-inline" />
-                                    </button>
+                            <>
+                                {isMaillistRight && !isMailFullscreen && !mailsHidden && layoutMode !== 'narrow' && (
+                                    <div
+                                        className="db-resizer"
+                                        onMouseDown={() => { isResizingList.current = true; document.body.classList.add('resizing') }}
+                                        title="Resize mails"
+                                    />
+                                )}
+                                <div
+                                    className={`db-center-panel${layoutMode === 'narrow' && mailsHidden && overlayPanel === 'mails' ? ' db-center-panel--overlay' : ''}${isMaillistRight ? ' db-center-panel--right' : ''}`}
+                                    style={
+                                        isMailFullscreen
+                                            ? { flex: 1, width: 'auto' }
+                                            : { width: Math.max(listWidth, minListWidth), '--db-list-min': `${minListWidth}px` }
+                                    }
+                                >
+                                    <div className={`db-mail-toolbar${isMaillistRight ? ' db-mail-toolbar--mirrored' : ''}`} ref={mailToolbarRef}>
+                                        <button
+                                            type="button"
+                                            className="db-mail-toolbar-btn"
+                                            onClick={() => {
+                                                if (layoutMode === 'narrow') {
+                                                    setOverlayPanel(null)
+                                                } else {
+                                                    userClosedMails.current = true
+                                                    setMailsHidden(true)
+                                                }
+                                            }}
+                                            title={t('Hide mails')}
+                                        >
+                                            <img src="/img/icons/dock-shown.svg" className="svg-icon-inline" />
+                                        </button>
                                     <button
                                         type="button"
                                         className="db-mail-toolbar-btn"
@@ -5437,17 +5648,22 @@ function MailSection({
                                         )}
                                     </>
                                 )}
-                            </div>
-                        )}
+                                </div>
 
-                        {!isMailFullscreen && !mailsHidden && (
-                            <div
-                                className="db-resizer"
-                                onMouseDown={() => { isResizingList.current = true; document.body.classList.add('resizing') }}
-                                title="Resize mails"
-                            />
+                                {!isMaillistRight && !isMailFullscreen && !mailsHidden && (
+                                    <div
+                                        className="db-resizer"
+                                        onMouseDown={() => { isResizingList.current = true; document.body.classList.add('resizing') }}
+                                        title="Resize mails"
+                                    />
+                                )}
+                            </>
                         )}
+        </React.Fragment>
+    )
 
+    const centerPlanePanelNode = (
+        <React.Fragment>
                         {!isMailFullscreen && (
                             <div className="db-right-panel">
                                 {!hasMailSource ? (
@@ -5551,9 +5767,29 @@ function MailSection({
                                 )}
                             </div>
                         )}
-                    </div>
-                </div>
-            )}
+        </React.Fragment>
+    )
+
+    const finalCenterPlane = (
+        <React.Fragment>
+            {backdropNode}
+            {activeTabId ? centerPlaneTabNode : centerPlanePanelNode}
+        </React.Fragment>
+    );
+
+    return (
+        <React.Fragment>
+            <MailDynamicLayout
+                layoutMode={layoutMode}
+                layoutData={appLayout}
+                mainBar={injectedMainBar}
+                appsBar={injectedAppsBar}
+                mailboxesBar={isMailboxesRight ? <>{mailboxesBarNode}{foldedTabsNode}</> : <>{foldedTabsNode}{mailboxesBarNode}</>}
+                maillistBar={maillistBarNode}
+                tabsBar={tabsBarNode}
+                toolsBar={toolsBarNode}
+                centerPlane={finalCenterPlane}
+            />
             {composeExitPrompt && (
                 <div className="db-advanced-search-modal" onMouseDown={() => handleComposeExitAction('cancel')}>
                     <div
@@ -5696,7 +5932,7 @@ function MailSection({
                     </div>
                 </div>
             )}
-        </div>
+        </React.Fragment>
     )
 }
 
@@ -5723,6 +5959,69 @@ function TodoSection() {
         <div className="db-section-panel">
             <h2>Todo</h2>
             <p>Move your task lists here.</p>
+        </div>
+    )
+}
+
+export function MailDynamicLayout({ layoutMode, layoutData, mainBar, appsBar, mailboxesBar, maillistBar, tabsBar, toolsBar, centerPlane }) {
+    const bars = {
+        main: mainBar,
+        apps: appsBar,
+        mailboxes: mailboxesBar,
+        maillist: maillistBar,
+        tabs: tabsBar,
+        tools: toolsBar
+    }
+
+    const { top = [], bottom = [], left = [], right = [] } = layoutData || {
+        top: ['main', 'tabs'],
+        bottom: ['tools'],
+        left: ['apps', 'mailboxes', 'maillist'],
+        right: []
+    }
+
+    const normalizeStack = (items) => {
+        if (!Array.isArray(items)) return []
+        const next = [...items]
+        const mainIdx = next.indexOf('main')
+        if (mainIdx > 0) {
+            next.splice(mainIdx, 1)
+            next.unshift('main')
+        }
+        const appsIdx = next.indexOf('apps')
+        if (appsIdx > 0) {
+            next.splice(appsIdx, 1)
+            const insertAt = next[0] === 'main' ? 1 : 0
+            next.splice(insertAt, 0, 'apps')
+        }
+        return next
+    }
+
+    const topStack = normalizeStack(top)
+    const bottomStack = normalizeStack(bottom)
+    const leftStack = normalizeStack(left)
+    const rightStack = normalizeStack(right)
+
+    const renderStack = (keys, reverse = false, region) => {
+        const arr = reverse ? [...keys].reverse() : keys
+        return arr.map(key => (
+            <div key={key} className={`db-layout-region db-layout-region--${region}`} style={{ display: 'contents' }}>
+                {bars[key]}
+            </div>
+        ))
+    }
+
+    return (
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', overflow: 'hidden', background: 'var(--c-bg)' }}>
+            {renderStack(topStack, false, 'top')}
+            <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                {renderStack(leftStack, false, 'left')}
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden', position: 'relative' }}>
+                    {centerPlane}
+                </div>
+                {renderStack(rightStack, true, 'right')}
+            </div>
+            {renderStack(bottomStack, true, 'bottom')}
         </div>
     )
 }

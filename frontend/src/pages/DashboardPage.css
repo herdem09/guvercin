@@ -5,7 +5,8 @@
   background: var(--c-bg-alt);
   font-family: "Calibri", "Segoe UI", Arial, sans-serif;
   overflow: hidden;
-  min-width: 580px; /* 48px sidebar + min ~530px for comfortable mail reading */
+  min-width: 580px;
+  /* 48px sidebar + min ~530px for comfortable mail reading */
 }
 
 .db-action-notices {
@@ -224,6 +225,36 @@ body.resizing * {
   gap: 15px;
 }
 
+.db-navbar-right__top,
+.db-navbar-right__bottom {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.db-navbar-right__bottom {
+  flex-shrink: 0;
+}
+
+.db-search-compact-btn {
+  height: 40px;
+  width: 40px;
+  border-radius: 10px;
+  border: 1px solid var(--overlay-hover-2);
+  background: var(--c-surface-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, transform 0.2s;
+}
+
+.db-search-compact-btn:hover {
+  background: var(--overlay-hover-1);
+  border-color: var(--c-primary);
+  transform: translateY(-1px);
+}
+
 .db-clock {
   display: flex;
   gap: 10px;
@@ -362,6 +393,25 @@ body.resizing * {
   z-index: 6200;
 }
 
+.db-navbar--bottom .db-sync-popover {
+  top: auto;
+  bottom: calc(100% + 10px);
+}
+
+.db-navbar--left .db-sync-popover {
+  top: 50%;
+  left: calc(100% + 10px);
+  right: auto;
+  transform: translateY(-50%);
+}
+
+.db-navbar--right .db-sync-popover {
+  top: 50%;
+  right: calc(100% + 10px);
+  left: auto;
+  transform: translateY(-50%);
+}
+
 .db-sync-indicator:hover .db-sync-popover,
 .db-sync-indicator:focus-within .db-sync-popover {
   display: block;
@@ -449,6 +499,25 @@ body.resizing * {
   border: 1px solid var(--overlay-hover-0);
   color: var(--c-text-1);
   z-index: 5400;
+}
+
+.db-navbar--bottom .account-popover {
+  top: auto;
+  bottom: calc(100% + 8px);
+}
+
+.db-navbar--left .account-popover {
+  top: 50%;
+  left: calc(100% + 8px);
+  right: auto;
+  transform: translateY(-50%);
+}
+
+.db-navbar--right .account-popover {
+  top: 50%;
+  right: calc(100% + 8px);
+  left: auto;
+  transform: translateY(-50%);
 }
 
 .account-popover__avatar {
@@ -1007,8 +1076,10 @@ body.resizing * {
   flex: 1;
   width: 100%;
   overflow: hidden;
-  position: relative; /* needed for overlay positioning */
-  min-width: 500px; /* mail content needs at least ~300px, plus dock tabs */
+  position: relative;
+  /* needed for overlay positioning */
+  min-width: 500px;
+  /* mail content needs at least ~300px, plus dock tabs */
 }
 
 /* Narrow mode: overlay panel floats above mail content */
@@ -2620,6 +2691,17 @@ body.resizing * {
   border-bottom: 1px solid var(--c-border-1);
 }
 
+.db-advanced-search-topbar {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--c-border-1);
+  background: var(--c-surface-3);
+}
+
+.db-search.db-search--advanced {
+  max-width: none;
+  width: 100%;
+}
+
 .db-advanced-search-panel__title {
   font-size: 16px;
   font-weight: 700;
@@ -2757,7 +2839,7 @@ body.resizing * {
   font-family: inherit;
 }
 
-.db-advanced-search-mailbox-item > span {
+.db-advanced-search-mailbox-item>span {
   font-family: inherit;
 }
 
@@ -2834,4 +2916,312 @@ body.resizing * {
   }
 }
 
-.svg-icon-inline { width: 1em; height: 1em; vertical-align: middle; }
+.svg-icon-inline {
+  width: 1em;
+  height: 1em;
+  vertical-align: middle;
+}
+
+/* --- Dynamic Layout Orientations --- */
+
+/* 1. Sidebar (Apps Bar) */
+.db-layout-region--top .db-sidebar,
+.db-layout-region--bottom .db-sidebar {
+  flex-direction: row;
+  width: 100%;
+  height: auto;
+  padding: 8px 12px;
+  align-items: center;
+  border-right: none;
+}
+
+.db-layout-region--top .db-sidebar {
+  border-bottom: 1px solid var(--c-border);
+}
+
+.db-layout-region--bottom .db-sidebar {
+  border-top: 1px solid var(--c-border);
+}
+
+.db-layout-region--top .db-sidebar-spacer,
+.db-layout-region--bottom .db-sidebar-spacer {
+  margin-top: 0;
+  margin-left: auto;
+}
+
+.db-layout-region--top .db-sidebar-btn,
+.db-layout-region--bottom .db-sidebar-btn {
+  margin: 0 4px;
+}
+
+.db-layout-region--left .db-sidebar {
+  border-right: 1px solid var(--c-border-1);
+}
+
+.db-layout-region--right .db-sidebar {
+  border-left: 1px solid var(--c-border-1);
+}
+
+/* 2. Tabs Bar */
+.db-layout-region--left .mail-tab-bar,
+.db-layout-region--right .mail-tab-bar {
+  flex-direction: column;
+  width: 220px;
+  height: 100%;
+  padding: 8px 0;
+  border-bottom: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+  align-items: stretch;
+  flex-shrink: 0;
+}
+
+.db-layout-region--left .mail-tab-bar {
+  border-right: 1px solid var(--c-border-1);
+  border-left: 1px solid var(--c-border-1);
+}
+
+.db-layout-region--right .mail-tab-bar {
+  border-left: 1px solid var(--c-border-1);
+  border-right: 1px solid var(--c-border-1);
+}
+
+.db-layout-region--left .mail-tab-item,
+.db-layout-region--right .mail-tab-item {
+  width: 100%;
+  justify-content: flex-start;
+  padding: 10px 16px;
+  border-bottom: none;
+  border-left: 2px solid transparent;
+  border-radius: 0;
+  margin-right: 0;
+}
+
+.db-layout-region--right .mail-tab-item {
+  border-left: none;
+  border-right: 2px solid transparent;
+}
+
+.db-layout-region--left .mail-tab-item.active {
+  border-bottom-color: transparent;
+  border-left-color: var(--c-primary);
+}
+
+.db-layout-region--right .mail-tab-item.active {
+  border-bottom-color: transparent;
+  border-right-color: var(--c-primary);
+}
+
+/* 3. Tools Bar (Main Menu & Submenu) */
+.db-layout-region--left .db-main-menu,
+.db-layout-region--right .db-main-menu {
+  flex-direction: column;
+  width: auto;
+  height: 100%;
+  overflow-y: auto;
+  border-bottom: none;
+}
+
+.db-layout-region--left .db-main-menu {
+  border-right: 1px solid var(--c-border-1);
+}
+
+.db-layout-region--right .db-main-menu {
+  border-left: 1px solid var(--c-border-1);
+}
+
+.db-layout-region--left .db-main-menu>ul,
+.db-layout-region--right .db-main-menu>ul {
+  flex-direction: column;
+  width: 100%;
+}
+
+.db-layout-region--left .db-main-menu>ul>li,
+.db-layout-region--right .db-main-menu>ul>li {
+  margin-right: 0;
+  margin-bottom: 4px;
+}
+
+.db-layout-region--left .db-main-menu>ul>li>button,
+.db-layout-region--right .db-main-menu>ul>li>button {
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.db-layout-region--left .db-main-menu .db-submenu,
+.db-layout-region--right .db-main-menu .db-submenu {
+  border-bottom: none;
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+.db-layout-region--left .db-main-menu .db-submenu>ul,
+.db-layout-region--right .db-main-menu .db-submenu>ul {
+  flex-direction: column;
+  width: 100%;
+  padding: 0 8px;
+}
+
+.db-layout-region--left .db-main-menu .db-submenu>ul>li,
+.db-layout-region--right .db-main-menu .db-submenu>ul>li {
+  margin-right: 0;
+  margin-bottom: 2px;
+}
+
+/* 4. Navbar (Main Bar) */
+.db-navbar--left,
+.db-navbar--right {
+  flex-direction: column;
+  width: 58px;
+  height: 100%;
+  padding: 12px;
+  gap: 16px;
+  align-items: center;
+  overflow: visible;
+}
+
+.db-navbar--left {
+  border-right: 1px solid var(--c-border);
+  border-bottom: none;
+}
+
+.db-navbar--right {
+  border-left: 1px solid var(--c-border);
+  border-bottom: none;
+}
+
+.db-navbar--left .db-navbar-right,
+.db-navbar--right .db-navbar-right {
+  margin-left: 0;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 16px;
+}
+
+.db-navbar--left .db-navbar-right__top,
+.db-navbar--right .db-navbar-right__top {
+  margin-top: auto;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.db-navbar--left .db-navbar-right__bottom,
+.db-navbar--right .db-navbar-right__bottom {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.db-clock--stack {
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.db-clock-item--stack {
+  width: auto;
+  text-align: center;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.db-navbar--left .db-logo-btn,
+.db-navbar--right .db-logo-btn {
+  justify-content: center;
+}
+
+.db-navbar--left .db-search-compact-btn,
+.db-navbar--right .db-search-compact-btn {
+  align-self: center;
+}
+
+.db-navbar--left .account-popover,
+.db-navbar--right .account-popover {
+  top: auto;
+  bottom: 12px;
+  transform: none;
+}
+
+/* 5. Tools Bar (Bottom mirror) */
+.db-tools-bar {
+  display: flex;
+  flex-direction: column;
+}
+
+.db-layout-region--bottom .db-tools-bar {
+  flex-direction: column-reverse;
+}
+
+.db-layout-region--bottom .db-main-menu,
+.db-layout-region--bottom .db-submenu {
+  border-bottom: none;
+  border-top: 1px solid var(--c-border-1);
+}
+
+/* 6. Tabs Bar (Right close on left) */
+.db-layout-region--right .mail-tab-item {
+  flex-direction: row;
+  justify-content: flex-start;
+}
+
+/* 7. Folders and Mail List Borders */
+.db-layout-region--right .db-folder-panel,
+.db-layout-region--right .db-center-panel {
+  border-right: none;
+  border-left: 1px solid var(--c-border-1);
+}
+
+.db-folder-panel--right {
+  border-right: none;
+  border-left: 1px solid var(--c-border-1);
+}
+
+.db-folder-panel--overlay.db-folder-panel--right {
+  left: auto;
+  right: 0;
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.25);
+}
+
+.db-center-panel--right {
+  border-right: none;
+  border-left: 1px solid var(--c-border-1);
+}
+
+.db-center-panel--overlay.db-center-panel--right {
+  left: auto;
+  right: 0;
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.25);
+}
+
+.db-mail-toolbar--mirrored {
+  flex-direction: row-reverse;
+  justify-content: flex-end;
+  padding: 0 0 0 8px;
+}
+
+.db-mail-toolbar--mirrored .db-mail-toolbar-btn--split {
+  border-left: none;
+  border-right: 1px solid var(--shadow-color-2);
+  border-top-left-radius: 4px;
+  border-bottom-left-radius: 4px;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+
+.db-mail-toolbar--mirrored .db-mail-toolbar-split>.db-mail-toolbar-btn:first-child {
+  border-top-right-radius: 4px;
+  border-bottom-right-radius: 4px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+.db-layout-region--right .db-toolbar-dropdown,
+.db-layout-region--right .db-toolbar-popover {
+  left: auto;
+  right: 0;
+}

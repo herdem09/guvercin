@@ -103,6 +103,7 @@ const CATEGORIES = [
         children: [
             { id: 'theme', label: 'Theme', parentId: 'appearance' },
             { id: 'font', label: 'Font', parentId: 'appearance' },
+            { id: 'layout', label: 'Layout', parentId: 'appearance' },
             { id: 'mailbox_label_list', label: 'Mailbox & Label List', parentId: 'appearance' },
         ],
     },
@@ -129,6 +130,7 @@ const CATEGORIES = [
 const PANEL_SEARCH_INDEX = {
     theme: 'theme light dark system import appearance manual choose',
     font: 'font typeface typography family inter sans serif system appearance text readability',
+    layout: 'layout drag drop sidebar toolbar tabs top bottom left right',
     mailbox_label_list: 'sidebar mail counts unread total both none mailbox label list order reorder arrows folders',
     offline: 'offline sync download folders labels cache attachments policy days count enable email caching',
     imap: 'imap incoming mail server port password ssl starttls encryption connection',
@@ -364,6 +366,253 @@ function FontSettings({
                 style={{ marginTop: 20 }}
                 onClick={() => saveFontDraft().catch(() => {})}
                 disabled={saving || !fontDirty}
+            >
+                {saving ? 'Saving…' : 'Save'}
+            </button>
+        </div>
+    )
+}
+
+function LayoutSettings({
+    accountId,
+    searchQuery = '',
+    layoutDraft,
+    setLayoutDraft,
+    layoutBaselineRef,
+    layoutReady,
+}) {
+    const [saving, setSaving] = useState(false)
+    const [persistError, setPersistError] = useState(null)
+    const [draggedItem, setDraggedItem] = useState(null)
+    const [dragOverZone, setDragOverZone] = useState(null)
+    const [dragOverInvalid, setDragOverInvalid] = useState(false)
+
+    const persistLayout = useCallback(async () => {
+        const layoutJson = JSON.stringify(layoutDraft)
+        if (!accountId) {
+            localStorage.setItem('layout', layoutJson)
+            layoutBaselineRef.current = JSON.parse(layoutJson)
+            window.dispatchEvent(new Event('guvercin-layout-changed'))
+            return
+        }
+        setPersistError(null)
+        const res = await fetch(apiUrl(`/api/account/${accountId}/layout`), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ layout: layoutJson }),
+        })
+        if (!res.ok) throw new Error('save_failed')
+        localStorage.setItem('layout', layoutJson)
+        layoutBaselineRef.current = JSON.parse(layoutJson)
+        window.dispatchEvent(new Event('guvercin-layout-changed'))
+    }, [accountId, layoutDraft, layoutBaselineRef])
+
+    const saveLayoutDraft = useCallback(async () => {
+        setSaving(true)
+        setPersistError(null)
+        try {
+            await persistLayout()
+        } catch (e) {
+            console.error(e)
+            setPersistError('Could not save layout. Try again.')
+            throw new Error('save_failed')
+        } finally {
+            setSaving(false)
+        }
+    }, [persistLayout])
+
+    const layoutDirty = JSON.stringify(layoutDraft) !== JSON.stringify(layoutBaselineRef.current)
+
+    useSettingsDraft('layout-appearance', 'Layout', {
+        isDirty: layoutDirty,
+        save: saveLayoutDraft,
+        revert: () => {
+            const base = layoutBaselineRef.current
+            setLayoutDraft(JSON.parse(JSON.stringify(base)))
+            setPersistError(null)
+        },
+    })
+
+    const BAR_LABELS = {
+        main: 'Main Bar',
+        tabs: 'Tabs Bar',
+        tools: 'Toolbar 2 Lines',
+        apps: 'Apps Bar',
+        mailboxes: 'Mailboxes Bar',
+        maillist: 'Mail List Bar'
+    }
+
+    const BAR_BADGES = {
+        main: 'MAIN',
+        tabs: 'TABS',
+        tools: 'TOOLS',
+        apps: 'APPS',
+        mailboxes: 'MBX',
+        maillist: 'ML'
+    }
+
+    const BAR_ZONES = {
+        main: ['top', 'bottom', 'left', 'right'],
+        tabs: ['top', 'bottom', 'left', 'right'],
+        tools: ['top', 'bottom'],
+        apps: ['top', 'bottom', 'left', 'right'],
+        mailboxes: ['left', 'right'],
+        maillist: ['left', 'right']
+    }
+    const ZONE_LABELS = {
+        top: 'Top',
+        bottom: 'Bottom',
+        left: 'Left',
+        right: 'Right'
+    }
+
+    const handleDragStart = (e, item) => {
+        e.dataTransfer.setData('text/plain', item)
+        setDraggedItem(item)
+        setDragOverZone(null)
+        setDragOverInvalid(false)
+    }
+
+    const handleDrop = (e, zoneId) => {
+        e.preventDefault()
+        const item = e.dataTransfer.getData('text/plain')
+        if (!item) return
+
+        if (!BAR_ZONES[item]?.includes(zoneId)) {
+            setDraggedItem(null)
+            setDragOverZone(null)
+            setDragOverInvalid(false)
+            return
+        }
+        
+        const newLayout = { top: [...layoutDraft.top], bottom: [...layoutDraft.bottom], left: [...layoutDraft.left], right: [...layoutDraft.right] }
+        Object.keys(newLayout).forEach(k => {
+            newLayout[k] = newLayout[k].filter(i => i !== item)
+        })
+        
+        const targetItem = e.target.closest('.ls-item')?.dataset.item;
+        if (targetItem && targetItem !== item) {
+           const idx = newLayout[zoneId].indexOf(targetItem);
+           if (idx >= 0) newLayout[zoneId].splice(idx, 0, item);
+           else newLayout[zoneId].push(item);
+        } else {
+           newLayout[zoneId].push(item)
+        }
+        
+        Object.keys(newLayout).forEach(k => {
+            const mainIdx = newLayout[k].indexOf('main')
+            if (mainIdx > 0) {
+                newLayout[k].splice(mainIdx, 1)
+                newLayout[k].unshift('main')
+            }
+            const appsIdx = newLayout[k].indexOf('apps')
+            if (appsIdx > 0) {
+                newLayout[k].splice(appsIdx, 1)
+                const insertAt = newLayout[k][0] === 'main' ? 1 : 0
+                newLayout[k].splice(insertAt, 0, 'apps')
+            }
+        })
+        
+        setLayoutDraft(newLayout)
+        setDraggedItem(null)
+        setDragOverZone(null)
+        setDragOverInvalid(false)
+    }
+
+    const handleDragOver = (e, zoneId) => {
+        e.preventDefault()
+        const item = draggedItem
+        if (!item) return
+        const isAllowed = BAR_ZONES[item]?.includes(zoneId)
+        setDragOverZone(zoneId)
+        setDragOverInvalid(!isAllowed)
+        e.dataTransfer.dropEffect = isAllowed ? 'move' : 'none'
+    }
+
+    const handleDragLeave = (zoneId) => {
+        if (dragOverZone === zoneId) {
+            setDragOverZone(null)
+            setDragOverInvalid(false)
+        }
+    }
+
+    if (!layoutReady || !layoutDraft) {
+        return (
+            <div className="sp-section">
+                <h2 className="sp-section__title"><HighlightMatch text="Layout" query={searchQuery} /></h2>
+                <div className="sp-loading-row">
+                    <div className="sp-spinner" />
+                    <span>Loading…</span>
+                </div>
+            </div>
+        )
+    }
+
+    return (
+        <div className="sp-section">
+            <h2 className="sp-section__title"><HighlightMatch text="Layout" query={searchQuery} /></h2>
+            <p className="sp-section__desc">
+                <HighlightMatch text="Drag and drop bars to configure your layout. Changes apply visually; save to keep them." query={searchQuery} />
+            </p>
+
+            <div className="ls-container">
+                <div className="ls-preview-board">
+                    <div className="ls-screen">
+                        {['top', 'left', 'center', 'right', 'bottom'].map(zone => (
+                            zone === 'center' ? (
+                                <div key={zone} className="ls-center">
+                                    <div className="ls-center-label">Reading Pane</div>
+                                </div>
+                            ) : (
+                                <div 
+                                    key={zone}
+                                    className={`ls-zone ls-zone--${zone}${dragOverZone === zone ? ' is-dragover' : ''}${dragOverZone === zone && dragOverInvalid ? ' is-invalid' : ''}`}
+                                    onDrop={(e) => handleDrop(e, zone)}
+                                    onDragOver={(e) => handleDragOver(e, zone)}
+                                    onDragLeave={() => handleDragLeave(zone)}
+                                >
+                                    <div className="ls-zone-label">{ZONE_LABELS[zone]}</div>
+                                    <div className="ls-zone-items">
+                                        {layoutDraft[zone].map(item => (
+                                            <div
+                                                key={item}
+                                                className="ls-item"
+                                                draggable
+                                                onDragStart={(e) => handleDragStart(e, item)}
+                                                onDragEnd={() => {
+                                                    setDraggedItem(null)
+                                                    setDragOverZone(null)
+                                                    setDragOverInvalid(false)
+                                                }}
+                                                data-item={item}
+                                            >
+                                                <span className="ls-item__badge">{BAR_BADGES[item]}</span>
+                                                <span className="ls-item__label">{BAR_LABELS[item]}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )
+                        ))}
+                    </div>
+                </div>
+                <div className="ls-info">
+                    Constraints: Main Bar stays outermost. Tools Bar only Top/Bottom. Mailboxes & Mail List only Left/Right. Order in each zone is outer -> inner.
+                </div>
+            </div>
+
+            {persistError && (
+                <div className="sp-form-message sp-form-message--error" style={{ marginTop: 12 }}>
+                    {persistError}
+                </div>
+            )}
+
+            <button
+                type="button"
+                className="sp-save-btn"
+                style={{ marginTop: 20 }}
+                onClick={() => saveLayoutDraft().catch(() => {})}
+                disabled={saving || !layoutDirty}
             >
                 {saving ? 'Saving…' : 'Save'}
             </button>
@@ -2226,6 +2475,16 @@ function renderSinglePanel(id, accountId, onClose, onRefreshAccount, searchQuery
                 fontReady={fontReady}
             />
         )
+        case 'layout': return (
+            <LayoutSettings
+                accountId={accountId}
+                searchQuery={q}
+                layoutDraft={appearance.layoutDraft}
+                setLayoutDraft={appearance.setLayoutDraft}
+                layoutBaselineRef={appearance.layoutBaselineRef}
+                layoutReady={appearance.layoutReady}
+            />
+        )
         case 'mailbox_label_list': return (
             <>
                 <MailboxListCountDisplaySettings accountId={accountId} onRefreshAccount={onRefreshAccount} searchQuery={q} />
@@ -2307,6 +2566,10 @@ function SettingsPage(props) {
     const fontBaselineRef = useRef((localStorage.getItem('font') || 'Inter').trim() || 'Inter')
     const [fontDraft, setFontDraft] = useState(() => fontBaselineRef.current)
     const [fontReady, setFontReady] = useState(false)
+
+    const layoutBaselineRef = useRef(null)
+    const [layoutDraft, setLayoutDraft] = useState(null)
+    const [layoutReady, setLayoutReady] = useState(false)
 
     const finalizeClose = useCallback(() => {
         setQuitOpen(false)
@@ -2400,6 +2663,13 @@ function SettingsPage(props) {
             setFontDraft(f)
             applyAppFontFamily(f)
             setFontReady(true)
+
+            const l = localStorage.getItem('layout')
+            let nextL = { top: ['main', 'tabs'], bottom: ['tools'], left: ['apps', 'mailboxes', 'maillist'], right: [] }
+            if (l) { try { nextL = JSON.parse(l) } catch (e) {} }
+            layoutBaselineRef.current = nextL
+            setLayoutDraft(nextL)
+            setLayoutReady(true)
             return
         }
         let active = true
@@ -2414,6 +2684,13 @@ function SettingsPage(props) {
                 setFontDraft(next)
                 applyAppFontFamily(next)
                 setFontReady(true)
+
+                const rawLayout = data.layout
+                let nextLayout = { top: ['main', 'tabs'], bottom: ['tools'], left: ['apps', 'mailboxes', 'maillist'], right: [] }
+                if (rawLayout) { try { nextLayout = JSON.parse(rawLayout) } catch (e) {} }
+                layoutBaselineRef.current = nextLayout
+                setLayoutDraft(nextLayout)
+                setLayoutReady(true)
             })
             .catch(() => {
                 if (!active) return
@@ -2422,6 +2699,13 @@ function SettingsPage(props) {
                 setFontDraft(f)
                 applyAppFontFamily(f)
                 setFontReady(true)
+
+                const l = localStorage.getItem('layout')
+                let nextL = { top: ['main', 'tabs'], bottom: ['tools'], left: ['apps', 'mailboxes', 'maillist'], right: [] }
+                if (l) { try { nextL = JSON.parse(l) } catch (e) {} }
+                layoutBaselineRef.current = nextL
+                setLayoutDraft(nextL)
+                setLayoutReady(true)
             })
         return () => {
             active = false
@@ -2437,8 +2721,12 @@ function SettingsPage(props) {
             setFontDraft,
             fontBaselineRef,
             fontReady,
+            layoutDraft,
+            setLayoutDraft,
+            layoutBaselineRef,
+            layoutReady,
         }),
-        [themeDraft, fontDraft, fontReady],
+        [themeDraft, fontDraft, fontReady, layoutDraft, layoutReady],
     )
 
     useEffect(() => {

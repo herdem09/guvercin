@@ -470,6 +470,7 @@ async fn init_general_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             language      TEXT DEFAULT 'EN',
             theme         TEXT DEFAULT 'SYSTEM',
             font          TEXT,
+            layout        TEXT,
             ssl_mode      TEXT DEFAULT 'STARTTLS'
         )
         "#,
@@ -485,6 +486,10 @@ async fn init_general_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .execute(pool)
         .await;
     let _ = sqlx::query("UPDATE accounts SET theme = 'SYSTEM' WHERE theme IS NULL OR theme = '' OR theme = 'LIGHT'")
+        .execute(pool)
+        .await;
+
+    let _ = sqlx::query("ALTER TABLE accounts ADD COLUMN layout TEXT")
         .execute(pool)
         .await;
 

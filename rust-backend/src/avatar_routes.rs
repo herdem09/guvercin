@@ -7,7 +7,7 @@ use axum::{
 };
 use serde::Deserialize;
 use std::sync::Arc;
-use crate::{avatar, crypto, db::AppState};
+use crate::{avatar, db::AppState};
 
 #[derive(Deserialize)]
 pub struct AvatarQuery {

@@ -8,7 +8,7 @@ use std::{
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
-use crate::crypto::{self, CryptoManager};
+use crate::crypto::CryptoManager;
 use crate::db::AppState;
 
 pub fn email_hash(email: &str) -> String {

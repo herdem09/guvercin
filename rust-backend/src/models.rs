@@ -16,6 +16,7 @@ pub struct AccountSummary {
     pub language: Option<String>,
     pub theme: Option<String>,
     pub font: Option<String>,
+    pub layout: Option<String>,
     pub ssl_mode: Option<String>,
     pub mailbox_order: Option<String>,
     pub label_order: Option<String>,
@@ -125,6 +126,11 @@ pub struct SetFontBody {
 }
 
 #[derive(Deserialize)]
+pub struct SetLayoutBody {
+    pub layout: String,
+}
+
+#[derive(Deserialize)]
 pub struct SetMailboxCountDisplayBody {
     pub mode: String,
 }
@@ -157,6 +163,7 @@ pub struct AccountSettingsResponse {
     pub smtp_port: Option<i64>,
     pub ssl_mode: Option<String>,
     pub font: Option<String>,
+    pub layout: Option<String>,
     pub mailbox_order: Option<String>,
     pub label_order: Option<String>,
     pub mailbox_count_display: Option<String>,
