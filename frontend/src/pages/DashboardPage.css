@@ -945,6 +945,44 @@ body.resizing * {
   flex-shrink: 0;
 }
 
+.db-view-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  color: var(--c-text-1);
+  font-size: 12px;
+  border-radius: 20px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  min-height: 26px;
+}
+
+.db-view-toggle:hover {
+  background: var(--c-border-1);
+}
+
+.db-view-toggle.active {
+  background: #fef3c7;
+  color: #000;
+  border: 1px solid var(--c-primary);
+}
+
+.db-view-toggle.active:hover {
+  background: #fde68a;
+}
+
+.db-view-toggle__switch {
+  display: none;
+}
+
+.db-layout-popover__tick {
+  display: none;
+}
+
 .db-layout-popover__tick {
   width: 15px !important;
   height: 15px !important;

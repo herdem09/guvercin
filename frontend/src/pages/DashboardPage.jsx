@@ -2372,9 +2372,6 @@ function MailSection({
     const [layoutCols, setLayoutCols] = useState(1)
     const [movePopoverStyle, setMovePopoverStyle] = useState(null)
     const [labelPopoverStyle, setLabelPopoverStyle] = useState(null)
-    const [layoutMenuHover, setLayoutMenuHover] = useState(false)
-    const [layoutMenuPinned, setLayoutMenuPinned] = useState(false)
-    const [layoutPopoverStyle, setLayoutPopoverStyle] = useState(null)
     const [mailItemMenu, setMailItemMenu] = useState(null)
     const [mailItemMoveMenuStyle, setMailItemMoveMenuStyle] = useState(null)
     const [mailItemLabelMenuStyle, setMailItemLabelMenuStyle] = useState(null)
@@ -2386,23 +2383,7 @@ function MailSection({
     const [blockSenderSelectedFolder, setBlockSenderSelectedFolder] = useState('')
     const displayCols = isMailFullscreen ? layoutCols : 1
     const perPageValue = Math.max(1, Number.parseInt(perPage, 10) || 50)
-    const showLayoutMenu = layoutMenuHover || layoutMenuPinned
     const appMenuLeftPad = appMenuVisible ? 48 : 0
-
-    const clearLayoutHoverLeaveTimer = useCallback(() => {
-        if (layoutHoverLeaveTimerRef.current != null) {
-            window.clearTimeout(layoutHoverLeaveTimerRef.current)
-            layoutHoverLeaveTimerRef.current = null
-        }
-    }, [])
-
-    const scheduleLayoutHoverClose = useCallback(() => {
-        clearLayoutHoverLeaveTimer()
-        layoutHoverLeaveTimerRef.current = window.setTimeout(() => {
-            layoutHoverLeaveTimerRef.current = null
-            setLayoutMenuHover(false)
-        }, 220)
-    }, [clearLayoutHoverLeaveTimer])
 
     const visibleMails = useMemo(() => {
         const copy = Array.isArray(mails) ? mails.slice() : []
@@ -3236,9 +3217,6 @@ function MailSection({
     const submenuScrollRef = useRef(null)
     const moveMenuRef = useRef(null)
     const labelMenuRef = useRef(null)
-    const layoutMenuShellRef = useRef(null)
-    const layoutMenuAnchorRef = useRef(null)
-    const layoutHoverLeaveTimerRef = useRef(null)
     const submenuMoreRef = useRef(null)
     const [isSubmenuMoreOpen, setIsSubmenuMoreOpen] = useState(false)
     const [submenuVisibleCount, setSubmenuVisibleCount] = useState(99)
@@ -3543,9 +3521,6 @@ function MailSection({
             if (mailItemMenuRef.current && !mailItemMenuRef.current.contains(e.target)) {
                 closeMailItemMenu()
             }
-            if (layoutMenuShellRef.current && !layoutMenuShellRef.current.contains(e.target)) {
-                setLayoutMenuPinned(false)
-            }
         }
         document.addEventListener('mousedown', handleClickOutside)
         return () => document.removeEventListener('mousedown', handleClickOutside)
@@ -3583,93 +3558,47 @@ function MailSection({
     }, [activeRibbonTab, activeTabId, isLabelMenuOpen, isMoveMenuOpen, syncPopoverPosition])
 
     useEffect(() => {
-        if (activeRibbonTab !== 'view') {
-            clearLayoutHoverLeaveTimer()
-            setLayoutMenuHover(false)
-            setLayoutMenuPinned(false)
-            setLayoutPopoverStyle(null)
-        }
-    }, [activeRibbonTab, clearLayoutHoverLeaveTimer])
-
-    /** Small gap so the panel reads clearly under the Layout ribbon control. */
-    const LAYOUT_POPOVER_GAP = 3
-
-    useLayoutEffect(() => {
-        if (!showLayoutMenu) {
-            setLayoutPopoverStyle(null)
-            return
-        }
-        syncPopoverPosition(layoutMenuAnchorRef, setLayoutPopoverStyle, 252, LAYOUT_POPOVER_GAP, 'underAnchor')
-    }, [showLayoutMenu, syncPopoverPosition])
-
-    useEffect(() => {
-        if (!showLayoutMenu) return
-
-        const sync = () => {
-            syncPopoverPosition(layoutMenuAnchorRef, setLayoutPopoverStyle, 252, LAYOUT_POPOVER_GAP, 'underAnchor')
-        }
-
-        const scrollNode = submenuScrollRef.current
-
-        window.addEventListener('resize', sync)
-        window.addEventListener('scroll', sync, true)
-        scrollNode?.addEventListener('scroll', sync)
-
-        return () => {
-            window.removeEventListener('resize', sync)
-            window.removeEventListener('scroll', sync, true)
-            scrollNode?.removeEventListener('scroll', sync)
-        }
-    }, [activeRibbonTab, activeTabId, showLayoutMenu, syncPopoverPosition])
-
-    useEffect(() => () => clearLayoutHoverLeaveTimer(), [clearLayoutHoverLeaveTimer])
-
-    useEffect(() => {
         const handleKeyDown = (e) => {
             if (e.key === 'Escape') {
                 if (mailItemMenu) {
                     closeMailItemMenu()
                     return
                 }
-                if (layoutMenuPinned || layoutMenuHover) {
-                    clearLayoutHoverLeaveTimer()
-                    setLayoutMenuPinned(false)
-                    setLayoutMenuHover(false)
-                    return
-                }
-                if (isMoveMenuOpen) {
-                    setIsMoveMenuOpen(false)
+                if (isFilterMenuOpen) {
+                    setIsFilterMenuOpen(false)
                     return
                 }
                 if (isLabelMenuOpen) {
                     setIsLabelMenuOpen(false)
                     return
                 }
-                if (isSortMenuOpen) {
-                    setIsSortMenuOpen(false)
-                    return
-                }
-                if (isFilterMenuOpen) {
-                    setIsFilterMenuOpen(false)
+                if (isMoveMenuOpen) {
+                    setIsMoveMenuOpen(false)
                     return
                 }
                 if (isSelectionMenuOpen) {
                     setIsSelectionMenuOpen(false)
                     return
                 }
+                if (isSortMenuOpen) {
+                    setIsSortMenuOpen(false)
+                    return
+                }
                 if (selectMode) {
                     setSelectMode(false)
                     setSelectedMailIds(new Set())
-                    setLastSelectedMailId(null)
-                } else if (selectedMail) {
-                    setSelectedMail(null)
-                    setMailContent(null)
+                    return
                 }
-            }
+                if (selectedMail) {
+                    setMailContent(null)
+                    setSelectedMail(null)
+                    return
+                }
+            }  
         }
         window.addEventListener('keydown', handleKeyDown)
         return () => window.removeEventListener('keydown', handleKeyDown)
-    }, [clearLayoutHoverLeaveTimer, closeMailItemMenu, isFilterMenuOpen, isLabelMenuOpen, isMoveMenuOpen, isSelectionMenuOpen, isSortMenuOpen, layoutMenuHover, layoutMenuPinned, mailItemMenu, selectMode, selectedMail, setMailContent, setSelectedMail])
+    }, [closeMailItemMenu, isFilterMenuOpen, isLabelMenuOpen, isMoveMenuOpen, isSelectionMenuOpen, isSortMenuOpen, mailItemMenu, selectMode, selectedMail, setMailContent, setSelectedMail])
 
     useEffect(() => {
         if (!mailItemMenu) return
@@ -4505,20 +4434,17 @@ function MailSection({
             {!activeTabId && (
                 <div className="db-main-menu">
                     <ul>
-                        <li className={activeRibbonTab === 'file' ? 'active' : ''}>
-                            <button onClick={() => setActiveRibbonTab('file')}>{t('Files')}</button>
-                        </li>
                         <li className={activeRibbonTab === 'home' ? 'active' : ''}>
                             <button onClick={() => setActiveRibbonTab('home')}>{t('Home')}</button>
                         </li>
-                        <li className={activeRibbonTab === 'send-receive' ? 'active' : ''}>
-                            <button onClick={() => setActiveRibbonTab('send-receive')}>{t('Send/Receive')}</button>
-                        </li>
-                        <li className={activeRibbonTab === 'folder' ? 'active' : ''}>
-                            <button onClick={() => setActiveRibbonTab('folder')}>{t('Folders')}</button>
+                        <li className={activeRibbonTab === 'file' ? 'active' : ''}>
+                            <button onClick={() => setActiveRibbonTab('file')}>{t('Files')}</button>
                         </li>
                         <li className={activeRibbonTab === 'view' ? 'active' : ''}>
                             <button onClick={() => setActiveRibbonTab('view')}>{t('View')}</button>
+                        </li>
+                        <li className={activeRibbonTab === 'help' ? 'active' : ''}>
+                            <button onClick={() => setActiveRibbonTab('help')}>{t('Help')}</button>
                         </li>
                     </ul>
                 </div>
@@ -4702,120 +4628,63 @@ function MailSection({
                                 </li>
                             </ul>
                         )}
-                        {!activeTabId && activeRibbonTab === 'send-receive' && (
+                        {!activeTabId && activeRibbonTab === 'help' && (
                             <ul>
-                                <li><button onClick={() => {
-                                    loadMailsFromCache(selectedFolder, currentPage, perPage)
-                                        .then(() => {
-                                            if (canUseRemoteMail && !isSyncing) {
-                                                syncMailsFromRemote(selectedFolder, currentPage, perPage)
-                                            }
-                                        })
-                                }}><img src="/img/icons/reload.svg" className="svg-icon-inline" /> {t('Update Folder')}</button></li>
-                                <li><button onClick={() => { }}><img src="/img/icons/online.svg" className="svg-icon-inline" /> {t('Send All')}</button></li>
-                            </ul>
-                        )}
-                        {!activeTabId && activeRibbonTab === 'folder' && (
-                            <ul>
-                                <li><button onClick={() => { }}><img src="/img/icons/folder.svg" className="svg-icon-inline" /> {t('New Folder')}</button></li>
-                                <li><button onClick={() => { }}><img src="/img/icons/label.svg" className="svg-icon-inline" /> {t('Rename')}</button></li>
+                                <li><button onClick={() => alert('Help clicked')}><img src="/img/icons/settings.svg" className="svg-icon-inline" /> {t('Help')}</button></li>
+                                <li><button onClick={() => alert('Contact Us clicked')}><img src="/img/icons/mail.svg" className="svg-icon-inline" /> {t('Contact Us')}</button></li>
+                                <li><button onClick={() => alert('Feedback clicked')}><img src="/img/icons/new-mail.svg" className="svg-icon-inline" /> {t('Feedback')}</button></li>
+                                <li><button onClick={() => alert('Report Bug clicked')}><img src="/img/icons/notification.svg" className="svg-icon-inline" /> {t('Report Bug')}</button></li>
                             </ul>
                         )}
                         {!activeTabId && activeRibbonTab === 'view' && (
                             <ul>
-                                <li className="db-submenu-menu-wrap">
-                                    <div ref={layoutMenuShellRef} className="db-layout-menu-shell">
-                                        <button
-                                            type="button"
-                                            ref={layoutMenuAnchorRef}
-                                            className={showLayoutMenu ? 'submenu-open' : ''}
-                                            onClick={(e) => {
-                                                e.stopPropagation()
-                                                setLayoutMenuPinned((p) => !p)
-                                            }}
-                                            onMouseEnter={() => {
-                                                clearLayoutHoverLeaveTimer()
-                                                setLayoutMenuHover(true)
-                                            }}
-                                            onMouseLeave={scheduleLayoutHoverClose}
-                                        >
-                                            <img src="/img/icons/columns-2.svg" className="svg-icon-inline" alt="" /> {t('Layout')}
-                                        </button>
-                                        {showLayoutMenu && (
-                                        <div
-                                            className="db-submenu-popover db-layout-popover"
-                                            style={layoutPopoverStyle || undefined}
-                                            onMouseDown={(e) => e.stopPropagation()}
-                                            onWheel={(e) => e.stopPropagation()}
-                                            onMouseEnter={clearLayoutHoverLeaveTimer}
-                                            onMouseLeave={scheduleLayoutHoverClose}
-                                        >
-                                            <button
-                                                type="button"
-                                                className="db-layout-popover__row"
-                                                role="menuitemcheckbox"
-                                                aria-checked={appMenuVisible}
-                                                onClick={() => setAppMenuVisible((v) => !v)}
-                                            >
-                                                <span className="db-layout-popover__label">{t('App menu')}</span>
-                                                <span className="db-layout-popover__check" aria-hidden>
-                                                    {appMenuVisible ? (
-                                                        <img src="/img/icons/choice-choosen.svg" className="svg-icon-inline db-layout-popover__tick" alt="" />
-                                                    ) : null}
-                                                </span>
-                                            </button>
-                                            <button
-                                                type="button"
-                                                className="db-layout-popover__row"
-                                                role="menuitemcheckbox"
-                                                aria-checked={!foldersHidden}
-                                                onClick={() => {
-                                                    if (foldersHidden) {
-                                                        userClosedFolders.current = false
-                                                        setFoldersHidden(false)
-                                                    } else {
-                                                        userClosedFolders.current = true
-                                                        setFoldersHidden(true)
-                                                        setOverlayPanel((p) => (p === 'folders' ? null : p))
-                                                    }
-                                                }}
-                                            >
-                                                <span className="db-layout-popover__label">{t('Mailboxes')}</span>
-                                                <span className="db-layout-popover__check" aria-hidden>
-                                                    {!foldersHidden ? (
-                                                        <img src="/img/icons/choice-choosen.svg" className="svg-icon-inline db-layout-popover__tick" alt="" />
-                                                    ) : null}
-                                                </span>
-                                            </button>
-                                            <button
-                                                type="button"
-                                                className="db-layout-popover__row"
-                                                role="menuitemcheckbox"
-                                                aria-checked={!mailsHidden}
-                                                onClick={() => {
-                                                    if (mailsHidden) {
-                                                        userClosedMails.current = false
-                                                        setMailsHidden(false)
-                                                        setOverlayPanel((p) => (p === 'mails' ? null : p))
-                                                    } else {
-                                                        userClosedMails.current = true
-                                                        setMailsHidden(true)
-                                                        if (layoutMode === 'narrow') {
-                                                            setOverlayPanel((p) => (p === 'mails' ? null : p))
-                                                        }
-                                                    }
-                                                }}
-                                            >
-                                                <span className="db-layout-popover__label">{t('Mail list')}</span>
-                                                <span className="db-layout-popover__check" aria-hidden>
-                                                    {!mailsHidden ? (
-                                                        <img src="/img/icons/choice-choosen.svg" className="svg-icon-inline db-layout-popover__tick" alt="" />
-                                                    ) : null}
-                                                </span>
-                                            </button>
-                                        </div>
-                                        )}
-                                    </div>
+                                <li>
+                                    <button
+                                        type="button"
+                                        className={`db-view-toggle ${appMenuVisible ? 'active' : ''}`}
+                                        onClick={() => setAppMenuVisible((v) => !v)}
+                                    >
+                                        {t('App menu')}
+                                    </button>
+                                </li>
+                                <li>
+                                    <button
+                                        type="button"
+                                        className={`db-view-toggle ${!foldersHidden ? 'active' : ''}`}
+                                        onClick={() => {
+                                            if (foldersHidden) {
+                                                userClosedFolders.current = false
+                                                setFoldersHidden(false)
+                                            } else {
+                                                userClosedFolders.current = true
+                                                setFoldersHidden(true)
+                                                setOverlayPanel((p) => (p === 'folders' ? null : p))
+                                            }
+                                        }}
+                                    >
+                                        {t('Mailboxes')}
+                                    </button>
+                                </li>
+                                <li>
+                                    <button
+                                        type="button"
+                                        className={`db-view-toggle ${!mailsHidden ? 'active' : ''}`}
+                                        onClick={() => {
+                                            if (mailsHidden) {
+                                                userClosedMails.current = false
+                                                setMailsHidden(false)
+                                                setOverlayPanel((p) => (p === 'mails' ? null : p))
+                                            } else {
+                                                userClosedMails.current = true
+                                                setMailsHidden(true)
+                                                if (layoutMode === 'narrow') {
+                                                    setOverlayPanel((p) => (p === 'mails' ? null : p))
+                                                }
+                                            }
+                                        }}
+                                    >
+                                        {t('Mail list')}
+                                    </button>
                                 </li>
                             </ul>
                         )}

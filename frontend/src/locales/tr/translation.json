@@ -116,5 +116,9 @@
   "Search results found": "{{count}} adet sonuç bulundu",
   "App menu": "Uygulama menüsü",
   "Mailboxes": "Posta kutuları",
-  "Mail list": "Posta listesi"
+  "Mail list": "Posta listesi",
+  "Help": "Yardım",
+  "Contact Us": "Bize Ulaşın",
+  "Feedback": "Geri Bildirim",
+  "Report Bug": "Hata Bildir"
 }

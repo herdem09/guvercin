@@ -1790,8 +1790,8 @@ function BlockedSendersSettings({ accountId, searchQuery = '' }) {
                                         type="button"
                                         onClick={() => unblock(r.id)}
                                         disabled={busy}
-                                        className="sp-ghost-btn"
-                                        style={{ padding: '4px 8px', color: 'var(--color-danger)' }}
+                                        className="sp-save-btn"
+                                        style={{ padding: '0 16px', margin: 0, height: '36px', backgroundColor: '#ffdd6e', borderColor: '#ffc107' }}
                                     >
                                         Unblock
                                     </button>
