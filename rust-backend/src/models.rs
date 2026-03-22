@@ -290,3 +290,9 @@ pub struct CreateBlockedSenderRequest {
     pub target_folder: Option<String>,
     pub apply_to_existing: bool,
 }
+
+#[derive(Deserialize)]
+pub struct UpdateBlockedSenderRequest {
+    pub action_type: String,
+    pub target_folder: Option<String>,
+}

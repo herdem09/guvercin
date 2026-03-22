@@ -794,7 +794,7 @@ function ServerSettings({ accountId, type, searchQuery = '' }) {
                 <button
                     type="submit"
                     className="sp-save-btn"
-                    disabled={saving}
+                    disabled={saving || !serverDirty}
                 >
                     {saving ? 'Saving…' : 'Save Settings'}
                 </button>
@@ -1224,7 +1224,7 @@ function OfflineSettings({ accountId, searchQuery = '' }) {
                 type="button"
                 className="sp-save-btn"
                 style={{ marginTop: '20px' }}
-                disabled={saving}
+                disabled={saving || !offlineDirty}
                 onClick={handleSave}
             >
                 {saving ? 'Saving…' : 'Save Offline Settings'}
@@ -1471,7 +1471,7 @@ function EncryptionSettings({ searchQuery = '' }) {
                 className="sp-save-btn"
                 style={{ marginTop: '20px' }}
                 onClick={handleSave}
-                disabled={saving}
+                disabled={saving || !encDirty}
             >
                 {saving ? 'Saving…' : 'Save Settings'}
             </button>
@@ -1480,15 +1480,44 @@ function EncryptionSettings({ searchQuery = '' }) {
 }
 
 /* ─── Blocked Senders setting panel ─────────────────────────────────── */
+function blockedRuleToActionKey(rule) {
+    if (rule.action_type === 'delete') return 'Delete'
+    const f = (rule.target_folder || '').trim()
+    const tail = f.split('/').pop() || f
+    if (tail === 'Trash' || f === 'Trash') return 'Trash'
+    if (tail === 'Spam' || f === 'Spam') return 'Spam'
+    if (tail === 'Archive' || f === 'Archive') return 'Archive'
+    return 'Folder'
+}
+
+/** @returns {{ action_type: string, target_folder: string | null } | null} */
+function buildBlockedSenderActionPayload(actionKey, folderWhenFolderOption) {
+    let targetFolder = null
+    let actionEnum = 'move'
+    if (actionKey === 'Delete') actionEnum = 'delete'
+    else if (actionKey === 'Archive') targetFolder = 'Archive'
+    else if (actionKey === 'Spam') targetFolder = 'Spam'
+    else if (actionKey === 'Folder') {
+        if (!folderWhenFolderOption) return null
+        targetFolder = folderWhenFolderOption
+    } else {
+        targetFolder = 'Trash'
+    }
+    return { action_type: actionEnum, target_folder: targetFolder }
+}
+
 function BlockedSendersSettings({ accountId, searchQuery = '' }) {
     const [rules, setRules] = useState([])
     const [loading, setLoading] = useState(true)
     const [actioning, setActioning] = useState(false)
+    const [updatingRuleId, setUpdatingRuleId] = useState(null)
     const [message, setMessage] = useState(null)
     const [newSender, setNewSender] = useState('')
     const [newAction, setNewAction] = useState('Trash')
     const [folders, setFolders] = useState([])
     const [newTargetFolder, setNewTargetFolder] = useState('')
+    // Pending action changes for existing rules (key: rule.id, value: actionKey)
+    const [pendingActions, setPendingActions] = useState({})
 
     const fetchRules = useCallback(async () => {
         if (!accountId) return
@@ -1511,12 +1540,12 @@ function BlockedSendersSettings({ accountId, searchQuery = '' }) {
                 const data = await res.json()
                 const f = Array.isArray(data.folders) ? data.folders : []
                 setFolders(f)
-                if (f.length > 0) setNewTargetFolder(f[0])
+                if (f.length > 0) setNewTargetFolder((prev) => prev || f[0])
             }
         } catch (e) {}
     }, [accountId])
 
-    useEffect(() => { 
+    useEffect(() => {
         fetchRules()
         fetchFolders()
     }, [fetchRules, fetchFolders])
@@ -1528,7 +1557,7 @@ function BlockedSendersSettings({ accountId, searchQuery = '' }) {
         try {
             const res = await fetch(apiUrl(`/api/offline/${accountId}/blocked-senders/${id}`), { method: 'DELETE' })
             if (!res.ok) throw new Error()
-            setRules(prev => prev.filter(r => r.id !== id))
+            setRules((prev) => prev.filter((r) => r.id !== id))
             setMessage({ type: 'success', text: 'Unblocked successfully.' })
         } catch {
             setMessage({ type: 'error', text: 'Failed to unblock sender.' })
@@ -1537,25 +1566,55 @@ function BlockedSendersSettings({ accountId, searchQuery = '' }) {
         }
     }
 
+    const patchRuleAction = async (rule, actionKey, folderPath) => {
+        if (!accountId) return
+        let folderForMove = folderPath
+        if (actionKey === 'Folder') {
+            folderForMove = folderForMove || rule.target_folder || folders[0] || ''
+            if (!folderForMove) {
+                setMessage({ type: 'error', text: 'Please select a specific folder.' })
+                return
+            }
+        }
+        const payload = buildBlockedSenderActionPayload(actionKey, actionKey === 'Folder' ? folderForMove : undefined)
+        if (!payload) {
+            setMessage({ type: 'error', text: 'Please select a specific folder.' })
+            return
+        }
+        setUpdatingRuleId(rule.id)
+        setMessage(null)
+        try {
+            const res = await fetch(apiUrl(`/api/offline/${accountId}/blocked-senders/${rule.id}`), {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action_type: payload.action_type,
+                    target_folder: payload.target_folder,
+                }),
+            })
+            if (!res.ok) throw new Error()
+            const updated = await res.json()
+            setRules((prev) => prev.map((r) => (r.id === rule.id ? updated : r)))
+            setMessage({ type: 'success', text: 'Rule updated.' })
+        } catch {
+            setMessage({ type: 'error', text: 'Failed to update rule.' })
+            await fetchRules()
+        } finally {
+            setUpdatingRuleId(null)
+        }
+    }
+
     const addRule = async (e) => {
         e.preventDefault()
         if (!accountId || !newSender) return
         setActioning(true)
         setMessage(null)
-        let targetFolder = null
-        let actionEnum = 'move'
-        if (newAction === 'Delete') actionEnum = 'delete'
-        else if (newAction === 'Archive') targetFolder = 'Archive'
-        else if (newAction === 'Spam') targetFolder = 'Spam'
-        else if (newAction === 'Folder') {
-            if (!newTargetFolder) {
-                setMessage({ type: 'error', text: 'Please select a specific folder.' })
-                setActioning(false)
-                return
-            }
-            targetFolder = newTargetFolder
+        const payload = buildBlockedSenderActionPayload(newAction, newAction === 'Folder' ? newTargetFolder : undefined)
+        if (!payload) {
+            setMessage({ type: 'error', text: 'Please select a specific folder.' })
+            setActioning(false)
+            return
         }
-        else targetFolder = 'Trash'
 
         try {
             const res = await fetch(apiUrl(`/api/offline/${accountId}/blocked-senders`), {
@@ -1563,14 +1622,14 @@ function BlockedSendersSettings({ accountId, searchQuery = '' }) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     sender: newSender.trim(),
-                    action_type: actionEnum,
-                    target_folder: targetFolder,
-                    apply_to_existing: false
-                })
+                    action_type: payload.action_type,
+                    target_folder: payload.target_folder,
+                    apply_to_existing: false,
+                }),
             })
             if (!res.ok) throw new Error()
             const created = await res.json()
-            setRules(prev => [created, ...prev])
+            setRules((prev) => [created, ...prev])
             setNewSender('')
             setMessage({ type: 'success', text: 'Added to blocked list.' })
         } catch {
@@ -1579,6 +1638,8 @@ function BlockedSendersSettings({ accountId, searchQuery = '' }) {
             setActioning(false)
         }
     }
+
+    const rowBusy = (id) => actioning || updatingRuleId === id
 
     if (loading) {
         return (
@@ -1589,26 +1650,36 @@ function BlockedSendersSettings({ accountId, searchQuery = '' }) {
         )
     }
 
+    const selectStyle = {
+        minWidth: '140px',
+        width: 'auto',
+        border: '1px solid var(--border-color)',
+        padding: '0 12px',
+        borderRadius: '6px',
+        backgroundColor: 'var(--bg-secondary)',
+        color: 'var(--text-color)',
+    }
+
     return (
         <div className="sp-section">
             <h2 className="sp-section__title"><HighlightMatch text="Blocked Senders" query={searchQuery} /></h2>
             <p className="sp-section__desc"><HighlightMatch text="Manage email addresses that are automatically deleted, moved to spam, or archived." query={searchQuery} /></p>
-            
-            <form onSubmit={addRule} className="sp-add-block-form" style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
-                <input 
-                    type="text" 
-                    className="sp-search-input" 
-                    placeholder="example@spam.com" 
+
+            <form onSubmit={addRule} className="sp-add-block-form" style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginBottom: '20px' }}>
+                <input
+                    type="text"
+                    className="sp-search-input"
+                    placeholder="example@spam.com"
                     value={newSender}
-                    onChange={e => setNewSender(e.target.value)}
-                    style={{ flex: 1, border: '1px solid var(--border-color)', padding: '0 12px', borderRadius: '6px', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-color)' }}
+                    onChange={(e) => setNewSender(e.target.value)}
+                    style={{ flex: '1 1 180px', border: '1px solid var(--border-color)', padding: '0 12px', borderRadius: '6px', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-color)' }}
                     required
                 />
-                <select 
-                    className="sp-search-input" 
+                <select
+                    className="sp-search-input"
                     value={newAction}
-                    onChange={e => setNewAction(e.target.value)}
-                    style={{ minWidth: '140px', width: 'auto', border: '1px solid var(--border-color)', padding: '0 12px', borderRadius: '6px', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-color)' }}
+                    onChange={(e) => setNewAction(e.target.value)}
+                    style={selectStyle}
                 >
                     <option value="Trash">Move to Trash</option>
                     <option value="Spam">Move to Spam</option>
@@ -1616,21 +1687,21 @@ function BlockedSendersSettings({ accountId, searchQuery = '' }) {
                     <option value="Archive">Archive</option>
                     <option value="Folder">Move to Folder...</option>
                 </select>
-                
+
                 {newAction === 'Folder' && (
-                    <select 
-                        className="sp-search-input" 
+                    <select
+                        className="sp-search-input"
                         value={newTargetFolder}
-                        onChange={e => setNewTargetFolder(e.target.value)}
-                        style={{ minWidth: '140px', width: 'auto', border: '1px solid var(--border-color)', padding: '0 12px', borderRadius: '6px', backgroundColor: 'var(--bg-secondary)', color: 'var(--text-color)' }}
+                        onChange={(e) => setNewTargetFolder(e.target.value)}
+                        style={selectStyle}
                     >
                         <option value="" disabled>Select Folder...</option>
-                        {folders.map(f => (
+                        {folders.map((f) => (
                             <option key={f} value={f}>{f.split('/').pop() || f}</option>
                         ))}
                     </select>
                 )}
-                
+
                 <button type="submit" className="sp-save-btn" disabled={actioning} style={{ padding: '0 16px', margin: 0, height: '36px' }}>Add</button>
             </form>
 
@@ -1640,28 +1711,97 @@ function BlockedSendersSettings({ accountId, searchQuery = '' }) {
                         No blocked senders.
                     </div>
                 ) : (
-                    rules.map(r => (
-                        <div key={r.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', borderBottom: '1px solid var(--border-color)', fontSize: '13px' }}>
-                            <div>
-                                <div style={{ fontWeight: 500, color: 'var(--text-color)' }}>{r.sender}</div>
-                                <div style={{ color: 'var(--text-muted)', fontSize: '12px', marginTop: '2px' }}>
-                                    {r.action_type === 'delete' ? 'Delete immediately' : `Move to ${r.target_folder}`}
+                    rules.map((r) => {
+                        const currentActionKey = pendingActions[r.id] || blockedRuleToActionKey(r)
+                        const busy = rowBusy(r.id)
+                        return (
+                            <div
+                                key={r.id}
+                                style={{
+                                    display: 'flex',
+                                    flexWrap: 'wrap',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    gap: '10px',
+                                    padding: '10px 16px',
+                                    borderBottom: '1px solid var(--border-color)',
+                                    fontSize: '13px',
+                                }}
+                            >
+                                <div style={{ flex: '1 1 160px', minWidth: 0 }}>
+                                    <div style={{ fontWeight: 500, color: 'var(--text-color)' }}>{r.sender}</div>
+                                    <div style={{ color: 'var(--text-muted)', fontSize: '12px', marginTop: '2px' }}>
+                                        {r.action_type === 'delete' ? 'Delete immediately' : `Move to ${r.target_folder || '—'}`}
+                                    </div>
+                                </div>
+                                <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px' }}>
+                                    <select
+                                        className="sp-search-input"
+                                        value={currentActionKey}
+                                        disabled={busy}
+                                        onChange={(e) => {
+                                            const next = e.target.value
+                                            if (next === 'Folder') {
+                                                // Show folder dropdown, don't call API yet
+                                                setPendingActions(prev => ({ ...prev, [r.id]: 'Folder' }))
+                                                return
+                                            }
+                                            // For other actions, update immediately and clear pending
+                                            setPendingActions(prev => { const p = { ...prev }; delete p[r.id]; return p })
+                                            void patchRuleAction(r, next, undefined)
+                                        }}
+                                        style={selectStyle}
+                                        aria-label="Action for blocked sender"
+                                    >
+                                        <option value="Trash">Move to Trash</option>
+                                        <option value="Spam">Move to Spam</option>
+                                        <option value="Delete">Delete</option>
+                                        <option value="Archive">Archive</option>
+                                        <option value="Folder">Move to Folder...</option>
+                                    </select>
+                                    {currentActionKey === 'Folder' && (() => {
+                                        const tf = r.target_folder || ''
+                                        const rowFolderOpts = tf && !folders.includes(tf) ? [tf, ...folders] : folders
+                                        const folderValue = rowFolderOpts.includes(tf) ? tf : (rowFolderOpts[0] || '')
+                                        return (
+                                            <select
+                                                className="sp-search-input"
+                                                value={folderValue}
+                                                disabled={busy || rowFolderOpts.length === 0}
+                                                onChange={(e) => {
+                                                    // Clear pending action and call API
+                                                    setPendingActions(prev => { const p = { ...prev }; delete p[r.id]; return p })
+                                                    void patchRuleAction(r, 'Folder', e.target.value)
+                                                }}
+                                                style={selectStyle}
+                                                aria-label="Target folder"
+                                            >
+                                                {rowFolderOpts.length === 0 ? (
+                                                    <option value="">No folders</option>
+                                                ) : (
+                                                    rowFolderOpts.map((f) => (
+                                                        <option key={f} value={f}>{f.split('/').pop() || f}</option>
+                                                    ))
+                                                )}
+                                            </select>
+                                        )
+                                    })()}
+                                    <button
+                                        type="button"
+                                        onClick={() => unblock(r.id)}
+                                        disabled={busy}
+                                        className="sp-ghost-btn"
+                                        style={{ padding: '4px 8px', color: 'var(--color-danger)' }}
+                                    >
+                                        Unblock
+                                    </button>
                                 </div>
                             </div>
-                            <button 
-                                type="button" 
-                                onClick={() => unblock(r.id)}
-                                disabled={actioning}
-                                className="sp-ghost-btn"
-                                style={{ padding: '4px 8px', color: 'var(--color-danger)' }}
-                            >
-                                Unblock
-                            </button>
-                        </div>
-                    ))
+                        )
+                    })
                 )}
             </div>
-            
+
             {message && (
                 <div className={`sp-form-message sp-form-message--${message.type}`} style={{ marginTop: '16px' }}>
                     {message.text}
@@ -1792,7 +1932,7 @@ function MailboxListCountDisplaySettings({ accountId, onRefreshAccount, searchQu
                     {message.text}
                 </div>
             )}
-            <button type="button" className="sp-save-btn" style={{ marginTop: 20 }} onClick={handleSave} disabled={saving}>
+            <button type="button" className="sp-save-btn" style={{ marginTop: 20 }} onClick={handleSave} disabled={saving || !countDirty}>
                 {saving ? 'Saving…' : 'Save'}
             </button>
         </div>
@@ -1913,7 +2053,7 @@ function MailboxOrderSettings({ accountId, onRefreshAccount, searchQuery = '' })
             </div>
             {message && <div className={`sp-form-message sp-form-message--${message.type}`} style={{marginTop: 16}}>{message.text}</div>}
             <div style={{display: 'flex', gap: 12, marginTop: 20}}>
-                <button className="sp-save-btn" onClick={handleSave} disabled={saving}>Save Order</button>
+                <button className="sp-save-btn" onClick={handleSave} disabled={saving || !orderDirty}>Save Order</button>
                 <button className="sp-save-btn" style={{background: 'var(--c-surface-3)', color: 'var(--c-text-1)'}} onClick={handleReset} disabled={saving}>Reset to Default</button>
             </div>
         </div>
@@ -2032,7 +2172,7 @@ function LabelOrderSettings({ accountId, onRefreshAccount, searchQuery = '' }) {
             </div>
             {message && <div className={`sp-form-message sp-form-message--${message.type}`} style={{marginTop: 16}}>{message.text}</div>}
             <div style={{display: 'flex', gap: 12, marginTop: 20}}>
-                <button className="sp-save-btn" onClick={handleSave} disabled={saving}>Save Order</button>
+                <button className="sp-save-btn" onClick={handleSave} disabled={saving || !labelOrderDirty}>Save Order</button>
                 <button className="sp-save-btn" style={{background: 'var(--c-surface-3)', color: 'var(--c-text-1)'}} onClick={handleReset} disabled={saving}>Reset to Default</button>
             </div>
         </div>

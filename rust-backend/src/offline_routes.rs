@@ -3055,6 +3055,39 @@ pub async fn delete_blocked_sender(
     Ok(Json(json!({ "status": "ok" })))
 }
 
+pub async fn update_blocked_sender(
+    State(state): State<Arc<MailAppState>>,
+    Path((account_id, rule_id)): Path<(i64, i64)>,
+    Json(payload): Json<crate::models::UpdateBlockedSenderRequest>,
+) -> Result<Json<crate::models::BlockedSenderRecord>, AppError> {
+    let pool = db::get_user_db_pool(&state._db, account_id).await?;
+    let result = sqlx::query(
+        r#"
+        UPDATE blocked_senders
+        SET action_type = ?, target_folder = ?
+        WHERE id = ?
+        "#,
+    )
+    .bind(&payload.action_type)
+    .bind(&payload.target_folder)
+    .bind(rule_id)
+    .execute(&pool)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::BadRequest("Blocked sender rule not found.".to_string()));
+    }
+
+    let record = sqlx::query_as::<_, crate::models::BlockedSenderRecord>(
+        "SELECT id, sender, action_type, target_folder, created_at FROM blocked_senders WHERE id = ?",
+    )
+    .bind(rule_id)
+    .fetch_one(&pool)
+    .await?;
+
+    Ok(Json(record))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

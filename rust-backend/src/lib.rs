@@ -174,7 +174,8 @@ pub async fn run(db_dir: Option<PathBuf>) -> Result<(), crate::error::AppError> 
         )
         .route(
             "/api/offline/:account_id/blocked-senders/:rule_id",
-            delete(offline_routes::delete_blocked_sender),
+            delete(offline_routes::delete_blocked_sender)
+                .patch(offline_routes::update_blocked_sender),
         )
         .with_state(mail_state);
 
