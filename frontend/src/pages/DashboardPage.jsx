@@ -1151,6 +1151,7 @@ const DashboardPage = () => {
     }, [appLayout])
 
     const mainBarRegion = layoutRegions.main || 'top'
+    const appsBarRegion = layoutRegions.apps || 'left'
     const isMainBarVertical = mainBarRegion === 'left' || mainBarRegion === 'right'
     const isMailboxesRight = layoutRegions.mailboxes === 'right'
     const isMaillistRight = layoutRegions.maillist === 'right'
@@ -1932,6 +1933,27 @@ const DashboardPage = () => {
         : [timeMain, '']
     const timeBottom = timeSuffix ? `${timeBottomRaw} ${timeSuffix}`.trim() : timeBottomRaw
 
+    const LayoutFrame = ({ region, bar, children }) => {
+        if (!bar) return children
+        const safeRegion = ['top', 'bottom', 'left', 'right'].includes(region) ? region : 'top'
+        const isRow = safeRegion === 'left' || safeRegion === 'right'
+        const placeBefore = safeRegion === 'top' || safeRegion === 'left'
+        const wrapBar = (node) => (
+            <div className={`db-layout-region db-layout-region--${safeRegion}`} style={{ display: 'contents' }}>
+                {node}
+            </div>
+        )
+        return (
+            <div className={`db-layout-frame db-layout-frame--${isRow ? 'row' : 'column'}`}>
+                {placeBefore && wrapBar(bar)}
+                <div className="db-layout-frame__content">
+                    {children}
+                </div>
+                {!placeBefore && wrapBar(bar)}
+            </div>
+        )
+    }
+
     const mainBarNode = (
             <div className={`db-navbar db-navbar--${mainBarRegion}`}>
                 <button
@@ -2189,19 +2211,19 @@ const DashboardPage = () => {
                                 setAppMenuVisible={setAppMenuVisible}
                             />
     ) : (
-        <>
-            {mainBarNode}
-            <div className="db-main-container">
-                {appsBarNode}
-                <div className="db-content-area">
-                    <div className="db-section-area">
-                        {activeSection === 'calendar' && <CalendarSection />}
-                        {activeSection === 'contacts' && <ContactsSection />}
-                        {activeSection === 'todo' && <TodoSection />}
+        <LayoutFrame region={mainBarRegion} bar={mainBarNode}>
+            <LayoutFrame region={appsBarRegion} bar={appsBarNode}>
+                <div className="db-main-container">
+                    <div className="db-content-area">
+                        <div className="db-section-area">
+                            {activeSection === 'calendar' && <CalendarSection />}
+                            {activeSection === 'contacts' && <ContactsSection />}
+                            {activeSection === 'todo' && <TodoSection />}
+                        </div>
                     </div>
                 </div>
-            </div>
-        </>
+            </LayoutFrame>
+        </LayoutFrame>
     )
 
     return (
@@ -2512,7 +2534,7 @@ function MailSection({
     const [activeRibbonTab, setActiveRibbonTab] = useState('home')
     const [expandedFolders, setExpandedFolders] = useState(['INBOX'])
     const [folderWidth, setFolderWidth] = useState(240)
-    const [listWidth, setListWidth] = useState(320)
+    const [listWidth, setListWidth] = useState(360)
     const [minListWidth, setMinListWidth] = useState(360)
     const [foldersHidden, setFoldersHidden] = useState(false)
     const [mailsHidden, setMailsHidden] = useState(false)
@@ -2549,16 +2571,59 @@ function MailSection({
     const [blockSenderSelectedFolder, setBlockSenderSelectedFolder] = useState('')
     const displayCols = isMailFullscreen ? layoutCols : 1
     const perPageValue = Math.max(1, Number.parseInt(perPage, 10) || 50)
-    const appMenuLeftPad = appMenuVisible ? 48 : 0
 
-    const layoutRegions = useMemo(() => {
+    const resolveLayoutData = (layout) => {
         const fallback = {
             top: ['main', 'tabs'],
             bottom: ['tools'],
             left: ['apps', 'mailboxes', 'maillist'],
             right: []
         }
-        const source = appLayout || fallback
+        const source = layout && typeof layout === 'object' ? layout : fallback
+        const pick = (key) => (Array.isArray(source[key]) ? source[key].filter(Boolean) : [])
+        return {
+            top: pick('top'),
+            bottom: pick('bottom'),
+            left: pick('left'),
+            right: pick('right'),
+        }
+    }
+
+    const stripLayout = (layoutData, removeKeys) => {
+        const remove = new Set(removeKeys)
+        const strip = (items) => items.filter((item) => !remove.has(item))
+        return {
+            top: strip(layoutData.top || []),
+            bottom: strip(layoutData.bottom || []),
+            left: strip(layoutData.left || []),
+            right: strip(layoutData.right || []),
+        }
+    }
+
+    const LayoutFrame = ({ region, bar, children }) => {
+        if (!bar) return children
+        const safeRegion = ['top', 'bottom', 'left', 'right'].includes(region) ? region : 'top'
+        const isRow = safeRegion === 'left' || safeRegion === 'right'
+        const placeBefore = safeRegion === 'top' || safeRegion === 'left'
+        const wrapBar = (node) => (
+            <div className={`db-layout-region db-layout-region--${safeRegion}`} style={{ display: 'contents' }}>
+                {node}
+            </div>
+        )
+        return (
+            <div className={`db-layout-frame db-layout-frame--${isRow ? 'row' : 'column'}`}>
+                {placeBefore && wrapBar(bar)}
+                <div className="db-layout-frame__content">
+                    {children}
+                </div>
+                {!placeBefore && wrapBar(bar)}
+            </div>
+        )
+    }
+
+    const layoutData = useMemo(() => resolveLayoutData(appLayout), [appLayout])
+    const layoutRegions = useMemo(() => {
+        const source = layoutData
         const map = {
             main: 'top',
             tabs: 'top',
@@ -2575,8 +2640,12 @@ function MailSection({
             })
         })
         return map
-    }, [appLayout])
+    }, [layoutData])
 
+    const mainBarRegion = layoutRegions.main || 'top'
+    const appsBarRegion = layoutRegions.apps || 'left'
+    const innerLayoutData = useMemo(() => stripLayout(layoutData, ['main', 'apps']), [layoutData])
+    const appMenuLeftPad = appMenuVisible && appsBarRegion === 'left' ? 48 : 0
     const isMailboxesRight = layoutRegions.mailboxes === 'right'
     const isMaillistRight = layoutRegions.maillist === 'right'
 
@@ -4604,13 +4673,15 @@ function MailSection({
         })
     }, [inlineComposeSession, requestComposeExit])
 
+    const activeFolderKey = selectedFolder || 'INBOX'
+    const activeFolderInfo = folderInfo(activeFolderKey)
     const tabsBarNode = (
             <div className="mail-tab-bar">
                 <button
                     className={`mail-tab-item main-tab ${!activeTabId ? 'active' : ''}`}
                     onClick={() => setActiveTabId(null)}
                 >
-                    <img src="/img/icons/inbox.svg" className="svg-icon-inline" /> {selectedFolder || 'Inbox'}
+                    {activeFolderInfo.icon} {activeFolderInfo.label}
                 </button>
                 {tabs.map(tab => (
                     <button
@@ -5779,17 +5850,19 @@ function MailSection({
 
     return (
         <React.Fragment>
-            <MailDynamicLayout
-                layoutMode={layoutMode}
-                layoutData={appLayout}
-                mainBar={injectedMainBar}
-                appsBar={injectedAppsBar}
-                mailboxesBar={isMailboxesRight ? <>{mailboxesBarNode}{foldedTabsNode}</> : <>{foldedTabsNode}{mailboxesBarNode}</>}
-                maillistBar={maillistBarNode}
-                tabsBar={tabsBarNode}
-                toolsBar={toolsBarNode}
-                centerPlane={finalCenterPlane}
-            />
+            <LayoutFrame region={mainBarRegion} bar={injectedMainBar}>
+                <LayoutFrame region={appsBarRegion} bar={injectedAppsBar}>
+                    <MailDynamicLayout
+                        layoutMode={layoutMode}
+                        layoutData={innerLayoutData}
+                        mailboxesBar={isMailboxesRight ? <>{mailboxesBarNode}{foldedTabsNode}</> : <>{foldedTabsNode}{mailboxesBarNode}</>}
+                        maillistBar={maillistBarNode}
+                        tabsBar={tabsBarNode}
+                        toolsBar={toolsBarNode}
+                        centerPlane={finalCenterPlane}
+                    />
+                </LayoutFrame>
+            </LayoutFrame>
             {composeExitPrompt && (
                 <div className="db-advanced-search-modal" onMouseDown={() => handleComposeExitAction('cancel')}>
                     <div
@@ -5963,10 +6036,8 @@ function TodoSection() {
     )
 }
 
-export function MailDynamicLayout({ layoutMode, layoutData, mainBar, appsBar, mailboxesBar, maillistBar, tabsBar, toolsBar, centerPlane }) {
+export function MailDynamicLayout({ layoutMode, layoutData, mailboxesBar, maillistBar, tabsBar, toolsBar, centerPlane }) {
     const bars = {
-        main: mainBar,
-        apps: appsBar,
         mailboxes: mailboxesBar,
         maillist: maillistBar,
         tabs: tabsBar,
@@ -5974,27 +6045,15 @@ export function MailDynamicLayout({ layoutMode, layoutData, mainBar, appsBar, ma
     }
 
     const { top = [], bottom = [], left = [], right = [] } = layoutData || {
-        top: ['main', 'tabs'],
+        top: ['tabs'],
         bottom: ['tools'],
-        left: ['apps', 'mailboxes', 'maillist'],
+        left: ['mailboxes', 'maillist'],
         right: []
     }
 
     const normalizeStack = (items) => {
         if (!Array.isArray(items)) return []
-        const next = [...items]
-        const mainIdx = next.indexOf('main')
-        if (mainIdx > 0) {
-            next.splice(mainIdx, 1)
-            next.unshift('main')
-        }
-        const appsIdx = next.indexOf('apps')
-        if (appsIdx > 0) {
-            next.splice(appsIdx, 1)
-            const insertAt = next[0] === 'main' ? 1 : 0
-            next.splice(insertAt, 0, 'apps')
-        }
-        return next
+        return items
     }
 
     const topStack = normalizeStack(top)
@@ -6004,7 +6063,7 @@ export function MailDynamicLayout({ layoutMode, layoutData, mainBar, appsBar, ma
 
     const renderStack = (keys, reverse = false, region) => {
         const arr = reverse ? [...keys].reverse() : keys
-        return arr.map(key => (
+        return arr.filter((key) => bars[key]).map(key => (
             <div key={key} className={`db-layout-region db-layout-region--${region}`} style={{ display: 'contents' }}>
                 {bars[key]}
             </div>

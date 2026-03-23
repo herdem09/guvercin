@@ -436,7 +436,7 @@ function LayoutSettings({
     const BAR_LABELS = {
         main: 'Main Bar',
         tabs: 'Tabs Bar',
-        tools: 'Toolbar 2 Lines',
+        tools: 'Toolbar',
         apps: 'Apps Bar',
         mailboxes: 'Mailboxes Bar',
         maillist: 'Mail List Bar'
@@ -597,7 +597,7 @@ function LayoutSettings({
                     </div>
                 </div>
                 <div className="ls-info">
-                    Constraints: Main Bar stays outermost. Tools Bar only Top/Bottom. Mailboxes & Mail List only Left/Right. Order in each zone is outer -> inner.
+                    Kurallar: Main Bar dış katman, Apps Bar ikinci katman; diğer bar'lar içeride. Apps Bar solda/sağda iken üst/alt bar'lar ondan sonra başlar. Tools Bar sadece Top/Bottom. Mailboxes & Mail List sadece Left/Right. Sıralama: dıştan içe.
                 </div>
             </div>
 
