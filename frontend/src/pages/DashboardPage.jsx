@@ -139,6 +139,27 @@ const SubmenuBar = ({ children, submenuScrollRef, submenuMoreRef, submenuVisible
     )
 }
 
+function LayoutFrame({ region, bar, children }) {
+    if (!bar) return children
+    const safeRegion = ['top', 'bottom', 'left', 'right'].includes(region) ? region : 'top'
+    const isRow = safeRegion === 'left' || safeRegion === 'right'
+    const placeBefore = safeRegion === 'top' || safeRegion === 'left'
+    const wrapBar = (node) => (
+        <div className={`db-layout-region db-layout-region--${safeRegion}`} style={{ display: 'contents' }}>
+            {node}
+        </div>
+    )
+    return (
+        <div className={`db-layout-frame db-layout-frame--${isRow ? 'row' : 'column'}`}>
+            {placeBefore && wrapBar(bar)}
+            <div className="db-layout-frame__content">
+                {children}
+            </div>
+            {!placeBefore && wrapBar(bar)}
+        </div>
+    )
+}
+
 
 
 const FOLDER_MAP = {
@@ -1725,13 +1746,17 @@ const DashboardPage = () => {
             ids.includes(mail.id) ? { ...mail, seen } : mail
         )))
         setSelectedMail((prev) => (prev && ids.includes(prev.id) ? { ...prev, seen } : prev))
-        const sourceFolder = selectedFolder || 'INBOX'
-        const mailboxById = new Map(
-            mails.filter((mail) => ids.includes(mail.id)).map((mail) => [mail.id, mail.mailbox || sourceFolder]),
-        )
-        await Promise.all(ids.map((id) => (
-            queueAction(seen ? 'mark_read' : 'mark_unread', id, {}, mailboxById.get(id) || sourceFolder)
-        )))
+        try {
+            const sourceFolder = selectedFolder || 'INBOX'
+            const mailboxById = new Map(
+                mails.filter((mail) => ids.includes(mail.id)).map((mail) => [mail.id, mail.mailbox || sourceFolder]),
+            )
+            await Promise.all(ids.map((id) => (
+                queueAction(seen ? 'mark_read' : 'mark_unread', id, {}, mailboxById.get(id) || sourceFolder)
+            )))
+        } catch (error) {
+            console.error('Failed to queue seen-state change:', error)
+        }
     }
 
     const createMailbox = async (name) => {
@@ -1762,7 +1787,32 @@ const DashboardPage = () => {
 
     const sendComposedMail = async (composed) => {
         try {
-            const payload = parseComposeBody(composed, email || accountEmailLabel)
+            const normalized = normalizeComposeDraft(composed)
+            const hasForwardTargets = Array.isArray(normalized?.forwardTargets) && normalized.forwardTargets.length > 0
+
+            if (hasForwardTargets) {
+                const recipientsPayload = parseComposeBody(normalized, email || accountEmailLabel)
+                const recipientCount = recipientsPayload.to.length + recipientsPayload.cc.length + recipientsPayload.bcc.length
+                if (recipientCount === 0) {
+                    window.alert('Please add at least one recipient.')
+                    return false
+                }
+
+                const subjectPrefix = normalized?.forwardOptions?.subjectPrefix || 'Fwd:'
+                const forwardPayload = {
+                    to: recipientsPayload.to,
+                    cc: recipientsPayload.cc,
+                    bcc: recipientsPayload.bcc,
+                    subject_prefix: subjectPrefix,
+                }
+
+                await Promise.all(normalized.forwardTargets.map((target) => (
+                    queueAction('forward', target.uid, forwardPayload, target.mailbox)
+                )))
+                return true
+            }
+
+            const payload = parseComposeBody(normalized, email || accountEmailLabel)
             if (payload.to.length === 0) {
                 window.alert('Please add at least one recipient.')
                 return false
@@ -1932,27 +1982,6 @@ const DashboardPage = () => {
         ? timeMain.split(':')
         : [timeMain, '']
     const timeBottom = timeSuffix ? `${timeBottomRaw} ${timeSuffix}`.trim() : timeBottomRaw
-
-    const LayoutFrame = ({ region, bar, children }) => {
-        if (!bar) return children
-        const safeRegion = ['top', 'bottom', 'left', 'right'].includes(region) ? region : 'top'
-        const isRow = safeRegion === 'left' || safeRegion === 'right'
-        const placeBefore = safeRegion === 'top' || safeRegion === 'left'
-        const wrapBar = (node) => (
-            <div className={`db-layout-region db-layout-region--${safeRegion}`} style={{ display: 'contents' }}>
-                {node}
-            </div>
-        )
-        return (
-            <div className={`db-layout-frame db-layout-frame--${isRow ? 'row' : 'column'}`}>
-                {placeBefore && wrapBar(bar)}
-                <div className="db-layout-frame__content">
-                    {children}
-                </div>
-                {!placeBefore && wrapBar(bar)}
-            </div>
-        )
-    }
 
     const mainBarNode = (
             <div className={`db-navbar db-navbar--${mainBarRegion}`}>
@@ -2600,27 +2629,6 @@ function MailSection({
         }
     }
 
-    const LayoutFrame = ({ region, bar, children }) => {
-        if (!bar) return children
-        const safeRegion = ['top', 'bottom', 'left', 'right'].includes(region) ? region : 'top'
-        const isRow = safeRegion === 'left' || safeRegion === 'right'
-        const placeBefore = safeRegion === 'top' || safeRegion === 'left'
-        const wrapBar = (node) => (
-            <div className={`db-layout-region db-layout-region--${safeRegion}`} style={{ display: 'contents' }}>
-                {node}
-            </div>
-        )
-        return (
-            <div className={`db-layout-frame db-layout-frame--${isRow ? 'row' : 'column'}`}>
-                {placeBefore && wrapBar(bar)}
-                <div className="db-layout-frame__content">
-                    {children}
-                </div>
-                {!placeBefore && wrapBar(bar)}
-            </div>
-        )
-    }
-
     const layoutData = useMemo(() => resolveLayoutData(appLayout), [appLayout])
     const layoutRegions = useMemo(() => {
         const source = layoutData
@@ -2708,12 +2716,12 @@ function MailSection({
     const pagedVisibleMails = visibleMails.slice(pageStart, pageStart + perPageValue)
     const selectedIdSet = selectedMailIds
     const actionableMails = useMemo(() => {
-        if (selectedIdSet.size > 0) {
+        if (selectMode && selectedIdSet.size > 0) {
             return mails.filter((mail) => selectedIdSet.has(mail.id))
         }
         if (selectedMail) return [selectedMail]
         return []
-    }, [mails, selectedIdSet, selectedMail])
+    }, [mails, selectMode, selectedIdSet, selectedMail])
     const actionableMailIds = actionableMails.map((mail) => mail.id)
     const hasAnyActionMail = actionableMails.length > 0
     const hasMultipleActionMails = actionableMails.length > 1
@@ -2987,7 +2995,7 @@ function MailSection({
 
     const enqueueDelayedSend = useCallback(({ draft, target, onAfterClose, onUndoRestore, onCommitted }) => {
         const payload = parseComposeBody(draft, accountEmail)
-        if (payload.to.length === 0) {
+        if (payload.to.length + payload.cc.length + payload.bcc.length === 0) {
             window.alert('Please add at least one recipient.')
             return false
         }
@@ -3169,7 +3177,7 @@ function MailSection({
             : (mail.name ? `${mail.name} <${mail.address}>` : mail.address)
         const subject = content?.subject || mail.subject || '(No Subject)'
         const date = content?.date || mail.date
-        const body = content?.plain_body || '(No content)'
+        const body = content?.plain_body || htmlToPlainText(content?.html_body) || '(No content)'
         return [
             `From: ${fromLabel || 'Unknown'}`,
             `Date: ${formatMailDateLong(date)}`,
@@ -3682,6 +3690,8 @@ function MailSection({
     }, [])
 
     const tabIframeRefs = useRef({})
+    const pendingTabLoadsRef = useRef(new Set())
+    const loadingTabCountRef = useRef(0)
 
     const openMailInTab = async (mail, existingContent) => {
         const mailbox = mail?.mailbox || selectedFolder || 'INBOX'
@@ -3697,8 +3707,17 @@ function MailSection({
 
         nextTabId.current += 1
         const tabId = `tab-${nextTabId.current}`
+        pendingTabLoadsRef.current.add(tabId)
+
+        // Create + activate the tab immediately so the user doesn't just see the main view ("anasayfa")
+        setTabs((prev) => [...prev, { id: tabId, kind: 'mail', mail, mailbox }])
+        setActiveTabId(tabId)
+        setSelectedMail(null)
+        setMailContent(null)
+
         let content = existingContent
         if (!content) {
+            loadingTabCountRef.current += 1
             setLoadingTab(true)
             try {
                 let endpoint = `/api/offline/${accountId}/local-content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
@@ -3716,22 +3735,25 @@ function MailSection({
                 }
             } catch {
 
+            } finally {
+                loadingTabCountRef.current = Math.max(0, loadingTabCountRef.current - 1)
+                if (loadingTabCountRef.current === 0) {
+                    setLoadingTab(false)
+                }
             }
-            setLoadingTab(false)
         }
         if (mail.seen !== true) {
             setMailsSeenState([mail.id], true)
         }
-        setTabs(prev => [...prev, { id: tabId, kind: 'mail', mail, mailbox: mail?.mailbox || selectedFolder || 'INBOX' }])
-        setTabContents(prev => ({ ...prev, [tabId]: content }))
-        setActiveTabId(tabId)
-
-        setSelectedMail(null)
-        setMailContent(null)
+        if (pendingTabLoadsRef.current.has(tabId)) {
+            setTabContents((prev) => ({ ...prev, [tabId]: content }))
+        }
+        pendingTabLoadsRef.current.delete(tabId)
     }
 
     const closeTab = (e, tabId) => {
         e.stopPropagation()
+        pendingTabLoadsRef.current.delete(tabId)
         const tab = tabs.find((item) => item.id === tabId)
         if (tab?.kind === 'compose') {
             requestComposeExit({
@@ -4408,26 +4430,29 @@ function MailSection({
     const composeForwardDraft = async (mailList) => {
         const forwardMails = Array.from(new Set((mailList || []).filter(Boolean)))
         if (forwardMails.length === 0) return
+        const sourceFolder = selectedFolder || 'INBOX'
+        const seenTargets = new Set()
+        const forwardTargets = []
+        forwardMails.forEach((mail) => {
+            const uid = mail?.id
+            const mailbox = mail?.mailbox || sourceFolder
+            const key = `${uid || ''}@@${mailbox || ''}`
+            if (!uid || !mailbox || seenTargets.has(key)) return
+            seenTargets.add(key)
+            forwardTargets.push({ uid, mailbox })
+        })
 
-        if (forwardMails.length > 1) {
-            composeDraft({
-                to: '',
-                subject: `Fwd: ${forwardMails.length} mails`,
-                plainBody: buildMultiMailSummary(forwardMails),
-                format: 'plain',
-                htmlBody: '',
-            }, 'forward')
-            return
-        }
-
-        const mail = forwardMails[0]
-        const content = await loadMailContentForDraft(mail)
         composeDraft({
             to: '',
-            subject: prefixSubject('Fwd:', content?.subject || mail.subject),
-            plainBody: buildQuotedMailBlock(mail, content),
-            format: 'plain',
+            cc: '',
+            bcc: '',
+            subject: '',
+            plainBody: '',
             htmlBody: '',
+            format: 'plain',
+            attachments: [],
+            forwardTargets,
+            forwardOptions: { subjectPrefix: 'Fwd:' },
         }, 'forward')
     }
 
@@ -5553,7 +5578,7 @@ function MailSection({
                                                                 email={mail.address}
                                                                 name={mail.name}
                                                                 accountId={accountId}
-                                                                size={32}
+                                                                size={36}
                                                                 className="db-mail-avatar"
                                                             />
                                                             <button
@@ -5855,8 +5880,8 @@ function MailSection({
                     <MailDynamicLayout
                         layoutMode={layoutMode}
                         layoutData={innerLayoutData}
-                        mailboxesBar={isMailboxesRight ? <>{mailboxesBarNode}{foldedTabsNode}</> : <>{foldedTabsNode}{mailboxesBarNode}</>}
-                        maillistBar={maillistBarNode}
+                        mailboxesBar={activeTabId ? null : (isMailboxesRight ? <>{mailboxesBarNode}{foldedTabsNode}</> : <>{foldedTabsNode}{mailboxesBarNode}</>)}
+                        maillistBar={activeTabId ? null : maillistBarNode}
                         tabsBar={tabsBarNode}
                         toolsBar={toolsBarNode}
                         centerPlane={finalCenterPlane}

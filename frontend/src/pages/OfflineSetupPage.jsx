@@ -12,8 +12,20 @@ function normalizeFolderPath(path) {
 
 function normalizeLabelPath(path) {
   if (path.startsWith('Labels/')) return path.slice('Labels/'.length)
-  if (path.startsWith('Labels/')) return path.slice('Labels/'.length)
   return path
+}
+
+function getTempAccountForm() {
+  try {
+    return JSON.parse(localStorage.getItem('temp_account_form') || '{}')
+  } catch {
+    return {}
+  }
+}
+
+function hasMinimumAccountForm(formData) {
+  // We need at least the email to finalize. For mailbox preview we also want IMAP details.
+  return !!(formData && typeof formData.email === 'string' && formData.email.trim())
 }
 
 function buildTreeNodes(paths, nodeType) {
@@ -85,7 +97,13 @@ function OfflineSetupPage() {
     setLoading(true)
     setError('')
     try {
-      const formData = JSON.parse(localStorage.getItem('temp_account_form') || '{}')
+      const formData = getTempAccountForm()
+      if (!hasMinimumAccountForm(formData)) {
+        setError(t('Missing account setup data. Please go back to Login and try again.'))
+        setFolders([])
+        setLabels([])
+        return
+      }
       const response = await fetch(apiUrl('/api/auth/mailboxes-preview'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -107,7 +125,11 @@ function OfflineSetupPage() {
       setFolders(fetchedFolders)
       setLabels(fetchedLabels)
     } catch (err) {
-      setError(err?.message || t('Unable to load mailboxes.'))
+      if (err instanceof TypeError) {
+        setError(t('Server could not be reached. The backend service (Flask) may not be running.'))
+      } else {
+        setError(err?.message || t('Unable to load mailboxes.'))
+      }
       setFolders([])
       setLabels([])
     } finally {
@@ -178,7 +200,7 @@ function OfflineSetupPage() {
     setSelectedPrefixes(next)
   }
 
-  const finalizeAndContinue = async () => {
+	  const finalizeAndContinue = async () => {
     const includeRules = []
     const addInclude = (nodePath, nodeType, source = 'user') => {
       includeRules.push({
@@ -231,12 +253,17 @@ function OfflineSetupPage() {
       cache_raw_rfc822: cacheRawRfc822,
     }
 
-    const formData = JSON.parse(localStorage.getItem('temp_account_form') || '{}')
-    const language = localStorage.getItem('temp_language') || 'en'
-    const font = localStorage.getItem('temp_font') || 'Arial'
-    const themeMode = localStorage.getItem('temp_theme_mode') || 'system'
-    const themeName = localStorage.getItem('temp_theme_name') || 'light'
-    const theme = themeMode === 'manual' ? themeName : 'SYSTEM'
+	    const formData = getTempAccountForm()
+      if (!hasMinimumAccountForm(formData)) {
+        alert(t('Missing account setup data. Please go back to Login and try again.'))
+        navigate('/login')
+        return
+      }
+	    const language = localStorage.getItem('temp_language') || 'en'
+	    const font = localStorage.getItem('temp_font') || 'Arial'
+	    const themeMode = localStorage.getItem('temp_theme_mode') || 'manual'
+	    const themeName = localStorage.getItem('temp_theme_name') || 'light'
+	    const theme = themeMode === 'manual' ? themeName : 'SYSTEM'
 
     try {
       const response = await fetch(apiUrl('/api/account/finalize'), {
@@ -268,13 +295,19 @@ function OfflineSetupPage() {
         theme,
       })
 
-      alert(t('All processes completed successfully, account settings saved!'))
-      navigate('/dashboard')
-    } catch (err) {
-      console.error('Error finalizing account:', err)
-      alert(t('An error occurred during saving.'))
-    }
-  }
+	      alert(t('All processes completed successfully, account settings saved!'))
+	      navigate('/dashboard')
+	    } catch (err) {
+	      console.error('Error finalizing account:', err)
+        if (err instanceof TypeError) {
+          alert(t('Server could not be reached. The backend service (Flask) may not be running.'))
+        } else if (err?.message) {
+          alert(err.message)
+        } else {
+          alert(t('An error occurred during saving.'))
+        }
+	    }
+	  }
 
   const toggleExpand = (key) => {
     const next = new Set(expanded)
@@ -323,7 +356,12 @@ function OfflineSetupPage() {
   return (
     <div className="offline-setup-page">
       <div className="offline-setup-card">
-        <h2 className="sticky-title">{t('Offline Setup')}</h2>
+        <div className="onboarding-header">
+          <button type="button" className="onboarding-back-btn" onClick={() => navigate('/theme')}>
+            {t('Back')}
+          </button>
+          <h2 className="sticky-title">{t('Offline Setup')}</h2>
+        </div>
         <p className="off-subtitle">{t('Choose folders and labels for offline usage')}</p>
 
         {loading ? (

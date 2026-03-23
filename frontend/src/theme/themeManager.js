@@ -7,7 +7,7 @@ const CUSTOM_THEME_PREFIX = 'custom_theme_'
 export const BUILTIN_THEMES = ['light', 'dark']
 
 export function getStoredThemePreference() {
-  const mode = localStorage.getItem(THEME_MODE_KEY) || 'system'
+  const mode = localStorage.getItem(THEME_MODE_KEY) || 'manual'
   const name = localStorage.getItem(THEME_NAME_KEY) || 'light'
   return { mode, name }
 }

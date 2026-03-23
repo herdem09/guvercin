@@ -1,28 +1,71 @@
 import { apiUrl } from '../utils/api'
 import { useState, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
+import { hydrateAccountSession } from '../utils/accountStorage.js'
 import './LoginPage.css'
+
+const ACCOUNT_FORM_DRAFT_KEY = 'temp_account_form_draft'
+
+function safeParseJson(raw, fallback) {
+    try {
+        return JSON.parse(raw)
+    } catch {
+        return fallback
+    }
+}
 
 function LoginPage() {
     const { t } = useTranslation()
     const navigate = useNavigate()
+    const location = useLocation()
     const [loading, setLoading] = useState(false)
     const [loadingText] = useState(t('Testing Connection and Authentication...'))
     const [responseMessage, setResponseMessage] = useState(null)
     const [accounts, setAccounts] = useState([])
     const [showAccounts, setShowAccounts] = useState(false)
 
-    const [formData, setFormData] = useState({
-        email: '',
-        displayName: '',
-        imapServer: '',
-        imapPort: '',
-        smtpServer: '',
-        smtpPort: '',
-        password: '',
-        sslMode: 'STARTTLS',
+    const [formData, setFormData] = useState(() => {
+        const defaults = {
+            email: '',
+            displayName: '',
+            imapServer: '',
+            imapPort: '',
+            smtpServer: '',
+            smtpPort: '',
+            password: '',
+            sslMode: 'STARTTLS',
+        }
+
+        const fromState = location?.state?.formData
+        if (fromState && typeof fromState === 'object') {
+            return { ...defaults, ...fromState }
+        }
+
+        const rawDraft = localStorage.getItem(ACCOUNT_FORM_DRAFT_KEY)
+        const draft = rawDraft ? safeParseJson(rawDraft, null) : null
+        if (draft && typeof draft === 'object') {
+            return { ...defaults, ...draft }
+        }
+
+        return defaults
     })
+
+    const persistDraft = useCallback((next) => {
+        try {
+            localStorage.setItem(ACCOUNT_FORM_DRAFT_KEY, JSON.stringify(next))
+        } catch {
+            // Ignore storage failures.
+        }
+    }, [])
+
+    const clearDraft = useCallback(() => {
+        try {
+            localStorage.removeItem(ACCOUNT_FORM_DRAFT_KEY)
+        } catch {
+            // Ignore storage failures.
+        }
+    }, [])
 
     const loadRegisteredAccounts = useCallback(async () => {
         try {
@@ -46,7 +89,7 @@ function LoginPage() {
     }, [loadRegisteredAccounts])
 
     const handleAccountClick = (account) => {
-        setFormData({
+        const next = {
             email: account.email_address || '',
             displayName: account.display_name || '',
             imapServer: account.imap_host || '',
@@ -55,18 +98,31 @@ function LoginPage() {
             smtpPort: account.smtp_port || '',
             password: '',
             sslMode: account.ssl_mode || 'STARTTLS',
-        })
+        }
+        setFormData(next)
+        persistDraft(next)
+    }
+
+    const handleRegisteredAccountOpen = (account) => {
+        hydrateAccountSession(account)
+        clearDraft()
+        navigate('/dashboard')
     }
 
     const handleInputChange = (e) => {
         const { name, value } = e.target
-        setFormData((prev) => ({ ...prev, [name]: value }))
+        setFormData((prev) => {
+            const next = { ...prev, [name]: value }
+            persistDraft(next)
+            return next
+        })
     }
 
     const handleSubmit = async (e) => {
         e.preventDefault()
         setResponseMessage(null)
         setLoading(true)
+        persistDraft(formData)
 
         const urlParams = new URLSearchParams()
         urlParams.append('EMAIL_ADDRESS', formData.email)
@@ -93,7 +149,7 @@ function LoginPage() {
             try {
                 json = JSON.parse(responseText)
             } catch {
-                
+                persistDraft(formData)
                 navigate('/not_auth', {
                     state: {
                         formData,
@@ -109,6 +165,7 @@ function LoginPage() {
                     return
                 }
                 if (response.status === 401 && json.status === 'failure') {
+                    persistDraft(json.formData || formData)
                     navigate('/not_auth', {
                         state: {
                             formData: json.formData || formData,
@@ -123,6 +180,7 @@ function LoginPage() {
             setResponseMessage({ type: 'success', text: `✅ ${json.message}` })
 
             localStorage.setItem('temp_account_form', JSON.stringify(formData))
+            clearDraft()
 
             setTimeout(() => {
                 navigate('/language')
@@ -330,7 +388,7 @@ function LoginPage() {
                             <div
                                 key={account.account_id}
                                 className="account-item clickable"
-                                onClick={() => handleAccountClick(account)}
+                                onClick={() => handleRegisteredAccountOpen(account)}
                             >
                                 <strong>{account.display_name}</strong>
                                 <span>{account.email_address}</span>

@@ -18,8 +18,17 @@ function safeParse(json) {
     }
 }
 
-export default function DetachedComposeWindow() {
-    const [windowLabel, setWindowLabel] = useState('')
+function getDetachedLabelHint() {
+    try {
+        const hint = typeof window !== 'undefined' ? window.__GUV_DETACHED__ : null
+        return typeof hint?.label === 'string' ? hint.label : ''
+    } catch {
+        return ''
+    }
+}
+
+export default function DetachedComposeWindow({ initialLabel = '' } = {}) {
+    const [windowLabel, setWindowLabel] = useState(() => initialLabel || getDetachedLabelHint())
     const [data, setData] = useState(null)
     const [baselineDraft, setBaselineDraft] = useState(() => normalizeComposeDraft())
     const [draft, setDraft] = useState(() => normalizeComposeDraft())
@@ -39,6 +48,14 @@ export default function DetachedComposeWindow() {
         document.body.style.margin = '0'
         document.body.style.overflow = 'hidden'
 
+        if (windowLabel) {
+            return () => {
+                document.body.style.padding = ''
+                document.body.style.margin = ''
+                document.body.style.overflow = ''
+            }
+        }
+
         let active = true
         const detect = async () => {
             try {
@@ -56,7 +73,7 @@ export default function DetachedComposeWindow() {
             document.body.style.margin = ''
             document.body.style.overflow = ''
         }
-    }, [])
+    }, [windowLabel])
 
     useEffect(() => {
         if (!windowLabel) return
@@ -138,12 +155,30 @@ export default function DetachedComposeWindow() {
         if (!accountId) return
         try {
             setSending(true)
-            const payload = parseComposeBody(composed, accountEmail)
-            if (payload.to.length === 0) {
+            const normalized = normalizeComposeDraft(composed)
+            const payload = parseComposeBody(normalized, accountEmail)
+            const recipientCount = payload.to.length + payload.cc.length + payload.bcc.length
+            if (recipientCount === 0) {
                 window.alert('Please add at least one recipient.')
                 return false
             }
-            await queueOfflineAction('send', payload, `compose-${Date.now()}`, 'Sent')
+
+            const hasForwardTargets = Array.isArray(normalized?.forwardTargets) && normalized.forwardTargets.length > 0
+            if (hasForwardTargets) {
+                const subjectPrefix = normalized?.forwardOptions?.subjectPrefix || 'Fwd:'
+                const forwardPayload = {
+                    to: payload.to,
+                    cc: payload.cc,
+                    bcc: payload.bcc,
+                    subject_prefix: subjectPrefix,
+                }
+                await Promise.all(normalized.forwardTargets.map((target) => (
+                    queueOfflineAction('forward', forwardPayload, target.uid, target.mailbox)
+                )))
+            } else {
+                await queueOfflineAction('send', payload, `compose-${Date.now()}`, 'Sent')
+            }
+
             setPendingSend(null)
             setSent(true)
             setTimeout(() => closeWindow(), 1500)
@@ -175,7 +210,7 @@ export default function DetachedComposeWindow() {
         try {
             const normalized = normalizeComposeDraft(composed)
             const payload = parseComposeBody(normalized, accountEmail)
-            if (payload.to.length === 0) {
+            if (payload.to.length + payload.cc.length + payload.bcc.length === 0) {
                 window.alert('Please add at least one recipient.')
                 return false
             }

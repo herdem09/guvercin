@@ -16,9 +16,22 @@ import { useTranslation } from 'react-i18next'
 import { hydrateAccountSession } from './utils/accountStorage.js'
 import ThemePage from './pages/ThemePage.jsx'
 
+function getDetachedHint() {
+  try {
+    const hint = typeof window !== 'undefined' ? window.__GUV_DETACHED__ : null
+    if (!hint || typeof hint !== 'object') return null
+    const kind = typeof hint.kind === 'string' ? hint.kind : ''
+    const label = typeof hint.label === 'string' ? hint.label : ''
+    if (!kind && !label) return null
+    return { kind, label }
+  } catch {
+    return null
+  }
+}
+
 function App() {
   const location = useLocation()
-  const [windowLabel, setWindowLabel] = useState('')
+  const [windowLabel, setWindowLabel] = useState(() => getDetachedHint()?.label || '')
 
   useEffect(() => {
     let active = true
@@ -39,8 +52,16 @@ function App() {
 
   useEffect(() => {
     const path = location.pathname
+    const isDetachedWindow = (
+      windowLabel === 'mail'
+      || windowLabel.startsWith('mail-')
+      || windowLabel === 'compose'
+      || windowLabel.startsWith('compose-')
+      || getDetachedHint()?.kind === 'mail'
+      || getDetachedHint()?.kind === 'compose'
+    )
 
-    if (path === '/login' || path === '/') {
+    if (!isDetachedWindow && (path === '/login' || path === '/')) {
       localStorage.removeItem('temp_account_form')
       localStorage.removeItem('temp_language')
       localStorage.removeItem('temp_font')
@@ -60,7 +81,14 @@ function App() {
       if (tempFont) {
         fontToUse = `"${tempFont}", sans-serif`
       }
-    } else if (path.startsWith('/dashboard') || windowLabel === 'mail') {
+    } else if (
+      path.startsWith('/dashboard')
+      || windowLabel === 'mail'
+      || windowLabel.startsWith('mail-')
+      || windowLabel === 'compose'
+      || windowLabel.startsWith('compose-')
+      || isDetachedWindow
+    ) {
       if (savedFont) {
         fontToUse = `"${savedFont}", sans-serif`
       }
@@ -75,14 +103,14 @@ function App() {
     }
 
     document.body.style.fontFamily = fontToUse
-  }, [location])
+  }, [location, windowLabel])
 
   if (windowLabel === 'mail' || windowLabel.startsWith('mail-')) {
-    return <DetachedMailWindow />
+    return <DetachedMailWindow initialLabel={windowLabel} />
   }
 
   if (windowLabel === 'compose' || windowLabel.startsWith('compose-')) {
-    return <DetachedComposeWindow />
+    return <DetachedComposeWindow initialLabel={windowLabel} />
   }
 
   return (

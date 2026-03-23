@@ -104,6 +104,21 @@ export function normalizeComposeDraft(draft = {}) {
   const toRecipients = normalizeComposeRecipients(draft?.toRecipients ?? draft?.to)
   const ccRecipients = normalizeComposeRecipients(draft?.ccRecipients ?? draft?.cc)
   const bccRecipients = normalizeComposeRecipients(draft?.bccRecipients ?? draft?.bcc)
+  const forwardTargets = Array.isArray(draft?.forwardTargets)
+    ? draft.forwardTargets
+      .map((target) => ({
+        uid: typeof target?.uid === 'string' ? target.uid.trim() : '',
+        mailbox: typeof target?.mailbox === 'string' ? target.mailbox.trim() : '',
+      }))
+      .filter((target) => target.uid && target.mailbox)
+    : []
+  const forwardOptions = forwardTargets.length > 0
+    ? {
+      subjectPrefix: typeof draft?.forwardOptions?.subjectPrefix === 'string' && draft.forwardOptions.subjectPrefix.trim()
+        ? draft.forwardOptions.subjectPrefix.trim()
+        : 'Fwd:',
+    }
+    : null
 
   return {
     to: composeRecipientsToString(toRecipients),
@@ -127,10 +142,16 @@ export function normalizeComposeDraft(draft = {}) {
     composeSurface: draft?.composeSurface === 'window' || draft?.composeSurface === 'tab' ? draft.composeSurface : 'inline',
     pendingSendNoticeId: Number.isFinite(draft?.pendingSendNoticeId) ? Number(draft.pendingSendNoticeId) : null,
     restorableSource: draft?.restorableSource || null,
+    forwardTargets,
+    forwardOptions,
   }
 }
 
 export function getComposeTitle(draft) {
+  const forwardCount = Array.isArray(draft?.forwardTargets) ? draft.forwardTargets.length : 0
+  if (forwardCount > 0) {
+    return forwardCount === 1 ? 'Forward' : `Forward (${forwardCount})`
+  }
   const subject = `${draft?.subject || ''}`.trim()
   return subject || 'New Message'
 }
@@ -236,6 +257,8 @@ function composeDraftSignature(draft = {}) {
     .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
 
   return {
+    forwardTargets: normalized.forwardTargets || [],
+    forwardOptions: normalized.forwardOptions || null,
     format: normalized.format,
     toRecipients: normalized.toRecipients,
     ccRecipients: normalized.ccRecipients,

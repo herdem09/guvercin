@@ -56,6 +56,7 @@ export function hydrateAccountSession(account) {
 
   window.dispatchEvent(new Event('guvercin-theme-changed'))
   localStorage.removeItem('temp_account_form')
+  localStorage.removeItem('temp_account_form_draft')
   localStorage.removeItem('temp_language')
   localStorage.removeItem('temp_font')
   localStorage.removeItem('temp_theme_mode')

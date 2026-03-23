@@ -151,7 +151,6 @@ body.resizing * {
   gap: 16px;
   box-shadow: var(--shadow-navbar);
   border-bottom: 1px solid color-mix(in srgb, var(--db-navbar-bg, var(--c-primary)) 82%, rgba(0, 0, 0, 0.18));
-  backdrop-filter: blur(16px) saturate(130%);
   flex-shrink: 0;
   z-index: 6000;
 }
@@ -170,7 +169,6 @@ body.resizing * {
 
 .db-logo-btn:hover {
   background: rgba(255, 255, 255, 0.2);
-  transform: translateY(-1px);
 }
 
 .db-logo-icon {
@@ -201,7 +199,6 @@ body.resizing * {
   overflow: hidden;
   flex: 1;
   max-width: 560px;
-  backdrop-filter: blur(14px);
 }
 
 .db-search:focus-within {
@@ -282,13 +279,11 @@ body.resizing * {
   cursor: pointer;
   color: var(--c-text-1);
   transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
-  backdrop-filter: blur(12px);
 }
 
 .db-search-compact-btn:hover {
   background: rgba(255, 255, 255, 0.26);
   border-color: rgba(255, 255, 255, 0.4);
-  transform: translateY(-1px);
 }
 
 .db-clock {
@@ -306,7 +301,6 @@ body.resizing * {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
   color: var(--c-text-1);
   border: 1px solid rgba(255, 255, 255, 0.16);
-  backdrop-filter: blur(10px);
 }
 
 .db-icon-btn {
@@ -322,13 +316,11 @@ body.resizing * {
   font-size: 18px;
   color: var(--c-text-1);
   transition: background 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
-  backdrop-filter: blur(12px);
 }
 
 .db-icon-btn:hover {
   background: rgba(255, 255, 255, 0.24);
   border-color: rgba(255, 255, 255, 0.28);
-  transform: translateY(-1px);
 }
 
 .db-settings-wrapper {
@@ -349,7 +341,6 @@ body.resizing * {
   padding: 10px;
   color: var(--c-text-1);
   z-index: 6500;
-  backdrop-filter: blur(18px) saturate(145%);
 }
 
 .db-settings-menu__title {
@@ -435,7 +426,6 @@ body.resizing * {
   border: 1px solid var(--shell-panel-border, var(--c-border-1));
   color: var(--c-text-1);
   z-index: 6200;
-  backdrop-filter: blur(18px) saturate(150%);
 }
 
 .db-navbar--bottom .db-sync-popover {
@@ -521,7 +511,6 @@ body.resizing * {
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
   box-shadow: 0 8px 18px var(--shadow-color-2);
-  backdrop-filter: blur(12px);
 }
 
 .db-account-btn:hover {
@@ -545,7 +534,6 @@ body.resizing * {
   border: 1px solid var(--shell-panel-border, var(--c-border-1));
   color: var(--c-text-1);
   z-index: 5400;
-  backdrop-filter: blur(20px) saturate(150%);
 }
 
 .db-navbar--bottom .account-popover {
@@ -664,7 +652,6 @@ body.resizing * {
   align-items: center;
   height: 42px;
   flex-shrink: 0;
-  backdrop-filter: blur(12px);
 }
 
 .db-main-menu ul {
@@ -694,7 +681,6 @@ body.resizing * {
 
 .db-main-menu li button:hover {
   background: var(--overlay-hover-1);
-  transform: translateY(-1px);
 }
 
 .db-main-menu li.active button {
@@ -751,7 +737,6 @@ body.resizing * {
 
 .db-submenu-more-btn:hover {
   background: var(--overlay-hover-1);
-  transform: translateY(-1px);
 }
 
 .db-overflow-menu {
@@ -765,7 +750,6 @@ body.resizing * {
   padding: 6px 0;
   z-index: 5500;
   min-width: 200px;
-  backdrop-filter: blur(18px) saturate(145%);
 }
 
 .db-submenu li button {
@@ -846,7 +830,6 @@ body.resizing * {
   border: 1px solid var(--shell-panel-border, var(--c-border-1));
   border-radius: 16px;
   box-shadow: 0 12px 32px var(--shadow-color-4);
-  backdrop-filter: blur(18px) saturate(145%);
 }
 
 .db-submenu-popover {
@@ -863,7 +846,6 @@ body.resizing * {
   box-shadow: 0 12px 28px var(--shadow-color-4);
   padding: 6px 0;
   z-index: 5200;
-  backdrop-filter: blur(18px) saturate(145%);
 }
 
 .db-submenu-popover__item {
@@ -976,24 +958,23 @@ body.resizing * {
 }
 
 .db-sidebar {
-  width: 58px;
+  width: 48px;
   background: color-mix(in srgb, var(--c-surface-1) 90%, transparent);
   display: flex;
   flex-direction: column;
-  padding: 12px 0;
+  padding: 10px 0;
   flex-shrink: 0;
   gap: 8px;
   border-right: 1px solid var(--shell-panel-border, var(--c-border-1));
-  backdrop-filter: blur(18px) saturate(145%);
 }
 
 .db-sidebar-btn {
   background: transparent;
   border: 1px solid transparent;
   cursor: pointer;
-  width: 42px;
-  height: 42px;
-  border-radius: 14px;
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
   margin: 0 auto;
   display: flex;
   align-items: center;
@@ -1006,7 +987,6 @@ body.resizing * {
 .db-sidebar-btn:hover {
   background: var(--overlay-hover-1);
   border-color: var(--shell-panel-border, var(--c-border-1));
-  transform: translateY(-1px);
 }
 
 .db-sidebar-btn.active {
@@ -1143,7 +1123,6 @@ body.resizing * {
   border-radius: 24px;
   background: color-mix(in srgb, var(--c-surface-1) 94%, transparent);
   box-shadow: var(--shell-panel-shadow, var(--shadow-2));
-  backdrop-filter: blur(24px) saturate(150%);
   /* needed for overlay positioning */
   min-width: 500px;
   /* mail content needs at least ~300px, plus dock tabs */
@@ -1445,7 +1424,6 @@ body.resizing * {
 
 .db-folder-item-content:hover {
   background: var(--overlay-hover-1);
-  transform: translateX(1px);
 }
 
 .db-folder-item-content.dnd-target {
@@ -1561,7 +1539,6 @@ body.resizing * {
   flex-shrink: 0;
   flex-wrap: nowrap;
   overflow: visible;
-  backdrop-filter: blur(12px);
 }
 
 .db-search-results-banner {
@@ -1620,7 +1597,6 @@ body.resizing * {
 .db-mail-toolbar-btn:hover {
   background: var(--overlay-hover-1);
   border-color: var(--shell-panel-border, var(--c-border-1));
-  transform: translateY(-1px);
 }
 
 .db-mail-toolbar-btn.active {
@@ -1676,7 +1652,6 @@ body.resizing * {
   z-index: 5000;
   max-height: calc(100vh - 40px);
   overflow-y: auto;
-  backdrop-filter: blur(18px) saturate(145%);
 }
 
 .db-toolbar-dropdown__item {
@@ -1714,7 +1689,6 @@ body.resizing * {
   z-index: 5000;
   max-height: calc(100vh - 40px);
   overflow-y: auto;
-  backdrop-filter: blur(18px) saturate(145%);
 }
 
 .db-toolbar-popover--sort {
@@ -2236,7 +2210,6 @@ body.resizing * {
   color: var(--c-text-2);
   opacity: 0.84;
   transition: all 0.2s ease;
-  backdrop-filter: blur(10px);
 }
 
 .db-mail-qa-btn:hover {
@@ -2247,7 +2220,6 @@ body.resizing * {
 
 .db-mail-item:hover {
   background: color-mix(in srgb, var(--c-surface-3) 92%, white 8%);
-  transform: translateY(-1px);
   box-shadow: 0 16px 30px var(--shadow-color-2);
 }
 
@@ -3025,7 +2997,17 @@ body.resizing * {
 .svg-icon-inline {
   width: 1em;
   height: 1em;
+  display: block;
+  object-fit: contain;
   vertical-align: middle;
+}
+
+.db-mail-toolbar-btn .svg-icon-inline[src*="choice-"],
+.db-mail-avatar-toggle .svg-icon-inline[src*="choice-"],
+.db-label-popover__check .svg-icon-inline[src*="choice-"],
+.db-toolbar-popover__check .svg-icon-inline[src*="choice-"] {
+  transform: translate(-0.5px, -0.5px);
+  transform-origin: center;
 }
 
 /* --- Dynamic Layout Orientations --- */

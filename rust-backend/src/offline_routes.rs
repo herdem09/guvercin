@@ -10,6 +10,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::{DateTime, Duration, NaiveDate, Utc};
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::Deserialize;
 use serde_json::{self, json};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
@@ -29,7 +30,7 @@ use crate::{
         OfflineActionResponse, OfflineConfigResponse, OfflineSetupPayload, OfflineStatusResponse,
         SyncNowResponse, TransferProgress, TransferSnapshot,
     },
-    smtp_send::{build_rfc822_message, OutgoingAttachment, OutgoingMailFormat},
+    smtp_send::{build_rfc822_message, OutgoingAttachment, OutgoingAttachmentDisposition, OutgoingMailFormat},
 };
 
 #[derive(Deserialize)]
@@ -115,6 +116,15 @@ fn parse_labels_json_value(raw: &str) -> Vec<String> {
     normalize_label_values(parsed)
 }
 
+fn decode_header_value(raw: &str) -> String {
+    let cleaned = raw.replace(['\r', '\n'], " ");
+    let header_line = format!("X: {cleaned}\n");
+    match mailparse::parse_header(header_line.as_bytes()) {
+        Ok((header, _)) => header.get_value(),
+        Err(_) => cleaned.trim().to_string(),
+    }
+}
+
 fn serialize_labels_json_value(labels: &[String]) -> String {
     serde_json::to_string(labels).unwrap_or_else(|_| "[]".to_string())
 }
@@ -155,6 +165,122 @@ fn parse_address_list(payload: &serde_json::Value, key: &str) -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn parse_subject_prefix(payload: &serde_json::Value) -> String {
+    payload
+        .get("subject_prefix")
+        .or_else(|| payload.get("subjectPrefix"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Fwd:")
+        .to_string()
+}
+
+fn apply_subject_prefix(prefix: &str, subject: &str) -> String {
+    let prefix = prefix.trim();
+    let subject = subject.trim();
+    if prefix.is_empty() {
+        return subject.to_string();
+    }
+    if subject.is_empty() {
+        return prefix.to_string();
+    }
+
+    // Avoid double-prefixing (case-insensitive).
+    if subject
+        .get(..prefix.len())
+        .map(|slice| slice.eq_ignore_ascii_case(prefix))
+        .unwrap_or(false)
+    {
+        return subject.to_string();
+    }
+
+    format!("{prefix} {subject}").trim().to_string()
+}
+
+struct PreparedForwardContent {
+    subject: String,
+    format: OutgoingMailFormat,
+    html_body: String,
+    plain_body: String,
+    attachments: Vec<OutgoingAttachment>,
+}
+
+fn prepare_forward_from_raw(
+    uid_hint: &str,
+    raw: &[u8],
+    subject_prefix: &str,
+) -> PreparedForwardContent {
+    let parsed_ok = mailparse::parse_mail(raw).is_ok();
+    if parsed_ok {
+        let content = imap_session::parse_mail_content_with_attachment_data(uid_hint.to_string(), raw);
+        let mut attachments = Vec::new();
+        for attachment in content.attachments.iter() {
+            let data_base64 = match attachment.data_base64.as_deref() {
+                Some(value) if !value.trim().is_empty() => value.trim().to_string(),
+                _ => continue,
+            };
+            let mut disposition = if attachment.is_inline {
+                OutgoingAttachmentDisposition::Inline
+            } else {
+                OutgoingAttachmentDisposition::Attachment
+            };
+            let mut content_id = attachment.content_id.clone();
+            if matches!(disposition, OutgoingAttachmentDisposition::Inline)
+                && content_id.as_deref().map(str::trim).unwrap_or_default().is_empty()
+            {
+                // Don't fail the entire forward if the source part is missing Content-ID.
+                disposition = OutgoingAttachmentDisposition::Attachment;
+                content_id = None;
+            }
+
+            attachments.push(OutgoingAttachment {
+                filename: attachment.filename.clone(),
+                content_type: if attachment.content_type.trim().is_empty() {
+                    "application/octet-stream".to_string()
+                } else {
+                    attachment.content_type.clone()
+                },
+                data_base64,
+                disposition,
+                content_id,
+            });
+        }
+
+        let has_any_body = !content.html_body.trim().is_empty() || !content.plain_body.trim().is_empty();
+        let has_any_attachment = !attachments.is_empty();
+        if has_any_body || has_any_attachment {
+            let format = if !content.html_body.trim().is_empty() {
+                OutgoingMailFormat::Html
+            } else {
+                OutgoingMailFormat::Plain
+            };
+            return PreparedForwardContent {
+                subject: apply_subject_prefix(subject_prefix, &content.subject),
+                format,
+                html_body: content.html_body,
+                plain_body: content.plain_body,
+                attachments,
+            };
+        }
+    }
+
+    // Fallback: send the original raw message as an .eml attachment.
+    PreparedForwardContent {
+        subject: apply_subject_prefix(subject_prefix, ""),
+        format: OutgoingMailFormat::Plain,
+        html_body: String::new(),
+        plain_body: "Forwarded message attached.".to_string(),
+        attachments: vec![OutgoingAttachment {
+            filename: "forwarded.eml".to_string(),
+            content_type: "message/rfc822".to_string(),
+            data_base64: BASE64_STANDARD.encode(raw),
+            disposition: OutgoingAttachmentDisposition::Attachment,
+            content_id: None,
+        }],
+    }
 }
 
 fn resolve_drafts_mailbox_name(mailboxes: &[String]) -> Option<String> {
@@ -653,6 +779,7 @@ pub async fn get_local_mail_list(
                     .try_get::<Option<String>, _>("sender_name")
                     .ok()
                     .flatten()
+                    .map(|value| decode_header_value(&value))
                     .unwrap_or_default(),
                 address: r
                     .try_get::<Option<String>, _>("sender_address")
@@ -663,11 +790,13 @@ pub async fn get_local_mail_list(
                     .try_get::<Option<String>, _>("recipient_to")
                     .ok()
                     .flatten()
+                    .map(|value| decode_header_value(&value))
                     .unwrap_or_default(),
                 subject: r
                     .try_get::<Option<String>, _>("subject")
                     .ok()
                     .flatten()
+                    .map(|value| decode_header_value(&value))
                     .unwrap_or_default(),
                 date: r
                     .try_get::<Option<String>, _>("date_value")
@@ -772,6 +901,7 @@ pub async fn search_advanced(
                     .try_get::<Option<String>, _>("sender_name")
                     .ok()
                     .flatten()
+                    .map(|value| decode_header_value(&value))
                     .unwrap_or_default(),
                 address: r
                     .try_get::<Option<String>, _>("sender_address")
@@ -782,11 +912,13 @@ pub async fn search_advanced(
                     .try_get::<Option<String>, _>("recipient_to")
                     .ok()
                     .flatten()
+                    .map(|value| decode_header_value(&value))
                     .unwrap_or_default(),
                 subject: r
                     .try_get::<Option<String>, _>("subject")
                     .ok()
                     .flatten()
+                    .map(|value| decode_header_value(&value))
                     .unwrap_or_default(),
                 date: r
                     .try_get::<Option<String>, _>("date_value")
@@ -909,11 +1041,13 @@ pub async fn get_local_mail_content(
                     .try_get::<Option<String>, _>("subject")
                     .ok()
                     .flatten()
+                    .map(|value| decode_header_value(&value))
                     .unwrap_or_default(),
                 from_name: r
                     .try_get::<Option<String>, _>("sender_name")
                     .ok()
                     .flatten()
+                    .map(|value| decode_header_value(&value))
                     .unwrap_or_default(),
                 from_address: r
                     .try_get::<Option<String>, _>("sender_address")
@@ -924,11 +1058,13 @@ pub async fn get_local_mail_content(
                     .try_get::<Option<String>, _>("cc_value")
                     .ok()
                     .flatten()
+                    .map(|value| decode_header_value(&value))
                     .unwrap_or_default(),
                 bcc: r
                     .try_get::<Option<String>, _>("bcc_value")
                     .ok()
                     .flatten()
+                    .map(|value| decode_header_value(&value))
                     .unwrap_or_default(),
                 date: r
                     .try_get::<Option<String>, _>("date_value")
@@ -1887,6 +2023,121 @@ pub async fn process_queue_once(
                         }
                     } else {
                         Err("Account not found".to_string())
+                    }
+                }
+                "forward" => {
+                    if target_uid.trim().is_empty() || target_folder.trim().is_empty() {
+                        Ok(()) // nothing to forward
+                    } else {
+                        let account_row = sqlx::query(
+                            "SELECT email_address, auth_token, smtp_host, smtp_port, ssl_mode FROM accounts WHERE account_id = ?",
+                        )
+                        .bind(account_id)
+                        .fetch_optional(&state._db.require_general_pool().await?)
+                        .await?;
+
+                        if let Some(row) = account_row {
+                            let email = row
+                                .try_get::<Option<String>, _>("email_address")
+                                .ok()
+                                .flatten()
+                                .unwrap_or_default();
+                            let password = row
+                                .try_get::<Option<String>, _>("auth_token")
+                                .ok()
+                                .flatten()
+                                .unwrap_or_default();
+                            let smtp_host = row
+                                .try_get::<Option<String>, _>("smtp_host")
+                                .ok()
+                                .flatten()
+                                .unwrap_or_default();
+                            let smtp_port = row
+                                .try_get::<Option<i64>, _>("smtp_port")
+                                .ok()
+                                .flatten()
+                                .unwrap_or(465) as u16;
+                            let ssl_mode = row
+                                .try_get::<Option<String>, _>("ssl_mode")
+                                .ok()
+                                .flatten()
+                                .unwrap_or_else(|| "STARTTLS".to_string());
+
+                            if smtp_host.is_empty() || password.is_empty() || email.is_empty() {
+                                Err("Missing SMTP configuration for account".to_string())
+                            } else {
+                                let to = parse_address_list(&parsed, "to");
+                                let cc = parse_address_list(&parsed, "cc");
+                                let bcc = parse_address_list(&parsed, "bcc");
+                                if to.is_empty() && cc.is_empty() && bcc.is_empty() {
+                                    Err("Forward requires at least one recipient".to_string())
+                                } else {
+                                    let subject_prefix = parse_subject_prefix(&parsed);
+
+                                    let cached_raw: Option<Vec<u8>> = sqlx::query_scalar(
+                                        "SELECT raw_rfc822 FROM local_mail_cache WHERE uid = ? AND folder = ?",
+                                    )
+                                    .bind(&target_uid)
+                                    .bind(&target_folder)
+                                    .fetch_optional(&pool)
+                                    .await?
+                                    .flatten();
+                                    let raw_was_cached = cached_raw.is_some();
+
+                                    let mut raw = cached_raw;
+                                    if raw.is_none() {
+                                        let _ = ensure_imap_connected(&state._db, &state.imap, account_id).await;
+                                        raw = imap_session::fetch_mail_raw_in_mailbox(
+                                            &state.imap,
+                                            account_id,
+                                            &target_folder,
+                                            &target_uid,
+                                        );
+                                    }
+
+                                    if let Some(raw_bytes) = raw {
+                                        if !raw_was_cached {
+                                            let _ = sqlx::query(
+                                                "UPDATE local_mail_cache SET raw_rfc822 = ?, updated_at = CURRENT_TIMESTAMP WHERE uid = ? AND folder = ?",
+                                            )
+                                            .bind(&raw_bytes)
+                                            .bind(&target_uid)
+                                            .bind(&target_folder)
+                                            .execute(&pool)
+                                            .await;
+                                        }
+
+                                        let prepared = prepare_forward_from_raw(
+                                            &target_uid,
+                                            &raw_bytes,
+                                            &subject_prefix,
+                                        );
+
+                                        crate::smtp_send::send_mail(
+                                            &smtp_host,
+                                            smtp_port,
+                                            &ssl_mode,
+                                            &email,
+                                            &password,
+                                            &email,
+                                            to,
+                                            cc,
+                                            bcc,
+                                            &prepared.subject,
+                                            prepared.format,
+                                            &prepared.html_body,
+                                            &prepared.plain_body,
+                                            &prepared.attachments,
+                                        )
+                                        .await
+                                    } else {
+                                        Err("Raw mail not available for forward (not cached offline and IMAP unavailable)".to_string())
+                                    }
+                                }
+                            }
+                        } else {
+                            Err("Account not found".to_string())
+                        }
                     }
                 }
                 _ => Err(format!("Unsupported action type: {action_type}")),
@@ -3294,6 +3545,59 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(trash_count, 1);
+    }
+
+    #[test]
+    fn apply_subject_prefix_adds_prefix_once() {
+        assert_eq!(apply_subject_prefix("Fwd:", "Hello"), "Fwd: Hello");
+        assert_eq!(apply_subject_prefix("Fwd:", "Fwd: Hello"), "Fwd: Hello");
+        assert_eq!(apply_subject_prefix("Fwd:", "fwd: Hello"), "fwd: Hello");
+        assert_eq!(apply_subject_prefix("Fwd:", ""), "Fwd:");
+        assert_eq!(apply_subject_prefix("", "Hello"), "Hello");
+    }
+
+    #[test]
+    fn prepare_forward_from_raw_falls_back_to_eml_attachment() {
+        let prepared = prepare_forward_from_raw("1", b"", "Fwd:");
+        assert_eq!(prepared.format, OutgoingMailFormat::Plain);
+        assert_eq!(prepared.attachments.len(), 1);
+        assert_eq!(prepared.attachments[0].filename, "forwarded.eml");
+        assert_eq!(prepared.attachments[0].content_type, "message/rfc822");
+        assert_eq!(prepared.subject, "Fwd:");
+    }
+
+    #[test]
+    fn prepare_forward_downgrades_inline_attachment_without_content_id() {
+        let raw = concat!(
+            "From: sender@example.com\r\n",
+            "To: me@example.com\r\n",
+            "Subject: Hello\r\n",
+            "MIME-Version: 1.0\r\n",
+            "Content-Type: multipart/mixed; boundary=\"b\"\r\n",
+            "\r\n",
+            "--b\r\n",
+            "Content-Type: text/html; charset=utf-8\r\n",
+            "\r\n",
+            "<html><body>Hi</body></html>\r\n",
+            "--b\r\n",
+            "Content-Type: image/png\r\n",
+            "Content-Disposition: inline; filename=\"x.png\"\r\n",
+            "Content-Transfer-Encoding: base64\r\n",
+            "\r\n",
+            "aGVsbG8=\r\n",
+            "--b--\r\n",
+        );
+        let prepared = prepare_forward_from_raw("1", raw.as_bytes(), "Fwd:");
+        assert!(prepared.attachments.len() >= 1);
+        let inline = prepared
+            .attachments
+            .iter()
+            .find(|att| att.filename == "x.png")
+            .expect("expected x.png attachment");
+        assert_eq!(inline.disposition, OutgoingAttachmentDisposition::Attachment);
+        assert!(inline.content_id.is_none());
+        assert_eq!(prepared.subject, "Fwd: Hello");
+        assert_eq!(prepared.format, OutgoingMailFormat::Html);
     }
 }
 

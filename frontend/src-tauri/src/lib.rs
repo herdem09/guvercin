@@ -42,12 +42,18 @@ async fn open_mail_window(
     map.insert(label.clone(), mail_data_json);
   }
 
+  let init_script = format!(
+    "window.__GUV_DETACHED__ = {{ kind: 'mail', label: {} }};",
+    serde_json::to_string(&label).unwrap_or_else(|_| "\"\"".to_string())
+  );
+
   WebviewWindowBuilder::new(
     &handle,
     &label,
     WebviewUrl::App(PathBuf::from("index.html")),
   )
   .title("Guvercin - Mail")
+  .initialization_script(init_script)
   .visible(true)
   .build()
   .map_err(|e| e.to_string())?;
@@ -103,12 +109,18 @@ async fn open_compose_window(
     map.insert(label.clone(), compose_data_json);
   }
 
+  let init_script = format!(
+    "window.__GUV_DETACHED__ = {{ kind: 'compose', label: {} }};",
+    serde_json::to_string(&label).unwrap_or_else(|_| "\"\"".to_string())
+  );
+
   WebviewWindowBuilder::new(
     &handle,
     &label,
     WebviewUrl::App(PathBuf::from("index.html")),
   )
   .title("Guvercin - Compose")
+  .initialization_script(init_script)
   .visible(true)
   .inner_size(800.0, 650.0)
   .build()

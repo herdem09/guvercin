@@ -230,6 +230,9 @@ function RecipientField({ label, recipients, onChange, placeholder, trailingActi
 }
 
 export default function ComposeView({ draft, onDraftChange, onSend, onDiscard, accountEmail, sending = false }) {
+    const forwardCount = Array.isArray(draft?.forwardTargets) ? draft.forwardTargets.length : 0
+    const isForwardMode = forwardCount > 0
+    const recipientCount = (draft?.toRecipients || []).length + (draft?.ccRecipients || []).length + (draft?.bccRecipients || []).length
     const manualAttachments = (draft?.attachments || []).filter((attachment) => attachment.disposition !== 'inline')
     const fileInputRef = useRef(null)
     const inlineImageInputRef = useRef(null)
@@ -260,12 +263,12 @@ export default function ComposeView({ draft, onDraftChange, onSend, onDiscard, a
     }, [draft?.showBcc, draft?.showCc, patchDraft])
 
     const handleSend = useCallback(async () => {
-        if ((draft?.toRecipients || []).length === 0) return
+        if (recipientCount === 0) return
         await onSend?.({
             ...draft,
             from: accountEmail || '',
         })
-    }, [accountEmail, draft, onSend])
+    }, [accountEmail, draft, onSend, recipientCount])
 
     const previewDocument = useMemo(
         () => buildComposePreviewDocument(draft?.htmlBody || ''),
@@ -273,6 +276,7 @@ export default function ComposeView({ draft, onDraftChange, onSend, onDiscard, a
     )
 
     const handleFormatChange = useCallback((nextFormat) => {
+        if (isForwardMode) return
         if (nextFormat === 'html') {
             const seeded = ensureHtmlDraftSeed(draft)
             onDraftChange?.({
@@ -284,7 +288,7 @@ export default function ComposeView({ draft, onDraftChange, onSend, onDiscard, a
         }
 
         patchDraft({ format: 'plain' })
-    }, [draft, onDraftChange, patchDraft])
+    }, [draft, isForwardMode, onDraftChange, patchDraft])
 
     const handleFilesSelected = useCallback(async (fileList, disposition) => {
         const files = Array.from(fileList || [])
@@ -357,62 +361,66 @@ export default function ComposeView({ draft, onDraftChange, onSend, onDiscard, a
 
     return (
         <div className="compose-view">
-            <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                hidden
-                onChange={(event) => handleAttachmentInput(event, 'attachment')}
-            />
-            <input
-                ref={inlineImageInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                hidden
-                onChange={(event) => handleAttachmentInput(event, 'inline')}
-            />
-
-            <div className="cv-toolbar">
-                <div className="cv-toolbar__left">
-                    <SegmentSwitch
-                        value={draft?.format || 'plain'}
-                        onChange={handleFormatChange}
-                        options={[
-                            { value: 'plain', label: 'Plain Text' },
-                            { value: 'html', label: 'HTML' },
-                        ]}
+            {!isForwardMode && (
+                <>
+                    <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple
+                        hidden
+                        onChange={(event) => handleAttachmentInput(event, 'attachment')}
                     />
-                    {draft?.format === 'html' && (
-                        <SegmentSwitch
-                            value={draft?.htmlMode || 'edit'}
-                            onChange={(value) => patchDraft({ htmlMode: value })}
-                            options={[
-                                { value: 'edit', label: 'Edit' },
-                                { value: 'preview', label: 'Preview' },
-                            ]}
-                        />
-                    )}
-                </div>
-                <div className="cv-toolbar__right">
-                    <button
-                        type="button"
-                        className="cv-toolbar-btn"
-                        onClick={() => fileInputRef.current?.click()}
-                    >
-                        Add attachment
-                    </button>
-                    {draft?.format === 'html' && draft?.htmlMode === 'edit' && (
-                        <button
-                            type="button"
-                            className="cv-toolbar-btn"
-                            onClick={() => inlineImageInputRef.current?.click()}
-                        >
-                            Insert image
-                        </button>
-                    )}
-                </div>
-            </div>
+                    <input
+                        ref={inlineImageInputRef}
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        hidden
+                        onChange={(event) => handleAttachmentInput(event, 'inline')}
+                    />
+
+                    <div className="cv-toolbar">
+                        <div className="cv-toolbar__left">
+                            <SegmentSwitch
+                                value={draft?.format || 'plain'}
+                                onChange={handleFormatChange}
+                                options={[
+                                    { value: 'plain', label: 'Plain Text' },
+                                    { value: 'html', label: 'HTML' },
+                                ]}
+                            />
+                            {draft?.format === 'html' && (
+                                <SegmentSwitch
+                                    value={draft?.htmlMode || 'edit'}
+                                    onChange={(value) => patchDraft({ htmlMode: value })}
+                                    options={[
+                                        { value: 'edit', label: 'Edit' },
+                                        { value: 'preview', label: 'Preview' },
+                                    ]}
+                                />
+                            )}
+                        </div>
+                        <div className="cv-toolbar__right">
+                            <button
+                                type="button"
+                                className="cv-toolbar-btn"
+                                onClick={() => fileInputRef.current?.click()}
+                            >
+                                Add attachment
+                            </button>
+                            {draft?.format === 'html' && draft?.htmlMode === 'edit' && (
+                                <button
+                                    type="button"
+                                    className="cv-toolbar-btn"
+                                    onClick={() => inlineImageInputRef.current?.click()}
+                                >
+                                    Insert image
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                </>
+            )}
 
             <div className="cv-header">
                 <div className="cv-field">
@@ -451,64 +459,73 @@ export default function ComposeView({ draft, onDraftChange, onSend, onDiscard, a
                         placeholder="bcc@example.com"
                     />
                 )}
-                <div className="cv-field">
-                    <label className="cv-label">Subject</label>
-                    <input
-                        className="cv-input"
-                        type="text"
-                        placeholder="Subject"
-                        value={draft?.subject || ''}
-                        onChange={(e) => patchDraft({ subject: e.target.value })}
-                    />
-                </div>
-            </div>
-
-            <div className="cv-editor-wrap">
-                {draft?.format === 'plain' ? (
-                    <textarea
-                        className="cv-plain-editor"
-                        value={draft?.plainBody || ''}
-                        onChange={(event) => patchDraft({ plainBody: event.target.value })}
-                        placeholder="Write your message..."
-                    />
-                ) : draft?.htmlMode === 'preview' ? (
-                    <iframe
-                        title="compose-preview"
-                        className="cv-preview-frame"
-                        sandbox=""
-                        srcDoc={previewDocument}
-                    />
-                ) : (
-                    <Editor
-                        height="100%"
-                        defaultLanguage="html"
-                        value={draft?.htmlBody || ''}
-                        onChange={(value) => patchDraft({ htmlBody: value || '' })}
-                        onMount={(editor) => {
-                            monacoRef.current = editor
-                        }}
-                        options={{
-                            automaticLayout: true,
-                            wordWrap: 'on',
-                            minimap: { enabled: false },
-                            lineNumbers: 'on',
-                            scrollBeyondLastLine: false,
-                            tabSize: 2,
-                        }}
-                    />
+                {!isForwardMode && (
+                    <div className="cv-field">
+                        <label className="cv-label">Subject</label>
+                        <input
+                            className="cv-input"
+                            type="text"
+                            placeholder="Subject"
+                            value={draft?.subject || ''}
+                            onChange={(e) => patchDraft({ subject: e.target.value })}
+                        />
+                    </div>
                 )}
             </div>
 
-            <ComposeAttachmentList attachments={manualAttachments} onRemove={handleRemoveAttachment} />
+            {!isForwardMode && (
+                <>
+                    <div className="cv-editor-wrap">
+                        {draft?.format === 'plain' ? (
+                            <textarea
+                                className="cv-plain-editor"
+                                value={draft?.plainBody || ''}
+                                onChange={(event) => patchDraft({ plainBody: event.target.value })}
+                                placeholder="Write your message..."
+                            />
+                        ) : draft?.htmlMode === 'preview' ? (
+                            <iframe
+                                title="compose-preview"
+                                className="cv-preview-frame"
+                                sandbox=""
+                                srcDoc={previewDocument}
+                            />
+                        ) : (
+                            <Editor
+                                height="100%"
+                                defaultLanguage="html"
+                                value={draft?.htmlBody || ''}
+                                onChange={(value) => patchDraft({ htmlBody: value || '' })}
+                                onMount={(editor) => {
+                                    monacoRef.current = editor
+                                }}
+                                options={{
+                                    automaticLayout: true,
+                                    wordWrap: 'on',
+                                    minimap: { enabled: false },
+                                    lineNumbers: 'on',
+                                    scrollBeyondLastLine: false,
+                                    tabSize: 2,
+                                }}
+                            />
+                        )}
+                    </div>
+
+                    <ComposeAttachmentList attachments={manualAttachments} onRemove={handleRemoveAttachment} />
+                </>
+            )}
 
             <div className="cv-actions">
                 <button
                     type="button"
                     className="cv-send-btn"
                     onClick={handleSend}
-                    disabled={sending || (draft?.toRecipients || []).length === 0}
+                    disabled={sending || recipientCount === 0}
                 >
-                    {sending ? '⏳ Sending...' : <><img src="/img/icons/mail.svg" className="svg-icon-inline" /> Send</>}
+                    {sending ? '⏳ Sending...'
+                        : isForwardMode
+                            ? <><img src="/img/icons/forward.svg" className="svg-icon-inline" /> Forward</>
+                            : <><img src="/img/icons/mail.svg" className="svg-icon-inline" /> Send</>}
                 </button>
                 <button
                     type="button"

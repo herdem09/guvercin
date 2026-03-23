@@ -28,6 +28,17 @@ test('normalizeComposeDraft hydrates recipient arrays from legacy strings', () =
   assert.equal(draft.plainBody, 'legacy')
 })
 
+test('normalizeComposeDraft preserves forward metadata', () => {
+  const draft = normalizeComposeDraft({
+    to: 'a@example.com',
+    forwardTargets: [{ uid: '123', mailbox: 'INBOX' }],
+    forwardOptions: { subjectPrefix: 'Fwd:' },
+  })
+
+  assert.deepEqual(draft.forwardTargets, [{ uid: '123', mailbox: 'INBOX' }])
+  assert.deepEqual(draft.forwardOptions, { subjectPrefix: 'Fwd:' })
+})
+
 test('recipient helpers dedupe and serialize values', () => {
   const recipients = normalizeComposeRecipients(['a@example.com', 'A@example.com', ' Name <b@example.com> '])
   assert.deepEqual(recipients, ['a@example.com', 'b@example.com'])
@@ -111,4 +122,17 @@ test('isComposeDraftModified only prompts when draft differs from baseline', () 
   assert.equal(isComposeDraftModified(baseline, baseline), false)
   assert.equal(isComposeDraftModified({ ...baseline, htmlMode: 'preview' }, baseline), false)
   assert.equal(isComposeDraftModified({ ...baseline, subject: 'Changed' }, baseline), true)
+})
+
+test('isComposeDraftModified detects forward target changes', () => {
+  const baseline = normalizeComposeDraft({
+    forwardTargets: [{ uid: '101', mailbox: 'INBOX' }],
+    forwardOptions: { subjectPrefix: 'Fwd:' },
+  })
+
+  assert.equal(isComposeDraftModified(baseline, baseline), false)
+  assert.equal(
+    isComposeDraftModified({ ...baseline, forwardTargets: [{ uid: '202', mailbox: 'INBOX' }] }, baseline),
+    true,
+  )
 })

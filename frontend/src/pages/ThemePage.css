@@ -17,6 +17,39 @@
   border: 1px solid var(--c-border-1);
 }
 
+.onboarding-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sticky-title {
+  margin: 0;
+  color: var(--c-text-1);
+  font-size: 20px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.onboarding-back-btn {
+  position: absolute;
+  left: 0;
+  border: none;
+  background: transparent;
+  color: var(--c-text-2);
+  font-weight: 800;
+  cursor: pointer;
+  padding: 6px 10px;
+  border-radius: 10px;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.onboarding-back-btn:hover {
+  background-color: var(--c-surface-2);
+  color: var(--c-text-1);
+}
+
 .theme-subtitle {
   margin-top: 8px;
   color: var(--c-text-2);
@@ -116,4 +149,22 @@
   border: 1px solid var(--c-success);
   background: var(--c-success-bg);
   color: var(--c-success-text);
+}
+
+.continue-button {
+  margin-top: 18px;
+  width: 100%;
+  padding: 12px;
+  background-color: var(--c-primary);
+  border: none;
+  border-radius: 10px;
+  font-weight: 800;
+  cursor: pointer;
+  color: var(--c-primary-contrast);
+}
+
+.continue-button:hover:not(:disabled) {
+  background-color: var(--c-primary-hover);
+  box-shadow: var(--shadow-1);
+  transform: translateY(-1px);
 }

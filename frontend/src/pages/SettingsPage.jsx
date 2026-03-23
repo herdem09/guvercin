@@ -795,7 +795,7 @@ function ThemeSettings({
                             <line x1="4.22" y1="19.78" x2="7.05" y2="16.95" /><line x1="16.95" y1="7.05" x2="19.78" y2="4.22" />
                         </svg>
                     </span>
-                    <HighlightMatch text="System (default)" query={searchQuery} />
+                    <HighlightMatch text="System" query={searchQuery} />
                     {themeDraft.mode !== 'manual' && <span className="sp-system-btn__badge">Active</span>}
                 </button>
 
@@ -829,7 +829,7 @@ function ThemeSettings({
             <button
                 type="button"
                 className="sp-save-btn"
-                style={{ marginTop: 20 }}
+                style={{ marginTop: 34 }}
                 onClick={() => saveThemeDraft().catch(() => {})}
                 disabled={saving || !themeDirty}
             >

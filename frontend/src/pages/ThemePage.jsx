@@ -19,7 +19,7 @@ function ThemePage() {
   const [importMsg, setImportMsg] = useState(null)
 
   const initial = useMemo(() => {
-    const storedMode = localStorage.getItem('temp_theme_mode') || themeMode || 'system'
+    const storedMode = localStorage.getItem('temp_theme_mode') || themeMode || 'manual'
     const storedName = localStorage.getItem('temp_theme_name') || themeName || 'light'
     return { storedMode, storedName }
   }, [themeMode, themeName])
@@ -87,7 +87,12 @@ function ThemePage() {
   return (
     <div className="theme-page">
       <div className="theme-container">
-        <h2 className="sticky-title">{t('Theme')}</h2>
+        <div className="onboarding-header">
+          <button type="button" className="onboarding-back-btn" onClick={() => navigate('/font')}>
+            {t('Back')}
+          </button>
+          <h2 className="sticky-title">{t('Theme')}</h2>
+        </div>
         <p className="theme-subtitle">{t('Choose a theme')}</p>
 
         <div className="theme-grid">
@@ -110,7 +115,7 @@ function ThemePage() {
 
         <div className="theme-actions">
           <button type="button" className={`theme-system ${mode === 'system' ? 'active' : ''}`} onClick={chooseSystem}>
-            {t('System (default)')}
+            {t('System')}
           </button>
           <input
             ref={themeImportInputRef}

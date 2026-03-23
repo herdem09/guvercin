@@ -36,8 +36,17 @@ function applyMailboxNamespace(name, prefix) {
   return `${prefix}${trimmed}`
 }
 
-export default function DetachedMailWindow() {
-  const [windowLabel, setWindowLabel] = useState('')
+function getDetachedLabelHint() {
+  try {
+    const hint = typeof window !== 'undefined' ? window.__GUV_DETACHED__ : null
+    return typeof hint?.label === 'string' ? hint.label : ''
+  } catch {
+    return ''
+  }
+}
+
+export default function DetachedMailWindow({ initialLabel = '' } = {}) {
+  const [windowLabel, setWindowLabel] = useState(() => initialLabel || getDetachedLabelHint())
   const [data, setData] = useState(null)
   const [mailContent, setMailContent] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -119,6 +128,7 @@ export default function DetachedMailWindow() {
   }, [])
 
   useEffect(() => {
+    if (windowLabel) return () => {}
     let active = true
     const detectLabel = async () => {
       try {
@@ -132,7 +142,7 @@ export default function DetachedMailWindow() {
     }
     detectLabel()
     return () => { active = false }
-  }, [])
+  }, [windowLabel])
 
   useEffect(() => {
     if (!windowLabel) return

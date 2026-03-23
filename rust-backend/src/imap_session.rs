@@ -15,7 +15,7 @@ use crate::mail_models::{
     ReadStatus, SearchScope, merge_mailbox_label_into_preview,
 };
 use mailparse::{
-    addrparse_header, parse_mail, DispositionType, MailAddr, MailHeaderMap, ParsedMail,
+    addrparse_header, parse_headers, parse_mail, DispositionType, MailAddr, MailHeaderMap, ParsedMail,
 };
 
 pub struct ImapState {
@@ -116,16 +116,21 @@ impl ImapSession {
             }
 
             if let Some(header_bytes) = msg.header() {
-                let header_str = String::from_utf8_lossy(header_bytes);
-                let subject = parse_header(&header_str, "Subject");
-                let from_raw = parse_header(&header_str, "From");
-                let recipient_to = parse_header(&header_str, "To");
-                let date = parse_header(&header_str, "Date");
-                let content_type = parse_content_type(&parse_header(&header_str, "Content-Type"));
-                let importance = parse_importance(&header_str);
-                let category = parse_category(&header_str);
-                
-                for h_label in parse_labels(&header_str) {
+                let parsed_headers = match parse_headers(header_bytes) {
+                    Ok((headers, _)) => headers,
+                    Err(_) => Vec::new(),
+                };
+
+                let subject = parsed_headers.get_first_value("Subject").unwrap_or_default();
+                let from_raw = parsed_headers.get_first_value("From").unwrap_or_default();
+                let recipient_to = parsed_headers.get_first_value("To").unwrap_or_default();
+                let date = parsed_headers.get_first_value("Date").unwrap_or_default();
+                let content_type =
+                    parse_content_type(&parsed_headers.get_first_value("Content-Type").unwrap_or_default());
+                let importance = parse_importance_from_headers(&parsed_headers);
+                let category = parse_category_from_headers(&parsed_headers);
+
+                for h_label in parse_labels_from_headers(&parsed_headers) {
                     if !labels.contains(&h_label) {
                         labels.push(h_label);
                     }
@@ -314,16 +319,21 @@ impl ImapSession {
             }
 
             if let Some(header_bytes) = msg.header() {
-                let header_str = String::from_utf8_lossy(header_bytes);
-                let subject = parse_header(&header_str, "Subject");
-                let from_raw = parse_header(&header_str, "From");
-                let recipient_to = parse_header(&header_str, "To");
-                let date = parse_header(&header_str, "Date");
-                let content_type = parse_content_type(&parse_header(&header_str, "Content-Type"));
-                let importance = parse_importance(&header_str);
-                let category = parse_category(&header_str);
-                
-                for h_label in parse_labels(&header_str) {
+                let parsed_headers = match parse_headers(header_bytes) {
+                    Ok((headers, _)) => headers,
+                    Err(_) => Vec::new(),
+                };
+
+                let subject = parsed_headers.get_first_value("Subject").unwrap_or_default();
+                let from_raw = parsed_headers.get_first_value("From").unwrap_or_default();
+                let recipient_to = parsed_headers.get_first_value("To").unwrap_or_default();
+                let date = parsed_headers.get_first_value("Date").unwrap_or_default();
+                let content_type =
+                    parse_content_type(&parsed_headers.get_first_value("Content-Type").unwrap_or_default());
+                let importance = parse_importance_from_headers(&parsed_headers);
+                let category = parse_category_from_headers(&parsed_headers);
+
+                for h_label in parse_labels_from_headers(&parsed_headers) {
                     if !labels.contains(&h_label) {
                         labels.push(h_label);
                     }
@@ -1142,11 +1152,11 @@ fn fallback_parse_rfc822(uid: String, raw: &[u8]) -> MailContent {
         (text.as_ref(), "")
     };
 
-    let subject = decode_encoded_word(&parse_header(header_part, "Subject"));
+    let subject = parse_header(header_part, "Subject");
     let from_raw = parse_header(header_part, "From");
     let (from_name, from_address) = split_from(&from_raw);
-    let cc = decode_encoded_word(&parse_header(header_part, "Cc"));
-    let bcc = decode_encoded_word(&parse_header(header_part, "Bcc"));
+    let cc = parse_header(header_part, "Cc");
+    let bcc = parse_header(header_part, "Bcc");
     let date = parse_header(header_part, "Date");
 
     MailContent {
@@ -1169,39 +1179,10 @@ struct AttachmentDescriptor {
 }
 
 fn parse_header(headers: &str, name: &str) -> String {
-    let wanted = name.to_ascii_lowercase();
-    let mut current_key = String::new();
-    let mut current_value = String::new();
-
-    for line in headers.lines() {
-        if line.starts_with(' ') || line.starts_with('\t') {
-            if current_key == wanted && !current_value.is_empty() {
-                current_value.push(' ');
-                current_value.push_str(line.trim());
-            }
-            continue;
-        }
-
-        if current_key == wanted && !current_value.is_empty() {
-            return decode_encoded_word(current_value.trim());
-        }
-
-        current_key.clear();
-        current_value.clear();
-
-        if let Some((key, value)) = line.split_once(':') {
-            current_key = key.trim().to_ascii_lowercase();
-            if current_key == wanted {
-                current_value = value.trim().to_string();
-            }
-        }
+    match parse_headers(headers.as_bytes()) {
+        Ok((parsed, _)) => parsed.get_first_value(name).unwrap_or_default(),
+        Err(_) => String::new(),
     }
-
-    if current_key == wanted && !current_value.is_empty() {
-        return decode_encoded_word(current_value.trim());
-    }
-
-    String::new()
 }
 
 fn parse_content_type(value: &str) -> String {
@@ -1213,14 +1194,17 @@ fn parse_content_type(value: &str) -> String {
         .to_ascii_lowercase()
 }
 
-fn parse_importance(headers: &str) -> i32 {
-    let importance = parse_header(headers, "Importance").to_ascii_lowercase();
+fn parse_importance_from_headers(headers: &[mailparse::MailHeader]) -> i32 {
+    let importance = headers
+        .get_first_value("Importance")
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     match importance.as_str() {
         "high" => 2,
         "normal" => 1,
         "low" => 0,
         _ => {
-            let x_priority = parse_header(headers, "X-Priority");
+            let x_priority = headers.get_first_value("X-Priority").unwrap_or_default();
             let digit = x_priority
                 .chars()
                 .find(|ch| ch.is_ascii_digit())
@@ -1236,16 +1220,16 @@ fn parse_importance(headers: &str) -> i32 {
     }
 }
 
-fn parse_category(headers: &str) -> String {
-    let x_category = parse_header(headers, "X-Category");
+fn parse_category_from_headers(headers: &[mailparse::MailHeader]) -> String {
+    let x_category = headers.get_first_value("X-Category").unwrap_or_default();
     if !x_category.is_empty() {
         return x_category;
     }
-    parse_header(headers, "Keywords")
+    headers.get_first_value("Keywords").unwrap_or_default()
 }
 
-fn parse_labels(headers: &str) -> Vec<String> {
-    let keywords = parse_header(headers, "Keywords");
+fn parse_labels_from_headers(headers: &[mailparse::MailHeader]) -> Vec<String> {
+    let keywords = headers.get_first_value("Keywords").unwrap_or_default();
     if !keywords.is_empty() {
         let mut labels = Vec::new();
         for part in keywords.split(',') {
@@ -1262,7 +1246,7 @@ fn parse_labels(headers: &str) -> Vec<String> {
         }
     }
 
-    let category = parse_header(headers, "X-Category");
+    let category = headers.get_first_value("X-Category").unwrap_or_default();
     if category.is_empty() {
         return Vec::new();
     }
@@ -1270,93 +1254,28 @@ fn parse_labels(headers: &str) -> Vec<String> {
     vec![category]
 }
 
-fn decode_encoded_word(s: &str) -> String {
-    
-    let mut result = s.to_string();
-    let mut search_from = 0;
-
-    while let Some(start) = result[search_from..].find("=?") {
-        let abs_start = search_from + start;
-        if let Some(end) = result[abs_start..].find("?=") {
-            let abs_end = abs_start + end + 2;
-            let encoded = &result[abs_start..abs_end];
-            let decoded = decode_rfc2047(encoded);
-
-            result.replace_range(abs_start..abs_end, &decoded);
-
-            search_from = abs_start + decoded.len();
-        } else {
-            break;
-        }
+#[cfg(test)]
+fn parse_importance(headers: &str) -> i32 {
+    match parse_headers(headers.as_bytes()) {
+        Ok((parsed, _)) => parse_importance_from_headers(&parsed),
+        Err(_) => 1,
     }
-    result.trim().to_string()
 }
 
-fn decode_rfc2047(token: &str) -> String {
-    
-    let inner = token.trim_start_matches("=?").trim_end_matches("?=");
-    let parts: Vec<&str> = inner.splitn(3, '?').collect();
-    if parts.len() < 3 {
-        return token.to_string();
+#[cfg(test)]
+fn parse_category(headers: &str) -> String {
+    match parse_headers(headers.as_bytes()) {
+        Ok((parsed, _)) => parse_category_from_headers(&parsed),
+        Err(_) => String::new(),
     }
-    let _charset = parts[0];
-    let encoding = parts[1].to_ascii_uppercase();
-    let data = parts[2];
-
-    let bytes: Vec<u8> = match encoding.as_str() {
-        "B" => match base64_decode(data) {
-            Ok(b) => b,
-            Err(_) => return token.to_string(),
-        },
-        "Q" => qp_decode(data),
-        _ => return token.to_string(),
-    };
-
-    String::from_utf8_lossy(&bytes).to_string()
 }
 
-fn base64_decode(s: &str) -> Result<Vec<u8>, ()> {
-    
-    let alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut buf = Vec::new();
-    let chars: Vec<u8> = s
-        .bytes()
-        .filter(|&b| b != b'=')
-        .map(|b| alphabet.find(b as char).unwrap_or(0) as u8)
-        .collect();
-    let mut i = 0;
-    while i + 3 < chars.len() {
-        buf.push((chars[i] << 2) | (chars[i + 1] >> 4));
-        buf.push((chars[i + 1] << 4) | (chars[i + 2] >> 2));
-        buf.push((chars[i + 2] << 6) | chars[i + 3]);
-        i += 4;
+#[cfg(test)]
+fn parse_labels(headers: &str) -> Vec<String> {
+    match parse_headers(headers.as_bytes()) {
+        Ok((parsed, _)) => parse_labels_from_headers(&parsed),
+        Err(_) => Vec::new(),
     }
-    if i + 2 < chars.len() {
-        buf.push((chars[i] << 2) | (chars[i + 1] >> 4));
-        buf.push((chars[i + 1] << 4) | (chars[i + 2] >> 2));
-    } else if i + 1 < chars.len() {
-        buf.push((chars[i] << 2) | (chars[i + 1] >> 4));
-    }
-    Ok(buf)
-}
-
-fn qp_decode(s: &str) -> Vec<u8> {
-    let s = s.replace('_', " ");
-    let mut bytes = Vec::new();
-    let mut chars = s.bytes().peekable();
-    while let Some(b) = chars.next() {
-        if b == b'=' {
-            let h1 = chars.next().unwrap_or(0);
-            let h2 = chars.next().unwrap_or(0);
-            let hex = format!("{}{}", h1 as char, h2 as char);
-            if let Ok(val) = u8::from_str_radix(&hex, 16) {
-                bytes.push(val);
-            }
-        } else {
-            bytes.push(b);
-        }
-    }
-    bytes
 }
 
 fn split_from(from: &str) -> (String, String) {

@@ -111,7 +111,16 @@ function LanguagePage() {
     return (
         <div className="language-page">
             <div className="language-container">
-                <h2 className="sticky-title">{t('Language')}</h2>
+                <div className="onboarding-header">
+                    <button
+                        type="button"
+                        className="onboarding-back-btn"
+                        onClick={() => navigate('/login')}
+                    >
+                        {t('Back')}
+                    </button>
+                    <h2 className="sticky-title">{t('Language')}</h2>
+                </div>
 
                 <div className="search-wrapper">
                     <input

@@ -55,7 +55,16 @@ function FontPage() {
     return (
         <div className="font-page">
             <div className="font-container">
-                <h2 className="sticky-title">{t('Font Settings')}</h2>
+                <div className="onboarding-header">
+                    <button
+                        type="button"
+                        className="onboarding-back-btn"
+                        onClick={() => navigate('/language')}
+                    >
+                        {t('Back')}
+                    </button>
+                    <h2 className="sticky-title">{t('Font Settings')}</h2>
+                </div>
 
                 <div className="settings-wrapper">
                     <div className="setting-group">

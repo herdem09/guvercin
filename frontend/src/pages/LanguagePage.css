@@ -32,6 +32,32 @@
     font-weight: 700;
 }
 
+.onboarding-header {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.onboarding-back-btn {
+    position: absolute;
+    left: 0;
+    border: none;
+    background: transparent;
+    color: var(--c-text-2);
+    font-weight: 700;
+    cursor: pointer;
+    padding: 6px 10px;
+    border-radius: 8px;
+    transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.onboarding-back-btn:hover {
+    background-color: var(--c-surface-2);
+    color: var(--c-text-1);
+}
+
 .search-wrapper {
     flex-shrink: 0;
     position: relative;
