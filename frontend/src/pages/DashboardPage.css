@@ -2,11 +2,26 @@
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: var(--c-bg-alt);
-  font-family: "Calibri", "Segoe UI", Arial, sans-serif;
+  background: var(--shell-bg, var(--c-bg-alt));
+  font-family: inherit;
   overflow: hidden;
   min-width: 580px;
+  position: relative;
+  isolation: isolate;
+  color: var(--c-text-1);
   /* 48px sidebar + min ~530px for comfortable mail reading */
+}
+
+.dashboard-page::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background:
+    radial-gradient(circle at 9% 14%, var(--shell-glow-1, rgba(255, 203, 8, 0.22)) 0, transparent 25%),
+    radial-gradient(circle at 92% 8%, var(--shell-glow-2, rgba(74, 163, 255, 0.18)) 0, transparent 22%);
+  opacity: 0.92;
 }
 
 .db-action-notices {
@@ -22,11 +37,12 @@
 .db-action-notice {
   min-width: 280px;
   max-width: 360px;
-  background: #ffffff;
-  color: #1a1a1a;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 10px;
+  background: color-mix(in srgb, var(--c-surface-2) 92%, transparent);
+  color: var(--c-text-1);
+  border: 1px solid var(--shell-panel-border, var(--c-border-1));
+  border-radius: 16px;
   box-shadow: 0 18px 40px var(--shadow-color-7);
+  backdrop-filter: blur(18px) saturate(140%);
   overflow: hidden;
 }
 
@@ -126,13 +142,16 @@ body.resizing * {
 .db-navbar {
   position: relative;
   width: 100%;
-  height: 50px;
-  background-color: var(--db-navbar-bg, var(--c-primary));
+  height: 58px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--db-navbar-bg, var(--c-primary)) 94%, white 6%), var(--db-navbar-bg, var(--c-primary)));
   display: flex;
   align-items: center;
-  padding: 0 15px;
-  gap: 15px;
-  box-shadow: 0 2px 8px var(--shadow-color-2);
+  padding: 0 18px;
+  gap: 16px;
+  box-shadow: var(--shadow-navbar);
+  border-bottom: 1px solid color-mix(in srgb, var(--db-navbar-bg, var(--c-primary)) 82%, rgba(0, 0, 0, 0.18));
+  backdrop-filter: blur(16px) saturate(130%);
   flex-shrink: 0;
   z-index: 6000;
 }
@@ -144,13 +163,14 @@ body.resizing * {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 5px 10px;
-  border-radius: 5px;
-  transition: background 0.2s;
+  padding: 8px 12px;
+  border-radius: 14px;
+  transition: background 0.2s ease, transform 0.2s ease;
 }
 
 .db-logo-btn:hover {
-  background: var(--overlay-hover-2);
+  background: rgba(255, 255, 255, 0.2);
+  transform: translateY(-1px);
 }
 
 .db-logo-icon {
@@ -174,30 +194,43 @@ body.resizing * {
   display: flex;
   align-items: center;
   background: var(--db-search-bg, var(--c-surface-2));
-  border-radius: 6px;
-  height: 34px;
-  box-shadow: 0 1px 3px var(--shadow-color-1);
+  border-radius: 16px;
+  height: 42px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 8px 22px var(--shadow-color-1);
+  border: 1px solid color-mix(in srgb, var(--c-border-strong) 38%, transparent);
   overflow: hidden;
   flex: 1;
-  max-width: 500px;
+  max-width: 560px;
+  backdrop-filter: blur(14px);
+}
+
+.db-search:focus-within {
+  border-color: color-mix(in srgb, var(--c-primary) 48%, var(--c-border-strong));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 0 0 3px color-mix(in srgb, var(--c-primary) 20%, transparent), 0 10px 24px var(--shadow-color-2);
 }
 
 .db-search input {
   border: none;
   outline: none;
-  padding: 0 14px;
+  padding: 0 16px;
   font-size: 14px;
   flex: 1;
   background: transparent;
+  color: var(--c-text-1);
+}
+
+.db-search input::placeholder {
+  color: var(--c-text-3);
 }
 
 .db-search-btn {
   background: none;
   border: none;
   cursor: pointer;
-  padding: 6px 12px;
+  padding: 8px 14px;
   font-size: 16px;
-  transition: background 0.2s;
+  color: var(--c-text-1);
+  transition: background 0.2s ease, color 0.2s ease;
 }
 
 .db-search-btn:hover {
@@ -208,10 +241,11 @@ body.resizing * {
   background: none;
   border: none;
   cursor: pointer;
-  padding: 6px 10px;
+  padding: 8px 12px;
   font-size: 14px;
-  transition: background 0.2s;
-  border-left: 1px solid var(--overlay-hover-1);
+  transition: background 0.2s ease, color 0.2s ease;
+  border-left: 1px solid color-mix(in srgb, var(--c-border-1) 90%, transparent);
+  color: var(--c-text-2);
 }
 
 .db-search-filters-btn:hover {
@@ -239,19 +273,21 @@ body.resizing * {
 .db-search-compact-btn {
   height: 40px;
   width: 40px;
-  border-radius: 10px;
-  border: 1px solid var(--overlay-hover-2);
-  background: var(--c-surface-2);
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: rgba(255, 255, 255, 0.16);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background 0.2s, border-color 0.2s, transform 0.2s;
+  color: var(--c-text-1);
+  transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease;
+  backdrop-filter: blur(12px);
 }
 
 .db-search-compact-btn:hover {
-  background: var(--overlay-hover-1);
-  border-color: var(--c-primary);
+  background: rgba(255, 255, 255, 0.26);
+  border-color: rgba(255, 255, 255, 0.4);
   transform: translateY(-1px);
 }
 
@@ -261,31 +297,38 @@ body.resizing * {
 }
 
 .db-clock-item {
-  background: var(--c-surface-2);
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-size: 13px;
+  background: rgba(255, 255, 255, 0.18);
+  padding: 7px 12px;
+  border-radius: 999px;
+  font-size: 12px;
   font-weight: 600;
-  box-shadow: 0 1px 3px var(--shadow-color-1);
+  letter-spacing: 0.01em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
   color: var(--c-text-1);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(10px);
 }
 
 .db-icon-btn {
-  background: none;
-  border: none;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.16);
   cursor: pointer;
-  width: 36px;
-  height: 36px;
-  border-radius: 6px;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 18px;
-  transition: background 0.2s;
+  color: var(--c-text-1);
+  transition: background 0.2s ease, transform 0.2s ease, border-color 0.2s ease;
+  backdrop-filter: blur(12px);
 }
 
 .db-icon-btn:hover {
-  background: var(--shadow-color-1);
+  background: rgba(255, 255, 255, 0.24);
+  border-color: rgba(255, 255, 255, 0.28);
+  transform: translateY(-1px);
 }
 
 .db-settings-wrapper {
@@ -299,13 +342,14 @@ body.resizing * {
   top: calc(100% + 8px);
   right: 0;
   min-width: 220px;
-  background: var(--c-surface-2);
-  border: 1px solid var(--c-border-1);
+  background: color-mix(in srgb, var(--c-surface-2) 92%, transparent);
+  border: 1px solid var(--shell-panel-border, var(--c-border-1));
   box-shadow: 0 12px 28px var(--shadow-color-4);
-  border-radius: 12px;
+  border-radius: 16px;
   padding: 10px;
   color: var(--c-text-1);
   z-index: 6500;
+  backdrop-filter: blur(18px) saturate(145%);
 }
 
 .db-settings-menu__title {
@@ -384,13 +428,14 @@ body.resizing * {
   right: 0;
   min-width: 260px;
   max-width: 320px;
-  background: var(--c-surface-2);
-  border-radius: 14px;
+  background: color-mix(in srgb, var(--c-surface-2) 92%, transparent);
+  border-radius: 18px;
   padding: 12px 14px;
   box-shadow: 0 20px 45px var(--shadow-color-8);
-  border: 1px solid var(--overlay-hover-1);
+  border: 1px solid var(--shell-panel-border, var(--c-border-1));
   color: var(--c-text-1);
   z-index: 6200;
+  backdrop-filter: blur(18px) saturate(150%);
 }
 
 .db-navbar--bottom .db-sync-popover {
@@ -465,8 +510,8 @@ body.resizing * {
 }
 
 .db-account-btn {
-  background: var(--c-surface-2);
-  border: none;
+  background: color-mix(in srgb, var(--c-surface-2) 90%, transparent);
+  border: 1px solid var(--shell-panel-border, var(--c-border-1));
   border-radius: 50%;
   width: 42px;
   height: 42px;
@@ -475,7 +520,8 @@ body.resizing * {
   justify-content: center;
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease;
-  box-shadow: 0 6px 12px var(--shadow-color-1);
+  box-shadow: 0 8px 18px var(--shadow-color-2);
+  backdrop-filter: blur(12px);
 }
 
 .db-account-btn:hover {
@@ -492,13 +538,14 @@ body.resizing * {
   top: calc(100% + 8px);
   right: 0;
   width: 240px;
-  background: var(--c-surface-2);
-  border-radius: 1.1rem;
+  background: color-mix(in srgb, var(--c-surface-2) 92%, transparent);
+  border-radius: 1.3rem;
   padding: 1.25rem;
   box-shadow: 0 20px 45px var(--shadow-color-8);
-  border: 1px solid var(--overlay-hover-0);
+  border: 1px solid var(--shell-panel-border, var(--c-border-1));
   color: var(--c-text-1);
   z-index: 5400;
+  backdrop-filter: blur(20px) saturate(150%);
 }
 
 .db-navbar--bottom .account-popover {
@@ -611,12 +658,13 @@ body.resizing * {
 }
 
 .db-main-menu {
-  background: var(--c-border-1);
-  border-bottom: 1px solid var(--c-border-1);
+  background: color-mix(in srgb, var(--db-panel-header-bg, var(--c-surface-3)) 96%, transparent);
+  border-bottom: 1px solid var(--db-panel-header-border, var(--c-border-1));
   display: flex;
   align-items: center;
-  height: 34px;
+  height: 42px;
   flex-shrink: 0;
+  backdrop-filter: blur(12px);
 }
 
 .db-main-menu ul {
@@ -633,32 +681,34 @@ body.resizing * {
   border: none;
   display: flex;
   align-items: center;
-  height: 34px;
-  padding: 0 18px;
+  height: 32px;
+  padding: 0 16px;
   text-decoration: none;
   color: var(--c-text-1);
-  font-size: 13px;
-  font-weight: 500;
-  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 10px;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: background 0.2s ease, color 0.2s ease, transform 0.2s ease;
 }
 
 .db-main-menu li button:hover {
-  background: var(--c-border-1);
+  background: var(--overlay-hover-1);
+  transform: translateY(-1px);
 }
 
 .db-main-menu li.active button {
-  background: var(--c-border-1);
-  border-bottom: 3px solid var(--c-primary);
+  background: color-mix(in srgb, var(--c-primary) 18%, var(--c-surface-2));
+  border-bottom: none;
   font-weight: 700;
-  border-radius: 4px 4px 0 0;
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-primary) 44%, transparent);
 }
 
 .db-submenu {
-  background: var(--c-border-1);
-  border-bottom: 1px solid var(--c-border-1);
-  height: 34px;
+  background: color-mix(in srgb, var(--db-panel-header-bg, var(--c-surface-3)) 92%, transparent);
+  border-bottom: 1px solid var(--db-panel-header-border, var(--c-border-1));
+  height: 42px;
   display: flex;
   align-items: center;
   flex-shrink: 0;
@@ -689,31 +739,33 @@ body.resizing * {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: 34px;
-  width: 34px;
+  height: 32px;
+  width: 32px;
   color: var(--c-text-1);
   cursor: pointer;
   flex-shrink: 0;
-  transition: background 0.2s;
-  border-radius: 4px;
+  transition: background 0.2s ease, transform 0.2s ease;
+  border-radius: 10px;
   margin-right: 4px;
 }
 
 .db-submenu-more-btn:hover {
-  background: var(--c-border-1);
+  background: var(--overlay-hover-1);
+  transform: translateY(-1px);
 }
 
 .db-overflow-menu {
   position: absolute;
   top: 100%;
   right: 4px;
-  background: var(--c-surface-2);
-  border: 1px solid var(--c-border-1);
-  border-radius: 8px;
+  background: color-mix(in srgb, var(--c-surface-2) 92%, transparent);
+  border: 1px solid var(--shell-panel-border, var(--c-border-1));
+  border-radius: 14px;
   box-shadow: 0 12px 28px var(--shadow-color-4);
   padding: 6px 0;
   z-index: 5500;
   min-width: 200px;
+  backdrop-filter: blur(18px) saturate(145%);
 }
 
 .db-submenu li button {
@@ -721,12 +773,12 @@ body.resizing * {
   border: none;
   display: flex;
   align-items: center;
-  height: 26px;
+  height: 30px;
   padding: 0 14px;
   text-decoration: none;
   color: var(--c-text-1);
   font-size: 12px;
-  border-radius: 4px;
+  border-radius: 10px;
   cursor: pointer;
   transition: background 0.2s;
 }
@@ -750,11 +802,11 @@ body.resizing * {
 }
 
 .db-overflow-menu-item li button:hover {
-  background: var(--c-surface-3);
+  background: var(--overlay-hover-1);
 }
 
 .db-submenu li button:hover {
-  background: var(--c-border-1);
+  background: var(--overlay-hover-1);
 }
 
 .db-submenu li button:disabled {
@@ -790,10 +842,11 @@ body.resizing * {
   padding: 6px 6px 7px;
   min-width: 200px;
   max-width: min(280px, calc(100vw - 24px));
-  background: var(--c-surface-3);
-  border: 1px solid var(--c-border-1);
-  border-radius: 9px;
+  background: color-mix(in srgb, var(--c-surface-2) 92%, transparent);
+  border: 1px solid var(--shell-panel-border, var(--c-border-1));
+  border-radius: 16px;
   box-shadow: 0 12px 32px var(--shadow-color-4);
+  backdrop-filter: blur(18px) saturate(145%);
 }
 
 .db-submenu-popover {
@@ -804,12 +857,13 @@ body.resizing * {
   max-width: min(280px, calc(100vw - 24px));
   max-height: calc(100vh - 40px);
   overflow-y: auto;
-  background: var(--c-surface-2);
-  border: 1px solid var(--c-border-1);
-  border-radius: 8px;
+  background: color-mix(in srgb, var(--c-surface-2) 92%, transparent);
+  border: 1px solid var(--shell-panel-border, var(--c-border-1));
+  border-radius: 16px;
   box-shadow: 0 12px 28px var(--shadow-color-4);
   padding: 6px 0;
   z-index: 5200;
+  backdrop-filter: blur(18px) saturate(145%);
 }
 
 .db-submenu-popover__item {
@@ -824,7 +878,7 @@ body.resizing * {
 }
 
 .db-submenu-popover__item:hover {
-  background: var(--c-surface-3);
+  background: var(--overlay-hover-1);
 }
 
 .db-submenu-popover__divider {
@@ -869,7 +923,7 @@ body.resizing * {
 }
 
 .db-label-popover__item:hover {
-  background: var(--c-surface-3);
+  background: var(--overlay-hover-1);
 }
 
 .db-label-popover__item.checked,
@@ -910,6 +964,7 @@ body.resizing * {
   display: flex;
   flex: 1;
   overflow: hidden;
+  padding: 12px;
 }
 
 .db-content-area {
@@ -917,42 +972,48 @@ body.resizing * {
   flex-direction: column;
   flex: 1;
   overflow: hidden;
+  min-width: 0;
 }
 
 .db-sidebar {
-  width: 48px;
-  background: var(--c-bg-alt);
+  width: 58px;
+  background: color-mix(in srgb, var(--c-surface-1) 90%, transparent);
   display: flex;
   flex-direction: column;
-  padding: 8px 0;
+  padding: 12px 0;
   flex-shrink: 0;
-  gap: 4px;
+  gap: 8px;
+  border-right: 1px solid var(--shell-panel-border, var(--c-border-1));
+  backdrop-filter: blur(18px) saturate(145%);
 }
 
 .db-sidebar-btn {
-  background: none;
-  border: none;
+  background: transparent;
+  border: 1px solid transparent;
   cursor: pointer;
-  width: 36px;
-  height: 36px;
-  border-radius: 4px;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
   margin: 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 18px;
-  transition: background 0.15s;
+  transition: background 0.18s ease, color 0.18s ease, transform 0.18s ease, border-color 0.18s ease;
   color: var(--c-text-2);
 }
 
 .db-sidebar-btn:hover {
-  background: var(--c-border-1);
+  background: var(--overlay-hover-1);
+  border-color: var(--shell-panel-border, var(--c-border-1));
+  transform: translateY(-1px);
 }
 
 .db-sidebar-btn.active {
-  background: var(--c-primary);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--c-primary) 82%, white 18%), var(--c-primary));
   color: var(--c-primary-contrast);
   font-weight: 600;
+  box-shadow: 0 10px 20px var(--shadow-color-primary-1);
 }
 
 .db-sidebar.db-sidebar--hidden {
@@ -1061,8 +1122,9 @@ body.resizing * {
 .db-section-area {
   flex: 1;
   display: flex;
-  background: var(--c-surface-2);
+  background: transparent;
   overflow: hidden;
+  min-width: 0;
 }
 
 .db-mail-main {
@@ -1077,6 +1139,11 @@ body.resizing * {
   width: 100%;
   overflow: hidden;
   position: relative;
+  border: 1px solid var(--shell-panel-border, var(--c-border-1));
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--c-surface-1) 94%, transparent);
+  box-shadow: var(--shell-panel-shadow, var(--shadow-2));
+  backdrop-filter: blur(24px) saturate(150%);
   /* needed for overlay positioning */
   min-width: 500px;
   /* mail content needs at least ~300px, plus dock tabs */
@@ -1099,13 +1166,12 @@ body.resizing * {
   position: absolute;
   inset: 0;
   z-index: 490;
-  background: rgba(0, 0, 0, 0.18);
+  background: var(--overlay-1);
 }
 
 .db-resizer {
   width: 4px;
-
-  background: var(--overlay-hover-2);
+  background: transparent;
   cursor: col-resize;
   transition: background 0.2s;
   flex-shrink: 0;
@@ -1114,18 +1180,18 @@ body.resizing * {
 
 .db-resizer:hover,
 .db-resizer:active {
-  background: var(--c-primary);
+  background: color-mix(in srgb, var(--c-primary) 76%, transparent);
 }
 
 .db-mail-area {
   display: flex;
   flex: 1;
   overflow: hidden;
-  background: var(--c-surface-2);
+  background: transparent;
 }
 
 .db-folder-panel {
-  background: var(--c-bg-alt);
+  background: color-mix(in srgb, var(--c-surface-2) 88%, transparent);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -1137,15 +1203,15 @@ body.resizing * {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px;
+  padding: 14px 14px 12px;
   border-bottom: 1px solid var(--db-folder-header-border, var(--c-border-1));
   background: var(--db-folder-header-bg, var(--c-surface-3));
   flex-shrink: 0;
 }
 
 .db-folder-title {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 700;
   color: var(--c-text-1);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1169,7 +1235,7 @@ body.resizing * {
 
 .db-folder-scroll-area {
   flex: 1;
-  padding: 6px 0;
+  padding: 8px 8px 10px;
   min-height: 0;
   overflow-y: auto;
 }
@@ -1178,7 +1244,7 @@ body.resizing * {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 8px;
+  padding: 10px 10px;
   border-bottom: 1px solid var(--db-panel-header-border, var(--c-border-1));
   background: var(--db-panel-header-bg, var(--c-surface-3));
   flex-shrink: 0;
@@ -1189,28 +1255,29 @@ body.resizing * {
   font-weight: 700;
   color: var(--c-text-2);
   text-transform: uppercase;
-  letter-spacing: 0.4px;
+  letter-spacing: 0.08em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .db-panel-hide-btn {
-  background: none;
-  border: none;
+  background: transparent;
+  border: 1px solid transparent;
   cursor: pointer;
   width: 24px;
   height: 24px;
-  border-radius: 4px;
+  border-radius: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--c-text-2);
-  transition: background 0.15s;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .db-panel-hide-btn:hover {
-  background: var(--overlay-hover-2);
+  background: var(--overlay-hover-1);
+  border-color: var(--shell-panel-border, var(--c-border-1));
 }
 
 .db-folder-list {
@@ -1276,12 +1343,11 @@ body.resizing * {
 }
 
 .db-folder-section__header {
-  padding: 0 8px 6px;
-  font-style: italic;
+  padding: 4px 10px 8px;
   color: var(--c-text-2);
   text-transform: uppercase;
   font-size: 11px;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.08em;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1317,11 +1383,12 @@ body.resizing * {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 4px 8px;
+  padding: 8px 10px;
   text-decoration: none;
   color: var(--c-text-1);
-  font-size: 16px;
-  transition: background 0.15s;
+  font-size: 14px;
+  border-radius: 14px;
+  transition: background 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
   cursor: pointer;
   user-select: none;
 }
@@ -1377,7 +1444,8 @@ body.resizing * {
 }
 
 .db-folder-item-content:hover {
-  background: var(--c-surface-3);
+  background: var(--overlay-hover-1);
+  transform: translateX(1px);
 }
 
 .db-folder-item-content.dnd-target {
@@ -1390,9 +1458,10 @@ body.resizing * {
 }
 
 .db-folder-item.selected .db-folder-item-content {
-  background: var(--c-warm-surface-2);
+  background: color-mix(in srgb, var(--c-primary) 18%, var(--c-surface-2));
   font-weight: 700;
   color: var(--c-primary-contrast);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-primary) 42%, transparent);
 }
 
 .db-folder-item.selected .db-folder-item-content.dnd-target.dnd-over {
@@ -1481,17 +1550,18 @@ body.resizing * {
 }
 
 .db-mail-toolbar {
-  height: 38px;
+  height: 46px;
   background: var(--db-mail-toolbar-bg, var(--c-border-1));
   border-bottom: 1px solid var(--db-mail-toolbar-border, var(--c-border-1));
   display: flex;
   align-items: center;
   justify-content: flex-start;
   gap: 6px;
-  padding: 0 8px 0 0;
+  padding: 0 10px 0 6px;
   flex-shrink: 0;
   flex-wrap: nowrap;
   overflow: visible;
+  backdrop-filter: blur(12px);
 }
 
 .db-search-results-banner {
@@ -1500,8 +1570,8 @@ body.resizing * {
   justify-content: space-between;
   gap: 12px;
   padding: 8px 10px;
-  background: var(--c-warm-surface-2);
-  border-bottom: 1px solid var(--c-warm-border-1);
+  background: color-mix(in srgb, var(--c-primary) 14%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--c-primary) 26%, transparent);
   font-size: 13px;
 }
 
@@ -1511,9 +1581,9 @@ body.resizing * {
 }
 
 .db-search-results-banner__clear {
-  background: var(--overlay-surface-1);
-  border: 1px solid var(--c-border-strong);
-  border-radius: 8px;
+  background: color-mix(in srgb, var(--c-surface-2) 84%, transparent);
+  border: 1px solid var(--shell-panel-border, var(--c-border-1));
+  border-radius: 10px;
   padding: 6px 10px;
   cursor: pointer;
   font-size: 12px;
@@ -1531,34 +1601,37 @@ body.resizing * {
 }
 
 .db-mail-toolbar-btn {
-  background: none;
-  border: none;
+  background: transparent;
+  border: 1px solid transparent;
   cursor: pointer;
-  border-radius: 4px;
-  width: 28px;
-  height: 28px;
+  border-radius: 10px;
+  width: 34px;
+  height: 34px;
   display: flex;
   align-items: center;
   justify-content: center;
   font-size: 16px;
   color: var(--c-text-1);
-  transition: background 0.15s;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
   padding: 0;
   flex: 0 0 auto;
 }
 
 .db-mail-toolbar-btn:hover {
-  background: var(--c-border-1);
+  background: var(--overlay-hover-1);
+  border-color: var(--shell-panel-border, var(--c-border-1));
+  transform: translateY(-1px);
 }
 
 .db-mail-toolbar-btn.active {
-  background: var(--c-primary);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--c-primary) 86%, white 14%), var(--c-primary));
   color: var(--c-primary-contrast);
-  box-shadow: inset 0 1px 2px var(--shadow-color-1);
+  box-shadow: 0 8px 18px var(--shadow-color-primary-1);
+  border-color: color-mix(in srgb, var(--c-primary) 44%, transparent);
 }
 
 .db-mail-toolbar-btn.menu-open {
-  background: var(--c-border-1);
+  background: var(--overlay-hover-1);
   color: var(--c-text-1);
 }
 
@@ -1596,13 +1669,14 @@ body.resizing * {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  background: var(--c-surface-2);
-  border: 1px solid var(--c-border-2);
-  border-radius: 8px;
+  background: color-mix(in srgb, var(--c-surface-2) 92%, transparent);
+  border: 1px solid var(--shell-panel-border, var(--c-border-1));
+  border-radius: 16px;
   box-shadow: 0 10px 24px var(--shadow-color-9);
   z-index: 5000;
   max-height: calc(100vh - 40px);
   overflow-y: auto;
+  backdrop-filter: blur(18px) saturate(145%);
 }
 
 .db-toolbar-dropdown__item {
@@ -1618,7 +1692,7 @@ body.resizing * {
 }
 
 .db-toolbar-dropdown__item:hover {
-  background: var(--c-surface-2)4bf;
+  background: var(--overlay-hover-1);
 }
 
 .db-toolbar-menu-wrap {
@@ -1633,13 +1707,14 @@ body.resizing * {
   left: 0;
   min-width: 176px;
   padding: 8px 0;
-  background: var(--c-surface-3);
-  border: 1px solid var(--c-border-1);
-  border-radius: 8px;
+  background: color-mix(in srgb, var(--c-surface-2) 92%, transparent);
+  border: 1px solid var(--shell-panel-border, var(--c-border-1));
+  border-radius: 16px;
   box-shadow: 0 12px 30px var(--shadow-color-4);
   z-index: 5000;
   max-height: calc(100vh - 40px);
   overflow-y: auto;
+  backdrop-filter: blur(18px) saturate(145%);
 }
 
 .db-toolbar-popover--sort {
@@ -1833,7 +1908,7 @@ body.resizing * {
 }
 
 .db-center-panel {
-  background: var(--c-surface-2);
+  background: color-mix(in srgb, var(--c-surface-2) 88%, transparent);
   border-right: 1px solid var(--c-border-1);
   display: flex;
   flex-direction: column;
@@ -1844,7 +1919,7 @@ body.resizing * {
 
 .db-right-panel {
   flex: 1;
-  background: var(--c-surface-2);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--c-surface-2) 96%, transparent), color-mix(in srgb, var(--c-surface-3) 92%, transparent));
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1859,7 +1934,7 @@ body.resizing * {
 
 .db-collapsed-tab {
   width: 28px;
-  background: var(--c-border-1);
+  background: color-mix(in srgb, var(--c-surface-2) 88%, transparent);
   border: none;
   cursor: pointer;
   padding: 0;
@@ -1867,7 +1942,7 @@ body.resizing * {
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  transition: background 0.15s;
+  transition: background 0.15s ease;
 }
 
 .db-dock-tabs--right .db-collapsed-tab {
@@ -1893,63 +1968,65 @@ body.resizing * {
 }
 
 .db-mail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   flex: 1;
   min-height: 0;
   overflow-y: auto;
   scrollbar-gutter: stable;
   list-style: none;
-  padding: 0;
+  padding: 12px;
   margin: 0;
   --db-mail-item-bg: var(--c-surface-2);
-  --db-mail-item-selected-bg: color-mix(in srgb, var(--c-warm-surface-2) 55%, var(--c-surface-2));
-  --db-mail-item-unread-bg: color-mix(in srgb, var(--c-warm-surface-2) 72%, var(--c-surface-2));
-  --db-mail-item-unread-selected-bg: color-mix(in srgb, var(--c-warm-surface-2) 82%, var(--c-surface-2));
+  --db-mail-item-selected-bg: color-mix(in srgb, var(--c-primary) 16%, var(--c-surface-2));
+  --db-mail-item-unread-bg: color-mix(in srgb, var(--c-primary) 10%, var(--c-surface-2));
+  --db-mail-item-unread-selected-bg: color-mix(in srgb, var(--c-primary) 22%, var(--c-surface-2));
 }
 
 .db-mail-list[data-cols="2"] {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
-  gap: 1px;
-  background: var(--c-border-1);
+  gap: 10px;
+  background: transparent;
   align-content: start;
 }
 
 .db-mail-list[data-cols="3"] {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 1px;
-  background: var(--c-border-1);
+  gap: 10px;
+  background: transparent;
   align-content: start;
 }
 
 .db-mail-list[data-cols="4"] {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 1px;
-  background: var(--c-border-1);
+  gap: 10px;
+  background: transparent;
   align-content: start;
 }
 
 .db-mail-list[data-cols="2"] .db-mail-item,
 .db-mail-list[data-cols="3"] .db-mail-item,
 .db-mail-list[data-cols="4"] .db-mail-item {
-  border-bottom: none;
   min-width: 0;
   width: 100%;
-  height: 96px;
+  height: 108px;
   overflow: hidden;
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  padding: 8px 12px;
+  padding: 12px 14px;
 }
 
 .db-mail-list[data-cols="2"] .db-mail-avatar,
 .db-mail-list[data-cols="3"] .db-mail-avatar,
 .db-mail-list[data-cols="4"] .db-mail-avatar {
-  width: 32px;
-  height: 32px;
-  margin-right: 8px;
+  width: 36px;
+  height: 36px;
+  margin-right: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1984,12 +2061,14 @@ body.resizing * {
 .db-mail-item {
   display: flex;
   align-items: center;
-  padding: 12px;
-  border-bottom: 1px solid var(--c-border-1);
+  padding: 14px 16px;
+  border: 1px solid var(--shell-panel-border, var(--c-border-1));
   cursor: pointer;
-  transition: background 0.12s ease, box-shadow 0.12s ease;
+  transition: background 0.16s ease, box-shadow 0.16s ease, transform 0.16s ease, border-color 0.16s ease;
   background: var(--db-mail-item-bg);
   position: relative;
+  border-radius: 18px;
+  box-shadow: 0 10px 24px var(--shadow-color-1);
 }
 
 .db-mail-drag-preview {
@@ -2009,15 +2088,15 @@ body.resizing * {
 
 .db-mail-avatar-wrap {
   position: relative;
-  width: 32px;
-  height: 32px;
-  margin-right: 12px;
+  width: 36px;
+  height: 36px;
+  margin-right: 14px;
   flex: 0 0 auto;
 }
 
 .db-mail-avatar {
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -2025,7 +2104,7 @@ body.resizing * {
   flex-shrink: 0;
 
   background: transparent;
-  box-shadow: 0 2px 6px var(--shadow-color-3);
+  box-shadow: 0 8px 18px var(--shadow-color-2);
   overflow: hidden;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
@@ -2129,7 +2208,7 @@ body.resizing * {
   overflow: hidden;
   pointer-events: none;
   flex: 0 0 auto;
-  transition: opacity 0.1s ease-in-out, width 0.12s ease, margin-left 0.12s ease;
+  transition: opacity 0.12s ease-in-out, width 0.14s ease, margin-left 0.14s ease;
 }
 
 .db-mail-qa-row {
@@ -2139,15 +2218,15 @@ body.resizing * {
 
 .db-mail-item:hover .db-mail-quick-actions {
   opacity: 1;
-  width: 56px;
-  margin-left: 6px;
+  width: 62px;
+  margin-left: 8px;
   pointer-events: auto;
 }
 
 .db-mail-qa-btn {
-  background: transparent;
+  background: color-mix(in srgb, var(--c-surface-2) 74%, transparent);
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: 10px;
   cursor: pointer;
   padding: 4px;
   font-size: 14px;
@@ -2155,28 +2234,32 @@ body.resizing * {
   align-items: center;
   justify-content: center;
   color: var(--c-text-2);
-  opacity: 0.6;
+  opacity: 0.84;
   transition: all 0.2s ease;
+  backdrop-filter: blur(10px);
 }
 
 .db-mail-qa-btn:hover {
-  background: var(--c-border-1);
-  border-color: var(--c-border-1);
+  background: var(--overlay-hover-1);
+  border-color: var(--shell-panel-border, var(--c-border-1));
   opacity: 1;
 }
 
 .db-mail-item:hover {
-  background: var(--c-surface-3);
+  background: color-mix(in srgb, var(--c-surface-3) 92%, white 8%);
+  transform: translateY(-1px);
+  box-shadow: 0 16px 30px var(--shadow-color-2);
 }
 
 .db-mail-item.selected {
   background: var(--db-mail-item-selected-bg);
-  box-shadow: inset 3px 0 0 var(--c-warm-border-7), inset -3px 0 0 var(--c-warm-border-7);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-primary) 42%, transparent), 0 16px 30px var(--shadow-color-2);
+  border-color: color-mix(in srgb, var(--c-primary) 42%, transparent);
 }
 
 .db-mail-item.checked {
-  background: var(--c-warm-surface-4);
-  box-shadow: inset 3px 0 0 var(--c-warm-border-8), inset -3px 0 0 var(--c-warm-border-8);
+  background: color-mix(in srgb, var(--c-primary) 22%, var(--c-surface-2));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c-primary) 48%, transparent), 0 16px 30px var(--shadow-color-2);
 }
 
 .db-mail-item.unread {
@@ -2206,7 +2289,7 @@ body.resizing * {
 }
 
 .db-mail-subject {
-  font-size: 12px;
+  font-size: 12.5px;
   color: var(--c-text-2);
   overflow: hidden;
   white-space: nowrap;
@@ -2215,7 +2298,7 @@ body.resizing * {
 }
 
 .db-mail-time {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--c-text-3);
   flex: 0 0 auto;
   margin-left: auto;
@@ -2223,7 +2306,7 @@ body.resizing * {
 }
 
 .db-mail-sender {
-  font-size: 13px;
+  font-size: 13.5px;
   color: var(--c-text-1);
   font-weight: 500;
   flex: 1;
@@ -2246,10 +2329,10 @@ body.resizing * {
   align-items: center;
   min-width: 0;
   max-width: 120px;
-  padding: 2px 8px;
+  padding: 3px 8px;
   border-radius: 999px;
   border: 1px solid var(--c-warm-border-6);
-  background: var(--c-surface-2)4ba;
+  background: color-mix(in srgb, var(--c-primary) 10%, var(--c-surface-2));
   color: var(--c-warm-text-4);
   font-size: 10px;
   font-weight: 700;
@@ -2313,23 +2396,24 @@ body.resizing * {
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: var(--c-surface-2);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--c-surface-2) 96%, transparent), color-mix(in srgb, var(--c-surface-3) 92%, transparent));
   overflow: hidden;
 }
 
 .db-mail-content {
   flex: 1;
-  padding: 28px 32px;
+  padding: 32px clamp(24px, 3vw, 40px) 40px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  scrollbar-gutter: stable;
 }
 
 .db-mail-content-subject {
-  font-size: 22px;
-  font-weight: 600;
+  font-size: clamp(24px, 2.5vw, 32px);
+  font-weight: 700;
   color: var(--c-text-1);
-  margin-bottom: 10px;
+  margin-bottom: 12px;
   flex-shrink: 0;
   min-width: 0;
   flex: 1 1 auto;
@@ -2339,14 +2423,14 @@ body.resizing * {
 }
 
 .db-mail-content-header .db-mail-content-subject {
-  font-size: 16px;
+  font-size: 18px;
   margin-bottom: 0;
 }
 
 .db-mail-meta {
-  font-size: 13px;
+  font-size: 13.5px;
   color: var(--c-text-2);
-  margin-bottom: 4px;
+  margin-bottom: 6px;
   flex-shrink: 0;
 }
 
@@ -2358,12 +2442,14 @@ body.resizing * {
 }
 
 .db-mail-body {
-  font-size: 14px;
+  font-size: 15px;
   color: var(--c-text-1);
-  line-height: 1.7;
+  line-height: 1.78;
   white-space: pre-wrap;
   word-break: break-word;
   flex: 1;
+  max-width: 82ch;
+  width: 100%;
 }
 
 .db-mail-body-html {
@@ -2387,6 +2473,7 @@ body.resizing * {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  max-width: 82ch;
 }
 
 .db-attachments__header {
@@ -2409,10 +2496,11 @@ body.resizing * {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  background: var(--c-surface-3);
-  border: 1px solid var(--c-border-1);
-  border-radius: 12px;
-  padding: 10px 14px;
+  background: color-mix(in srgb, var(--c-surface-2) 90%, transparent);
+  border: 1px solid var(--shell-panel-border, var(--c-border-1));
+  border-radius: 16px;
+  padding: 12px 14px;
+  box-shadow: 0 10px 22px var(--shadow-color-1);
 }
 
 .db-attachments__info {
@@ -2439,17 +2527,18 @@ body.resizing * {
 .db-attachments__link {
   flex-shrink: 0;
   background: var(--c-primary);
-  color: var(--c-text-1);
+  color: var(--c-primary-contrast);
   border-radius: 999px;
   padding: 6px 14px;
   font-size: 12px;
   font-weight: 600;
   text-decoration: none;
-  transition: background 0.2s;
+  transition: background 0.2s ease, transform 0.2s ease;
 }
 
 .db-attachments__link:hover {
   background: var(--c-primary-hover);
+  transform: translateY(-1px);
 }
 
 .db-empty-state {
@@ -2458,8 +2547,10 @@ body.resizing * {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 12px;
+  gap: 14px;
   color: var(--c-text-3);
+  text-align: center;
+  padding: 32px;
 }
 
 .db-empty-icon {
@@ -2467,7 +2558,9 @@ body.resizing * {
 }
 
 .db-empty-text {
-  font-size: 16px;
+  font-size: 15px;
+  font-weight: 600;
+  max-width: 28rem;
 }
 
 .db-loading {
@@ -2477,7 +2570,7 @@ body.resizing * {
   padding: 24px;
   color: var(--c-text-3);
   font-size: 13px;
-  gap: 8px;
+  gap: 10px;
 }
 
 .db-spinner {
@@ -2503,13 +2596,13 @@ body.resizing * {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
   gap: 10px;
 }
 
 .db-mail-content-actions {
   display: flex;
-  gap: 5px;
+  gap: 8px;
   flex-shrink: 0;
 }
 
@@ -2976,11 +3069,11 @@ body.resizing * {
 }
 
 .db-layout-region--top .db-sidebar {
-  border-bottom: 1px solid var(--c-border);
+  border-bottom: 1px solid var(--c-border-1);
 }
 
 .db-layout-region--bottom .db-sidebar {
-  border-top: 1px solid var(--c-border);
+  border-top: 1px solid var(--c-border-1);
 }
 
 .db-layout-region--top .db-sidebar-spacer,
@@ -3123,12 +3216,12 @@ body.resizing * {
 }
 
 .db-navbar--left {
-  border-right: 1px solid var(--c-border);
+  border-right: 1px solid var(--c-border-1);
   border-bottom: none;
 }
 
 .db-navbar--right {
-  border-left: 1px solid var(--c-border);
+  border-left: 1px solid var(--c-border-1);
   border-bottom: none;
 }
 
