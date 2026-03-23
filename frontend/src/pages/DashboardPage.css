@@ -1900,6 +1900,10 @@ body.resizing * {
   list-style: none;
   padding: 0;
   margin: 0;
+  --db-mail-item-bg: var(--c-surface-2);
+  --db-mail-item-selected-bg: color-mix(in srgb, var(--c-warm-surface-2) 55%, var(--c-surface-2));
+  --db-mail-item-unread-bg: color-mix(in srgb, var(--c-warm-surface-2) 72%, var(--c-surface-2));
+  --db-mail-item-unread-selected-bg: color-mix(in srgb, var(--c-warm-surface-2) 82%, var(--c-surface-2));
 }
 
 .db-mail-list[data-cols="2"] {
@@ -1984,7 +1988,7 @@ body.resizing * {
   border-bottom: 1px solid var(--c-border-1);
   cursor: pointer;
   transition: background 0.12s ease, box-shadow 0.12s ease;
-  background: var(--c-surface-2);
+  background: var(--db-mail-item-bg);
   position: relative;
 }
 
@@ -2166,7 +2170,7 @@ body.resizing * {
 }
 
 .db-mail-item.selected {
-  background: var(--c-surface-2)3b2;
+  background: var(--db-mail-item-selected-bg);
   box-shadow: inset 3px 0 0 var(--c-warm-border-7), inset -3px 0 0 var(--c-warm-border-7);
 }
 
@@ -2177,11 +2181,11 @@ body.resizing * {
 
 .db-mail-item.unread {
   font-weight: 600;
-  background: var(--c-surface-2)9d4;
+  background: var(--db-mail-item-unread-bg);
 }
 
 .db-mail-item.unread.selected {
-  background: var(--c-surface-2)3b2;
+  background: var(--db-mail-item-unread-selected-bg);
 }
 
 .db-mail-item.unread.checked {

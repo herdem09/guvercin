@@ -5860,6 +5860,7 @@ function MailSection({
                         tabsBar={tabsBarNode}
                         toolsBar={toolsBarNode}
                         centerPlane={finalCenterPlane}
+                        hideCenterPlane={isMailFullscreen && !activeTabId}
                     />
                 </LayoutFrame>
             </LayoutFrame>
@@ -6036,7 +6037,7 @@ function TodoSection() {
     )
 }
 
-export function MailDynamicLayout({ layoutMode, layoutData, mailboxesBar, maillistBar, tabsBar, toolsBar, centerPlane }) {
+export function MailDynamicLayout({ layoutMode, layoutData, mailboxesBar, maillistBar, tabsBar, toolsBar, centerPlane, hideCenterPlane = false }) {
     const bars = {
         mailboxes: mailboxesBar,
         maillist: maillistBar,
@@ -6075,7 +6076,14 @@ export function MailDynamicLayout({ layoutMode, layoutData, mailboxesBar, mailli
             {renderStack(topStack, false, 'top')}
             <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
                 {renderStack(leftStack, false, 'left')}
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden', position: 'relative' }}>
+                <div
+                    style={
+                        hideCenterPlane
+                            ? { display: 'none' }
+                            : { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden', position: 'relative' }
+                    }
+                    aria-hidden={hideCenterPlane ? 'true' : undefined}
+                >
                     {centerPlane}
                 </div>
                 {renderStack(rightStack, true, 'right')}
