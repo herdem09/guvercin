@@ -1,5 +1,5 @@
 use axum::{
-    body::Body,
+    body::{Body, Bytes},
     extract::{Json, Path, Query, State},
     http::{
         header::{CONTENT_DISPOSITION, CONTENT_LENGTH, CONTENT_TYPE},
@@ -7,24 +7,287 @@ use axum::{
     },
     response::{IntoResponse, Response},
 };
-use chrono::DateTime;
+use chrono::{DateTime, Utc};
+use base64::prelude::BASE64_STANDARD;
+use base64::Engine;
 use mailparse::MailHeaderMap;
 use serde::Deserialize;
 use serde_json::json;
 use sqlx::Row;
 use std::sync::Arc;
+use axum::http::HeaderValue;
 
 use crate::{
     imap_session::{self, ImapState},
     mail_models::{
         AdvancedSearchRequest, AdvancedSearchResponse, ConnectImapBody, MailListResponse,
-        MailboxListResponse, merge_mailbox_label_into_preview,
+        MailboxListResponse, MailContent, AttachmentInfo, merge_mailbox_label_into_preview,
     },
 };
 
 pub struct MailAppState {
     pub _db: Arc<crate::db::AppState>,
     pub imap: Arc<ImapState>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ImportPreviewQuery {
+    pub kind: String,
+}
+
+pub async fn post_import_preview(
+    Path(_account_id): Path<i64>,
+    Query(q): Query<ImportPreviewQuery>,
+    bytes: Bytes,
+) -> impl IntoResponse {
+    let kind = q.kind.trim().to_ascii_lowercase();
+    if kind != "eml" && kind != "msg" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "kind must be eml or msg" })),
+        )
+            .into_response();
+    }
+
+    let import_id = format!("import-{}", Utc::now().timestamp_millis());
+    let raw = bytes.to_vec();
+
+    let mut content: MailContent = if kind == "eml" {
+        imap_session::parse_mail_content_with_attachment_data(import_id.clone(), &raw)
+    } else {
+        fn looks_like_cfb(raw: &[u8]) -> bool {
+            const MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+            raw.len() >= MAGIC.len() && raw[..MAGIC.len()] == MAGIC
+        }
+
+        // Guvercin currently exports "MSG" as RFC822 raw bytes (IMAP raw), not a real CFB .msg file.
+        // Only try the .msg parser if the file looks like a real CFB container; otherwise treat as RFC822.
+        if !looks_like_cfb(&raw) {
+            imap_session::parse_mail_content_with_attachment_data(import_id.clone(), &raw)
+        } else {
+            let parsed = std::panic::catch_unwind(|| tiny_msg::Email::from_bytes(&raw));
+            let email = match parsed {
+                Ok(email) => email,
+                Err(_) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({ "error": "Invalid .msg file" })),
+                    )
+                        .into_response();
+                }
+            };
+
+            let (from_name, from_address) = email
+                .from
+                .clone()
+                .unwrap_or_else(|| (String::new(), String::new()));
+            let subject = email.subject.clone().unwrap_or_default();
+            let date = email
+                .sent_date
+                .map(|dt| dt.to_rfc3339())
+                .unwrap_or_default();
+
+            let body = email.body.clone().unwrap_or_default();
+            let body_trim = body.trim_start().to_ascii_lowercase();
+            let looks_like_html = body_trim.starts_with("<!doctype")
+                || body_trim.starts_with("<html")
+                || body_trim.starts_with("<body")
+                || body.contains("</div>")
+                || body.contains("</p>");
+
+            let (html_body, plain_body) = if looks_like_html {
+                (body, String::new())
+            } else {
+                (String::new(), body)
+            };
+
+            let cc_value = email
+                .cc
+                .iter()
+                .map(|(name, addr)| {
+                    let name = name.trim();
+                    let addr = addr.trim();
+                    if !name.is_empty() && !addr.is_empty() {
+                        format!("{name} <{addr}>")
+                    } else if !addr.is_empty() {
+                        addr.to_string()
+                    } else {
+                        name.to_string()
+                    }
+                })
+                .filter(|v| !v.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            let bcc_value = email
+                .bcc
+                .iter()
+                .map(|(name, addr)| {
+                    let name = name.trim();
+                    let addr = addr.trim();
+                    if !name.is_empty() && !addr.is_empty() {
+                        format!("{name} <{addr}>")
+                    } else if !addr.is_empty() {
+                        addr.to_string()
+                    } else {
+                        name.to_string()
+                    }
+                })
+                .filter(|v| !v.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join(", ");
+
+            let attachments = email
+                .attachments
+                .iter()
+                .enumerate()
+                .map(|(idx, attachment)| AttachmentInfo {
+                    id: idx.to_string(),
+                    filename: attachment.name.clone(),
+                    content_type: "application/octet-stream".to_string(),
+                    size: attachment.data.len(),
+                    is_inline: false,
+                    data_base64: Some(BASE64_STANDARD.encode(&attachment.data)),
+                    content_id: None,
+                })
+                .collect::<Vec<_>>();
+
+            MailContent {
+                id: import_id.clone(),
+                subject,
+                from_name,
+                from_address,
+                cc: cc_value,
+                bcc: bcc_value,
+                date,
+                html_body,
+                plain_body,
+                attachments,
+            }
+        }
+    };
+
+    if content.subject.trim().is_empty() {
+        content.subject = "(No Subject)".to_string();
+    }
+    if content.date.trim().is_empty() {
+        content.date = Utc::now().to_rfc3339();
+    }
+    if content.from_address.trim().is_empty() {
+        content.from_address = "unknown".to_string();
+    }
+
+    let mail = json!({
+        "id": import_id,
+        "name": content.from_name.clone(),
+        "address": content.from_address.clone(),
+        "subject": content.subject.clone(),
+        "date": content.date.clone(),
+        "seen": true,
+        "flagged": false,
+        "recipient_to": "",
+        "size": raw.len(),
+        "importance": 0,
+        "content_type": "text/plain",
+        "category": "",
+        "labels": [],
+        "isImported": true,
+    });
+
+    (StatusCode::OK, Json(json!({ "mail": mail, "content": content }))).into_response()
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProxyImageQuery {
+    pub url: String,
+}
+
+pub async fn get_proxy_image(
+    Path(_account_id): Path<i64>,
+    Query(q): Query<ProxyImageQuery>,
+) -> impl IntoResponse {
+    let url = q.url.trim();
+    if url.is_empty() || url.len() > 4096 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "url is required" })),
+        )
+            .into_response();
+    }
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": "only http/https urls are allowed" })),
+        )
+            .into_response();
+    }
+
+    let client = match reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::limited(5))
+        .timeout(std::time::Duration::from_secs(12))
+        .build()
+    {
+        Ok(client) => client,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
+    };
+
+    let response = match client
+        .get(url)
+        .header(reqwest::header::USER_AGENT, "Guvercin/1.0")
+        .send()
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
+    };
+
+    if !response.status().is_success() {
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "error": format!("upstream status {}", response.status()) })),
+        )
+            .into_response();
+    }
+
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("application/octet-stream")
+        .to_string();
+
+    let bytes = match response.bytes().await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            return (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": e.to_string() })),
+            )
+                .into_response();
+        }
+    };
+
+    let builder = Response::builder()
+        .status(StatusCode::OK)
+        .header(CONTENT_TYPE, HeaderValue::from_str(&content_type).unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")))
+        .header("Cache-Control", "public, max-age=86400");
+
+    builder
+        .body(Body::from(bytes))
+        .unwrap_or_else(|_| Response::builder().status(StatusCode::INTERNAL_SERVER_ERROR).body(Body::empty()).unwrap())
+        .into_response()
 }
 
 pub async fn connect_imap(

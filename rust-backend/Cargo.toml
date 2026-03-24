@@ -8,6 +8,7 @@ axum = "0.7"
 tokio = { version = "1.37", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
 tower = "0.4"
 tower-http = { version = "0.5", features = ["trace", "cors"] }
 tracing = "0.1"
@@ -19,6 +20,7 @@ native-tls = "0.2"
 anyhow = "1.0"
 imap = "2.4"
 mailparse = "0.15"
+tiny_msg = "0.2.0"
 dirs = "6.0"
 chrono = "0.4"
 base64 = "0.22"
@@ -46,7 +48,6 @@ windows = { version = "0.52", features = [
 secret-service = { version = "3", features = ["rt-tokio-crypto-rust"] }
 zbus = { version = "3", default-features = false, features = ["tokio"] }
 # Avatar resolution deps
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
 md5 = "0.7"
 sha2 = "0.10"
 scraper = "0.20"

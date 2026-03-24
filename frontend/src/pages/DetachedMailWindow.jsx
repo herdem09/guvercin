@@ -3,6 +3,19 @@ import { apiUrl } from '../utils/api'
 import { normalizeMailboxResponse } from '../utils/mailboxes'
 import './DashboardPage.css'
 
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes === 0) return '0 B'
+  if (bytes < 1024) return `${bytes} B`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let index = 0
+  let value = bytes
+  while (value >= 1024 && index < units.length - 1) {
+    value /= 1024
+    index += 1
+  }
+  return `${value.toFixed(1)} ${units[index]}`
+}
+
 function safeParse(json) {
   try {
     return JSON.parse(json)
@@ -61,6 +74,7 @@ export default function DetachedMailWindow({ initialLabel = '' } = {}) {
   const mail = data?.mail
   const mailbox = data?.mailbox
   const preferOffline = !!data?.preferOffline
+  const isImported = mail?.isImported === true
 
   const subject = useMemo(() => mailContent?.subject || mail?.subject || '(No Subject)', [mailContent, mail])
   const fromLine = useMemo(() => {
@@ -323,6 +337,42 @@ export default function DetachedMailWindow({ initialLabel = '' } = {}) {
     window.location.href = `mailto:${params.to || ''}?${search.toString()}`
   }
 
+  const triggerBrowserDownload = useCallback((fileName, mimeType, bytes) => {
+    const blob = new Blob([bytes], { type: mimeType || 'application/octet-stream' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = fileName || 'download'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(url), 250)
+  }, [])
+
+  const downloadAttachmentFromBase64 = useCallback((attachment) => {
+    const base64 = attachment?.data_base64
+    if (!base64) return
+    const fileName = attachment?.filename || 'attachment'
+    const mimeType = attachment?.content_type || 'application/octet-stream'
+    try {
+      const binary = atob(base64)
+      const bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
+      triggerBrowserDownload(fileName, mimeType, bytes)
+    } catch (error) {
+      console.error('Failed to download base64 attachment:', error)
+    }
+  }, [triggerBrowserDownload])
+
+  const attachmentHref = useCallback((uid, attachmentId) => {
+    if (!accountId) return '#'
+    const safeMailbox = mailbox || 'INBOX'
+    const path = preferOffline
+      ? `/api/offline/${accountId}/local-content/${encodeURIComponent(uid)}/attachments/${attachmentId}`
+      : `/api/mail/${accountId}/content/${encodeURIComponent(uid)}/attachments/${attachmentId}`
+    return apiUrl(`${path}?mailbox=${encodeURIComponent(safeMailbox)}`)
+  }, [accountId, mailbox, preferOffline])
+
   const buildQuotedBody = () => {
     const body = mailContent?.plain_body || '(No content)'
     return [
@@ -336,16 +386,19 @@ export default function DetachedMailWindow({ initialLabel = '' } = {}) {
   }
 
   const handleDelete = async () => {
+    if (isImported) return
     await queueAction('delete')
     closeWindow()
   }
 
   const handleMove = async (destination) => {
+    if (isImported) return
     await queueAction('move', { destination })
     closeWindow()
   }
 
   const handleReply = () => {
+    if (isImported) return
     openMailto({
       to: mail?.address || '',
       subject: `Re: ${subject}`,
@@ -354,6 +407,7 @@ export default function DetachedMailWindow({ initialLabel = '' } = {}) {
   }
 
   const handleForward = () => {
+    if (isImported) return
     openMailto({
       subject: `Fwd: ${subject}`,
       body: buildQuotedBody(),
@@ -361,6 +415,7 @@ export default function DetachedMailWindow({ initialLabel = '' } = {}) {
   }
 
   const handleReadToggle = async () => {
+    if (isImported) return
     const nextSeen = mail?.seen !== true
     await queueAction(nextSeen ? 'mark_read' : 'mark_unread')
     patchMail({ seen: nextSeen })
@@ -402,14 +457,15 @@ export default function DetachedMailWindow({ initialLabel = '' } = {}) {
           <div className="db-submenu">
             <div className="db-submenu-scroll" ref={submenuScrollRef}>
             <ul>
-              <li><button type="button" onClick={handleDelete}>🗑️ Delete</button></li>
-              <li><button type="button" onClick={() => handleMove('Trash')}>🗃️ Move to Trash</button></li>
-              <li><button type="button" onClick={() => handleMove('Archive')}>📦 Archive</button></li>
-              <li><button type="button" onClick={handleReply}>↩️ Reply</button></li>
-              <li><button type="button" onClick={handleForward}>➡️ Forward</button></li>
+              <li><button type="button" disabled={isImported} onClick={handleDelete}>🗑️ Delete</button></li>
+              <li><button type="button" disabled={isImported} onClick={() => handleMove('Trash')}>🗃️ Move to Trash</button></li>
+              <li><button type="button" disabled={isImported} onClick={() => handleMove('Archive')}>📦 Archive</button></li>
+              <li><button type="button" disabled={isImported} onClick={handleReply}>↩️ Reply</button></li>
+              <li><button type="button" disabled={isImported} onClick={handleForward}>➡️ Forward</button></li>
               <li className="db-submenu-menu-wrap" ref={moveMenuRef}>
                 <button
                   type="button"
+                  disabled={isImported}
                   className={isMoveMenuOpen ? 'submenu-open' : ''}
                   onClick={() => setIsMoveMenuOpen((prev) => !prev)}
                 >
@@ -433,7 +489,7 @@ export default function DetachedMailWindow({ initialLabel = '' } = {}) {
                   </div>
                 )}
               </li>
-              <li><button type="button" onClick={handleReadToggle}>👁️ {readToggleLabel}</button></li>
+              <li><button type="button" disabled={isImported} onClick={handleReadToggle}>👁️ {readToggleLabel}</button></li>
             </ul>
             </div>
           </div>
@@ -465,6 +521,38 @@ export default function DetachedMailWindow({ initialLabel = '' } = {}) {
                 </div>
               ) : (
                 <div className="db-mail-body">{mailContent?.plain_body || '(No content)'}</div>
+              )}
+              {mailContent?.attachments?.length > 0 && (
+                <div className="db-attachments">
+                  <div className="db-attachments__header">Attachments ({mailContent.attachments.length})</div>
+                  <ul className="db-attachments__list">
+                    {mailContent.attachments.map((at) => (
+                      <li key={at.id} className="db-attachments__item">
+                        <div className="db-attachments__info">
+                          <span className="db-attachments__name">{at.filename}</span>
+                          <span className="db-attachments__meta">{at.content_type} · {formatBytes(at.size)}</span>
+                        </div>
+                        {isImported || at.data_base64 ? (
+                          <button
+                            type="button"
+                            className="db-attachments__link"
+                            onClick={() => downloadAttachmentFromBase64(at)}
+                          >
+                            Download
+                          </button>
+                        ) : (
+                          <a
+                            className="db-attachments__link"
+                            href={attachmentHref(mailContent.id, at.id)}
+                            download={at.filename}
+                          >
+                            Download
+                          </a>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
               )}
             </div>
           )}

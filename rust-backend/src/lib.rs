@@ -109,6 +109,15 @@ pub async fn run(db_dir: Option<PathBuf>) -> Result<(), crate::error::AppError> 
         )
         .route("/api/mail/:account_id/raw/:uid", get(mail_routes::get_mail_raw))
         .route(
+            "/api/mail/:account_id/import-preview",
+            post(mail_routes::post_import_preview)
+                .layer(DefaultBodyLimit::max(32 * 1024 * 1024)),
+        )
+        .route(
+            "/api/mail/:account_id/proxy-image",
+            get(mail_routes::get_proxy_image),
+        )
+        .route(
             "/api/mail/:account_id/reply-seed/:uid",
             get(mail_routes::get_reply_seed),
         )

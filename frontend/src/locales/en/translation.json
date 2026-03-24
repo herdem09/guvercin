@@ -96,9 +96,16 @@
   "Layout": "Layout",
   "Missing account setup data. Please go back to Login and try again.": "Missing account setup data. Please go back to Login and try again.",
   "View": "View",
+  "File": "File",
   "Mail": "Mail",
   "Help": "Help",
   "Contact Us": "Contact Us",
   "Feedback": "Feedback",
-  "Report Bug": "Report Bug"
+  "Report Bug": "Report Bug",
+  "Import": "Import",
+  "Download as": "Download as",
+  "Move to tab": "Move to tab",
+  "Move to window": "Move to window",
+  "Edit": "Edit",
+  "Close": "Close"
 }

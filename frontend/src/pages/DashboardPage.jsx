@@ -949,6 +949,145 @@ function printMailHtml(html) {
     })
 }
 
+async function buildVisualPdfBytesFromHtml(html, { accountId } = {}) {
+    const pageWidthPt = 595.28
+    const pageHeightPt = 841.89
+    const marginPt = 20
+    const printableWidthPt = pageWidthPt - marginPt * 2
+    const printableHeightPt = pageHeightPt - marginPt * 2
+
+    const frame = document.createElement('iframe')
+    frame.style.position = 'fixed'
+    frame.style.left = '-10000px'
+    frame.style.top = '0'
+    frame.style.width = '1024px'
+    frame.style.height = '1000px'
+    frame.style.border = '0'
+    frame.style.background = 'white'
+    frame.setAttribute('aria-hidden', 'true')
+
+    const cleanup = () => {
+        window.setTimeout(() => frame.remove(), 200)
+    }
+
+    const awaitLoad = () => new Promise((resolve, reject) => {
+        const timer = window.setTimeout(() => reject(new Error('HTML render timed out.')), 20000)
+        frame.onload = () => {
+            window.clearTimeout(timer)
+            resolve()
+        }
+    })
+
+    document.body.appendChild(frame)
+    frame.srcdoc = html
+    await awaitLoad()
+
+    const doc = frame.contentDocument
+    if (!doc) {
+        cleanup()
+        throw new Error('HTML render failed.')
+    }
+
+    if (accountId) {
+        const imgs = Array.from(doc.querySelectorAll('img'))
+        imgs.forEach((img) => {
+            const src = `${img.getAttribute('src') || ''}`.trim()
+            if (/^https?:\/\//i.test(src)) {
+                img.setAttribute('crossorigin', 'anonymous')
+                img.src = apiUrl(`/api/mail/${accountId}/proxy-image?url=${encodeURIComponent(src)}`)
+            }
+        })
+    }
+
+    const images = Array.from(doc.images || [])
+    const awaitImages = async () => {
+        const start = Date.now()
+        await Promise.all(images.map((img) => new Promise((resolve) => {
+            if (!img) return resolve()
+            if (img.complete && img.naturalWidth > 0) return resolve()
+            const done = () => {
+                img.removeEventListener('load', done)
+                img.removeEventListener('error', done)
+                resolve()
+            }
+            img.addEventListener('load', done)
+            img.addEventListener('error', done)
+        })))
+        // extra small wait for layout
+        const elapsed = Date.now() - start
+        if (elapsed < 150) {
+            await new Promise((r) => window.setTimeout(r, 150 - elapsed))
+        }
+    }
+
+    await awaitImages()
+
+    try {
+        const [{ default: html2canvas }, { PDFDocument }] = await Promise.all([
+            import('html2canvas'),
+            import('pdf-lib'),
+        ])
+
+        const body = doc.body
+        const rect = body.getBoundingClientRect()
+        const width = Math.max(1, Math.ceil(rect.width || doc.documentElement.scrollWidth || 1024))
+        const height = Math.max(1, Math.ceil(doc.documentElement.scrollHeight || body.scrollHeight || 1000))
+        frame.style.width = `${width}px`
+        frame.style.height = `${Math.min(height, 1200)}px`
+
+        const canvas = await html2canvas(body, {
+            backgroundColor: '#ffffff',
+            scale: 2,
+            useCORS: true,
+            allowTaint: false,
+            windowWidth: width,
+            windowHeight: height,
+            scrollX: 0,
+            scrollY: 0,
+        })
+
+        const ptPerPx = printableWidthPt / canvas.width
+        const sliceHeightPx = Math.max(1, Math.floor(printableHeightPt / ptPerPx))
+
+        const pdf = await PDFDocument.create()
+
+        const toJpegBytes = (canvasEl) => {
+            const dataUrl = canvasEl.toDataURL('image/jpeg', 0.92)
+            const base64 = dataUrl.split(',')[1] || ''
+            const binary = atob(base64)
+            const bytes = new Uint8Array(binary.length)
+            for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
+            return bytes
+        }
+
+        for (let y = 0; y < canvas.height; y += sliceHeightPx) {
+            const slice = document.createElement('canvas')
+            slice.width = canvas.width
+            slice.height = Math.min(sliceHeightPx, canvas.height - y)
+            const ctx = slice.getContext('2d')
+            ctx.drawImage(canvas, 0, y, canvas.width, slice.height, 0, 0, canvas.width, slice.height)
+
+            const jpegBytes = toJpegBytes(slice)
+            const jpg = await pdf.embedJpg(jpegBytes)
+            const page = pdf.addPage([pageWidthPt, pageHeightPt])
+            const drawHeightPt = slice.height * ptPerPx
+            page.drawImage(jpg, {
+                x: marginPt,
+                y: pageHeightPt - marginPt - drawHeightPt,
+                width: printableWidthPt,
+                height: drawHeightPt,
+            })
+        }
+
+        const out = await pdf.save()
+        cleanup()
+        return out
+    } catch (error) {
+        cleanup()
+        throw error
+    }
+}
+
 const DashboardPage = () => {
     const { t } = useTranslation()
     const navigate = useNavigate()
@@ -2576,15 +2715,20 @@ function MailSection({
     const [isSortMenuOpen, setIsSortMenuOpen] = useState(false)
     const [isMoveMenuOpen, setIsMoveMenuOpen] = useState(false)
     const [isLabelMenuOpen, setIsLabelMenuOpen] = useState(false)
+    const [isDownloadAsMenuOpen, setIsDownloadAsMenuOpen] = useState(false)
     const [activeFilter, setActiveFilter] = useState('all')
     const [sortBy, setSortBy] = useState('date')
     const [sortDirection, setSortDirection] = useState('desc')
     const [isPerPageOpen, setIsPerPageOpen] = useState(false)
     const [attachmentsExpanded, setAttachmentsExpanded] = useState(true)
     const [fileActionLoading, setFileActionLoading] = useState('')
+    const [importPreview, setImportPreview] = useState(null) // { mail, content, kind, fileName }
+    const [importLoading, setImportLoading] = useState(false)
+    const [importError, setImportError] = useState('')
     const [layoutCols, setLayoutCols] = useState(1)
     const [movePopoverStyle, setMovePopoverStyle] = useState(null)
     const [labelPopoverStyle, setLabelPopoverStyle] = useState(null)
+    const [downloadAsPopoverStyle, setDownloadAsPopoverStyle] = useState(null)
     const [mailItemMenu, setMailItemMenu] = useState(null)
     const [mailItemMoveMenuStyle, setMailItemMoveMenuStyle] = useState(null)
     const [mailItemLabelMenuStyle, setMailItemLabelMenuStyle] = useState(null)
@@ -2999,6 +3143,38 @@ function MailSection({
         }
     }, [createEmptyComposeDraft, inlineComposeSession, isMailFullscreen, openComposeInTab, setActiveTabId, setInlineComposeSession, setMailContent, setSelectedMail, toggleMailFullscreen])
 
+    const openImportedMailInCompose = useCallback((content) => {
+        if (!content) return
+        const attachments = Array.isArray(content?.attachments)
+            ? content.attachments.map((attachment) => ({
+                id: attachment.id,
+                name: attachment.filename,
+                mimeType: attachment.content_type,
+                size: attachment.size,
+                base64: attachment.data_base64 || '',
+                disposition: attachment.is_inline ? 'inline' : 'attachment',
+                contentId: attachment.content_id || undefined,
+                source: attachment.is_inline ? 'html-inline' : 'import',
+            }))
+            : []
+        openInlineCompose({
+            source: 'import',
+            draft: {
+                from: accountEmail || '',
+                toRecipients: [],
+                ccRecipients: [],
+                bccRecipients: [],
+                subject: content?.subject || '',
+                plainBody: content?.plain_body || '',
+                htmlBody: content?.html_body || '',
+                format: (content?.html_body || '').trim() ? 'html' : 'plain',
+                attachments,
+                showCc: false,
+                showBcc: false,
+            },
+        }, { preserveExisting: false })
+    }, [accountEmail, openInlineCompose])
+
     const openMailOrDraft = useCallback(async (mail) => {
         if (!mail) return
         const mailbox = mail?.mailbox || selectedFolder || 'INBOX'
@@ -3271,14 +3447,19 @@ function MailSection({
 
     const handleDownloadPdf = useCallback(() => {
         runFileAction('pdf', async (mail, content) => {
-            const pdfBytes = buildSimplePdfBytes(buildMailPlainText(mail, content, formatMailDateLong))
+            const pdfBytes = (content?.html_body || '').trim()
+                ? await buildVisualPdfBytesFromHtml(
+                    buildMailHtmlDocument(mail, content, formatMailDateLong),
+                    { accountId },
+                )
+                : buildSimplePdfBytes(buildMailPlainText(mail, content, formatMailDateLong))
             const fileName = `${buildExportBaseName(mail, content)}.pdf`
             await saveBlobWithPicker(new Blob([pdfBytes], { type: 'application/pdf' }), {
                 suggestedName: fileName,
                 types: [{ description: 'PDF file', accept: { 'application/pdf': ['.pdf'] } }],
             })
         })
-    }, [formatMailDateLong, runFileAction])
+    }, [accountId, formatMailDateLong, runFileAction])
 
     const handlePrintMail = useCallback(() => {
         runFileAction('print', async (mail, content) => {
@@ -3286,6 +3467,94 @@ function MailSection({
             await printMailHtml(html)
         })
     }, [formatMailDateLong, runFileAction])
+
+    const triggerBrowserDownload = useCallback((fileName, mimeType, bytes) => {
+        const blob = new Blob([bytes], { type: mimeType || 'application/octet-stream' })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = fileName || 'download'
+        document.body.appendChild(link)
+        link.click()
+        link.remove()
+        window.setTimeout(() => URL.revokeObjectURL(url), 250)
+    }, [])
+
+    const downloadAttachmentFromBase64 = useCallback((attachment) => {
+        const base64 = attachment?.data_base64
+        if (!base64) return
+        const fileName = attachment?.filename || 'attachment'
+        const mimeType = attachment?.content_type || 'application/octet-stream'
+        try {
+            const binary = atob(base64)
+            const bytes = new Uint8Array(binary.length)
+            for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i)
+            triggerBrowserDownload(fileName, mimeType, bytes)
+        } catch (error) {
+            console.error('Failed to download base64 attachment:', error)
+            window.alert('Failed to download attachment.')
+        }
+    }, [triggerBrowserDownload])
+
+    const handleOpenImportPicker = useCallback(() => {
+        setImportError('')
+        if (!importFileInputRef.current) return
+        importFileInputRef.current.click()
+    }, [])
+
+    const handleImportFilePicked = useCallback(async (event) => {
+        if (!accountId) return
+        const input = event?.target
+        const file = input?.files?.[0]
+        if (input) input.value = ''
+        if (!file) return
+
+        const nameLower = `${file.name || ''}`.toLowerCase()
+        const kind = nameLower.endsWith('.eml') ? 'eml' : (nameLower.endsWith('.msg') ? 'msg' : '')
+        if (!kind) {
+            window.alert('Please select a .eml or .msg file.')
+            return
+        }
+
+        setImportLoading(true)
+        setImportError('')
+        try {
+            const bytes = await file.arrayBuffer()
+            const endpoint = `/api/mail/${accountId}/import-preview?kind=${encodeURIComponent(kind)}`
+            const res = await fetch(apiUrl(endpoint), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/octet-stream' },
+                body: bytes,
+            })
+            if (!res.ok) {
+                const text = await res.text().catch(() => '')
+                throw new Error(text || 'Import failed.')
+            }
+            const data = await res.json()
+            setImportPreview({
+                mail: data?.mail || null,
+                content: data?.content || null,
+                kind,
+                fileName: file.name || '',
+            })
+            setSelectedMail(null)
+            setMailContent(null)
+            setInlineComposeSession(null)
+        } catch (error) {
+            console.error('Import preview failed:', error)
+            const msg = error?.message || 'Import failed.'
+            setImportError(msg)
+            window.alert(msg)
+        } finally {
+            setImportLoading(false)
+        }
+    }, [accountId, setInlineComposeSession, setMailContent, setSelectedMail])
+
+    useEffect(() => {
+        if (selectedMail || inlineComposeSession) {
+            setImportPreview(null)
+        }
+    }, [inlineComposeSession, selectedMail])
 
     const buildMultiMailSummary = (mailList) => (
         mailList.map((mail) => {
@@ -3482,6 +3751,7 @@ function MailSection({
     const closeActionMenus = () => {
         setIsMoveMenuOpen(false)
         setIsLabelMenuOpen(false)
+        setIsDownloadAsMenuOpen(false)
         closeMailItemMenu()
     }
 
@@ -3505,9 +3775,11 @@ function MailSection({
     const submenuScrollRef = useRef(null)
     const moveMenuRef = useRef(null)
     const labelMenuRef = useRef(null)
+    const downloadAsMenuRef = useRef(null)
     const submenuMoreRef = useRef(null)
     const [isSubmenuMoreOpen, setIsSubmenuMoreOpen] = useState(false)
     const [submenuVisibleCount, setSubmenuVisibleCount] = useState(99)
+    const importFileInputRef = useRef(null)
     const mailItemMenuRef = useRef(null)
     const isResizingFolder = useRef(false)
     const isResizingList = useRef(false)
@@ -3515,6 +3787,7 @@ function MailSection({
     const isDraggingRef = useRef(false)
     const dragPreviewRef = useRef(null)
     const nextComposeWindowId = useRef(0)
+    const nextImportedMailWindowId = useRef(0)
 
     useEffect(() => () => {
         if (dragPreviewRef.current) {
@@ -3590,6 +3863,30 @@ function MailSection({
             dragPreviewRef.current = null
         }
     }, [])
+
+    const detachImportedMailToWindow = useCallback(async (mail, content) => {
+        if (!accountId || !mail || !content) return
+        try {
+            const { invoke } = await import('@tauri-apps/api/core')
+            nextImportedMailWindowId.current += 1
+            const mailWindowLabel = `import-mail-${nextImportedMailWindowId.current}`
+            const mailbox = mail?.mailbox || selectedFolder || 'Imported'
+            const mailData = {
+                mail,
+                mailContent: content,
+                accountId,
+                mailbox,
+                preferOffline: !canUseRemoteMail,
+            }
+            await invoke('open_mail_window', {
+                label: mailWindowLabel,
+                mailDataJson: JSON.stringify(mailData),
+            })
+            setImportPreview(null)
+        } catch (error) {
+            console.error('Failed to open imported mail window:', error)
+        }
+    }, [accountId, canUseRemoteMail, selectedFolder])
 
     const syncPopoverPosition = useCallback((
         menuRef,
@@ -3767,6 +4064,20 @@ function MailSection({
         pendingTabLoadsRef.current.delete(tabId)
     }
 
+    const openImportedMailInTab = useCallback((mail, content) => {
+        if (!mail || !content) return
+        nextTabId.current += 1
+        const tabId = `tab-${nextTabId.current}`
+        const mailbox = mail?.mailbox || 'Imported'
+        setTabs((prev) => [...prev, { id: tabId, kind: 'mail', mail, mailbox }])
+        setTabContents((prev) => ({ ...prev, [tabId]: content }))
+        setActiveTabId(tabId)
+        setSelectedMail(null)
+        setMailContent(null)
+        setInlineComposeSession(null)
+        setImportPreview(null)
+    }, [nextTabId, setActiveTabId, setInlineComposeSession, setMailContent, setSelectedMail, setTabContents, setTabs])
+
     const closeTab = (e, tabId) => {
         e.stopPropagation()
         pendingTabLoadsRef.current.delete(tabId)
@@ -3820,6 +4131,9 @@ function MailSection({
             if (labelMenuRef.current && !labelMenuRef.current.contains(e.target)) {
                 setIsLabelMenuOpen(false)
             }
+            if (downloadAsMenuRef.current && !downloadAsMenuRef.current.contains(e.target)) {
+                setIsDownloadAsMenuOpen(false)
+            }
             if (mailItemMenuRef.current && !mailItemMenuRef.current.contains(e.target)) {
                 closeMailItemMenu()
             }
@@ -3836,11 +4150,15 @@ function MailSection({
             if (isLabelMenuOpen) {
                 syncPopoverPosition(labelMenuRef, setLabelPopoverStyle, 260)
             }
+            if (isDownloadAsMenuOpen) {
+                syncPopoverPosition(downloadAsMenuRef, setDownloadAsPopoverStyle, 240, 6, 'underAnchor')
+            }
         }
 
-        if (!isMoveMenuOpen && !isLabelMenuOpen) {
+        if (!isMoveMenuOpen && !isLabelMenuOpen && !isDownloadAsMenuOpen) {
             setMovePopoverStyle(null)
             setLabelPopoverStyle(null)
+            setDownloadAsPopoverStyle(null)
             return
         }
 
@@ -3857,7 +4175,7 @@ function MailSection({
             window.removeEventListener('scroll', sync, true)
             scrollNode?.removeEventListener('scroll', sync)
         }
-    }, [activeRibbonTab, activeTabId, isLabelMenuOpen, isMoveMenuOpen, syncPopoverPosition])
+    }, [activeRibbonTab, activeTabId, isDownloadAsMenuOpen, isLabelMenuOpen, isMoveMenuOpen, syncPopoverPosition])
 
     useEffect(() => {
         const handleKeyDown = (e) => {
@@ -4805,7 +5123,7 @@ function MailSection({
                             <button onClick={() => setActiveRibbonTab('home')}>{t('Home')}</button>
                         </li>
                         <li className={activeRibbonTab === 'file' ? 'active' : ''}>
-                            <button onClick={() => setActiveRibbonTab('file')}>{t('Files')}</button>
+                            <button onClick={() => setActiveRibbonTab('file')}>{t('File')}</button>
                         </li>
                         <li className={activeRibbonTab === 'view' ? 'active' : ''}>
                             <button onClick={() => setActiveRibbonTab('view')}>{t('View')}</button>
@@ -4833,69 +5151,91 @@ function MailSection({
                                     <li><button disabled={!activeComposeTab} onClick={handleActiveComposeTabWindow}><img src="/img/icons/open-in-new-window.svg" className="svg-icon-inline" /> Open in Window</button></li>
                                 </ul>
                             ) : (
-                                <ul>
-                                    <li><button disabled={!activeTabMail} onClick={handleActiveTabDeleteAction}><img src="/img/icons/recycle-bin.svg" className="svg-icon-inline" /> {t('Delete')}</button></li>
-                                    <li><button disabled={!activeTabMail} onClick={handleActiveTabMoveToTrashAction}><img src="/img/icons/move-to-folder.svg" className="svg-icon-inline" /> {t('Move to Trash')}</button></li>
-                                    <li><button disabled={!activeTabMail} onClick={handleActiveTabArchiveAction}><img src="/img/icons/archive.svg" className="svg-icon-inline" /> {t('Archive')}</button></li>
-                                    <li><button disabled={!activeTabMail} onClick={handleActiveTabReplyAction}><img src="/img/icons/reply.svg" className="svg-icon-inline" /> Reply</button></li>
-                                    <li><button disabled={!activeTabMail} onClick={handleActiveTabReplyAllAction}><img src="/img/icons/reply-all.svg" className="svg-icon-inline" /> Reply All</button></li>
-                                    <li><button disabled={!activeTabMail} onClick={handleActiveTabForwardAction}><img src="/img/icons/forward.svg" className="svg-icon-inline" /> Forward</button></li>
-                                    <li className="db-submenu-menu-wrap" ref={moveMenuRef}>
-                                        <button
-                                            disabled={!activeTabMail}
-                                            title={activeTabMail ? undefined : 'Open a mail first'}
-                                            className={isMoveMenuOpen ? 'submenu-open' : ''}
-                                            onClick={() => {
-                                                setIsLabelMenuOpen(false)
-                                                setIsMoveMenuOpen((prev) => !prev)
-                                            }}
-                                        >
-                                            <img src="/img/icons/folder.svg" className="svg-icon-inline" /> {t('Move')}
-                                        </button>
-                                        {isMoveMenuOpen && (
-                                            <div
-                                                className="db-submenu-popover"
-                                                style={movePopoverStyle || undefined}
-                                                onWheel={(e) => e.stopPropagation()}
+                                activeTabMail?.isImported ? (
+                                    <ul>
+                                        <li>
+                                            <button
+                                                type="button"
+                                                disabled={!activeTabContent}
+                                                onClick={() => openImportedMailInCompose(activeTabContent)}
                                             >
-                                                {moveFolderOptions.map((folder) => (
-                                                    <button
-                                                        key={folder}
-                                                        type="button"
-                                                        className="db-submenu-popover__item"
-                                                        onClick={() => handleActiveTabMoveAction(folder)}
-                                                    >
-                                                        {folderInfo(folder).label}
+                                                <img src="/img/icons/new-mail.svg" className="svg-icon-inline" /> {t('Edit')}
+                                            </button>
+                                        </li>
+                                        <li>
+                                            <button
+                                                type="button"
+                                                onClick={() => closeTab({ stopPropagation: () => { } }, activeTabId)}
+                                            >
+                                                <img src="/img/icons/close.svg" className="svg-icon-inline" /> {t('Close')}
+                                            </button>
+                                        </li>
+                                    </ul>
+                                ) : (
+                                    <ul>
+                                        <li><button disabled={!activeTabMail} onClick={handleActiveTabDeleteAction}><img src="/img/icons/recycle-bin.svg" className="svg-icon-inline" /> {t('Delete')}</button></li>
+                                        <li><button disabled={!activeTabMail} onClick={handleActiveTabMoveToTrashAction}><img src="/img/icons/move-to-folder.svg" className="svg-icon-inline" /> {t('Move to Trash')}</button></li>
+                                        <li><button disabled={!activeTabMail} onClick={handleActiveTabArchiveAction}><img src="/img/icons/archive.svg" className="svg-icon-inline" /> {t('Archive')}</button></li>
+                                        <li><button disabled={!activeTabMail} onClick={handleActiveTabReplyAction}><img src="/img/icons/reply.svg" className="svg-icon-inline" /> Reply</button></li>
+                                        <li><button disabled={!activeTabMail} onClick={handleActiveTabReplyAllAction}><img src="/img/icons/reply-all.svg" className="svg-icon-inline" /> Reply All</button></li>
+                                        <li><button disabled={!activeTabMail} onClick={handleActiveTabForwardAction}><img src="/img/icons/forward.svg" className="svg-icon-inline" /> Forward</button></li>
+                                        <li className="db-submenu-menu-wrap" ref={moveMenuRef}>
+                                            <button
+                                                disabled={!activeTabMail}
+                                                title={activeTabMail ? undefined : 'Open a mail first'}
+                                                className={isMoveMenuOpen ? 'submenu-open' : ''}
+                                                onClick={() => {
+                                                    setIsLabelMenuOpen(false)
+                                                    setIsMoveMenuOpen((prev) => !prev)
+                                                }}
+                                            >
+                                                <img src="/img/icons/folder.svg" className="svg-icon-inline" /> {t('Move')}
+                                            </button>
+                                            {isMoveMenuOpen && (
+                                                <div
+                                                    className="db-submenu-popover"
+                                                    style={movePopoverStyle || undefined}
+                                                    onWheel={(e) => e.stopPropagation()}
+                                                >
+                                                    {moveFolderOptions.map((folder) => (
+                                                        <button
+                                                            key={folder}
+                                                            type="button"
+                                                            className="db-submenu-popover__item"
+                                                            onClick={() => handleActiveTabMoveAction(folder)}
+                                                        >
+                                                            {folderInfo(folder).label}
+                                                        </button>
+                                                    ))}
+                                                    <div className="db-submenu-popover__divider" />
+                                                    <button type="button" className="db-submenu-popover__item" onClick={handleCreateFolderAndMoveFromTab}>
+                                                        <img src="/img/icons/plus.svg" className="svg-icon-inline" /> New Folder
                                                     </button>
-                                                ))}
-                                                <div className="db-submenu-popover__divider" />
-                                                <button type="button" className="db-submenu-popover__item" onClick={handleCreateFolderAndMoveFromTab}>
-                                                    <img src="/img/icons/plus.svg" className="svg-icon-inline" /> New Folder
-                                                </button>
-                                            </div>
-                                        )}
-                                    </li>
-                                    <li className="db-submenu-menu-wrap" ref={labelMenuRef}>
-                                        <button
-                                            disabled={!activeTabMail}
-                                            title={activeTabMail ? undefined : 'Open a mail first'}
-                                            className={isLabelMenuOpen ? 'submenu-open' : ''}
-                                            onClick={() => {
-                                                setIsMoveMenuOpen(false)
-                                                setIsLabelMenuOpen((prev) => !prev)
-                                            }}
-                                        >
-                                            <img src="/img/icons/label.svg" className="svg-icon-inline" /> Labels
-                                        </button>
-                                        {isLabelMenuOpen && renderLabelChecklist(
-                                            activeTabMail ? [activeTabMail] : [],
-                                            handleActiveTabLabelToggleAction,
-                                            handleActiveTabCreateLabelAction,
-                                            { style: labelPopoverStyle || undefined },
-                                        )}
-                                    </li>
-                                    <li><button disabled={!activeTabMail} onClick={handleActiveTabReadToggleAction}><img src="/img/icons/read.svg" className="svg-icon-inline" /> {activeTabReadLabel}</button></li>
-                                </ul>
+                                                </div>
+                                            )}
+                                        </li>
+                                        <li className="db-submenu-menu-wrap" ref={labelMenuRef}>
+                                            <button
+                                                disabled={!activeTabMail}
+                                                title={activeTabMail ? undefined : 'Open a mail first'}
+                                                className={isLabelMenuOpen ? 'submenu-open' : ''}
+                                                onClick={() => {
+                                                    setIsMoveMenuOpen(false)
+                                                    setIsLabelMenuOpen((prev) => !prev)
+                                                }}
+                                            >
+                                                <img src="/img/icons/label.svg" className="svg-icon-inline" /> Labels
+                                            </button>
+                                            {isLabelMenuOpen && renderLabelChecklist(
+                                                activeTabMail ? [activeTabMail] : [],
+                                                handleActiveTabLabelToggleAction,
+                                                handleActiveTabCreateLabelAction,
+                                                { style: labelPopoverStyle || undefined },
+                                            )}
+                                        </li>
+                                        <li><button disabled={!activeTabMail} onClick={handleActiveTabReadToggleAction}><img src="/img/icons/read.svg" className="svg-icon-inline" /> {activeTabReadLabel}</button></li>
+                                    </ul>
+                                )
                             )
                         ) : activeRibbonTab === 'home' && (
                             <ul>
@@ -4973,24 +5313,70 @@ function MailSection({
                         {!activeTabId && activeRibbonTab === 'file' && (
                             <ul>
                                 <li>
-                                    <button disabled={fileActionsDisabled} onClick={handleDownloadHtml}>
-                                        <img src="/img/icons/save.svg" className="svg-icon-inline" /> {fileActionLoading === 'html' ? 'Saving HTML...' : 'Download as HTML'}
+                                    <button type="button" onClick={handleOpenImportPicker}>
+                                        <img src="/img/icons/plus.svg" className="svg-icon-inline" /> {importLoading ? 'Importing...' : t('Import')}
                                     </button>
+                                    <input
+                                        ref={importFileInputRef}
+                                        type="file"
+                                        accept=".eml,.msg"
+                                        style={{ display: 'none' }}
+                                        onChange={handleImportFilePicked}
+                                    />
                                 </li>
-                                <li>
-                                    <button disabled={fileActionsDisabled} onClick={handleDownloadMsg}>
-                                        <img src="/img/icons/mail.svg" className="svg-icon-inline" /> {fileActionLoading === 'msg' ? 'Saving MSG...' : 'Download as MSG'}
+                                <li className="db-submenu-menu-wrap" ref={downloadAsMenuRef}>
+                                    <button
+                                        type="button"
+                                        disabled={fileActionsDisabled}
+                                        className={isDownloadAsMenuOpen ? 'submenu-open' : ''}
+                                        onClick={() => {
+                                            setIsMoveMenuOpen(false)
+                                            setIsLabelMenuOpen(false)
+                                            setIsDownloadAsMenuOpen((prev) => !prev)
+                                        }}
+                                    >
+                                        <img src="/img/icons/save.svg" className="svg-icon-inline" /> {t('Download as')}
                                     </button>
-                                </li>
-                                <li>
-                                    <button disabled={fileActionsDisabled} onClick={handleDownloadEml}>
-                                        <img src="/img/icons/mail.svg" className="svg-icon-inline" /> {fileActionLoading === 'eml' ? 'Saving EML...' : 'Download as EML'}
-                                    </button>
-                                </li>
-                                <li>
-                                    <button disabled={fileActionsDisabled} onClick={handleDownloadPdf}>
-                                        <img src="/img/icons/all-mails.svg" className="svg-icon-inline" /> {fileActionLoading === 'pdf' ? 'Saving PDF...' : 'Download as PDF'}
-                                    </button>
+                                    {isDownloadAsMenuOpen && (
+                                        <div
+                                            className="db-submenu-popover"
+                                            style={downloadAsPopoverStyle || undefined}
+                                            onWheel={(e) => e.stopPropagation()}
+                                        >
+                                            <button
+                                                type="button"
+                                                disabled={fileActionsDisabled}
+                                                className="db-submenu-popover__item"
+                                                onClick={handleDownloadHtml}
+                                            >
+                                                <img src="/img/icons/save.svg" className="svg-icon-inline" /> {fileActionLoading === 'html' ? 'Saving HTML...' : 'HTML'}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                disabled={fileActionsDisabled}
+                                                className="db-submenu-popover__item"
+                                                onClick={handleDownloadMsg}
+                                            >
+                                                <img src="/img/icons/mail.svg" className="svg-icon-inline" /> {fileActionLoading === 'msg' ? 'Saving MSG...' : 'MSG'}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                disabled={fileActionsDisabled}
+                                                className="db-submenu-popover__item"
+                                                onClick={handleDownloadEml}
+                                            >
+                                                <img src="/img/icons/mail.svg" className="svg-icon-inline" /> {fileActionLoading === 'eml' ? 'Saving EML...' : 'EML'}
+                                            </button>
+                                            <button
+                                                type="button"
+                                                disabled={fileActionsDisabled}
+                                                className="db-submenu-popover__item"
+                                                onClick={handleDownloadPdf}
+                                            >
+                                                <img src="/img/icons/all-mails.svg" className="svg-icon-inline" /> {fileActionLoading === 'pdf' ? 'Saving PDF...' : 'PDF'}
+                                            </button>
+                                        </div>
+                                    )}
                                 </li>
                                 <li>
                                     <button disabled={fileActionsDisabled} onClick={handlePrintMail}>
@@ -5123,11 +5509,21 @@ function MailSection({
                                                     <span className="db-attachments__name">{at.filename}</span>
                                                     <span className="db-attachments__meta">{at.content_type}</span>
                                                 </div>
-                                                <a
-                                                    className="db-attachments__link"
-                                                    href={attachmentUrl(accountId, activeTabContent.id, at.id, activeTab.mailbox, canUseRemoteMail)}
-                                                    download={at.filename}
-                                                >Download</a>
+                                                {at.data_base64 || activeTabMail?.isImported ? (
+                                                    <button
+                                                        type="button"
+                                                        className="db-attachments__link"
+                                                        onClick={() => downloadAttachmentFromBase64(at)}
+                                                    >
+                                                        Download
+                                                    </button>
+                                                ) : (
+                                                    <a
+                                                        className="db-attachments__link"
+                                                        href={attachmentUrl(accountId, activeTabContent.id, at.id, activeTab.mailbox, canUseRemoteMail)}
+                                                        download={at.filename}
+                                                    >Download</a>
+                                                )}
                                             </li>
                                         ))}
                                     </ul>
@@ -5862,6 +6258,97 @@ function MailSection({
                                         onOpenInWindow={() => openComposeWindow(inlineComposeSession, inlineComposeSession.source)}
                                         accountEmail={accountEmail}
                                     />
+                                ) : importPreview ? (
+                                    <div className="db-mail-content">
+                                        <div className="db-mail-content-header">
+                                            <div className="db-mail-content-subject">
+                                                {importPreview?.content?.subject || importPreview?.mail?.subject || importPreview?.fileName || '(Imported mail)'}
+                                            </div>
+                                            <div className="db-mail-content-actions">
+                                                <button
+                                                    className="db-mail-action-btn"
+                                                    onClick={() => openImportedMailInTab(importPreview.mail, importPreview.content)}
+                                                    title={t('Move to tab')}
+                                                >
+                                                    <img src="/img/icons/open-in-new-tab.svg" className="svg-icon-inline" />
+                                                </button>
+                                                <button
+                                                    className="db-mail-action-btn"
+                                                    onClick={() => detachImportedMailToWindow(importPreview.mail, importPreview.content)}
+                                                    title={t('Move to window')}
+                                                >
+                                                    <img src="/img/icons/open-in-new-window.svg" className="svg-icon-inline" />
+                                                </button>
+                                                <button
+                                                    className="db-mail-action-btn"
+                                                    onClick={() => {
+                                                        openImportedMailInCompose(importPreview.content)
+                                                        setImportPreview(null)
+                                                    }}
+                                                    title={t('Edit')}
+                                                >
+                                                    <img src="/img/icons/new-mail.svg" className="svg-icon-inline" />
+                                                </button>
+                                                <button
+                                                    className="db-mail-action-btn"
+                                                    onClick={() => setImportPreview(null)}
+                                                    title={t('Close')}
+                                                >
+                                                    <img src="/img/icons/close.svg" className="svg-icon-inline" />
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div className="db-mail-meta">
+                                            <strong>From:</strong>{' '}
+                                            {importPreview?.content?.from_name
+                                                ? `${importPreview.content.from_name} <${importPreview.content.from_address}>`
+                                                : (importPreview?.mail?.address || '')}
+                                        </div>
+                                        {!!(importPreview?.content?.cc || '').trim() && <div className="db-mail-meta"><strong>CC:</strong> {importPreview.content.cc}</div>}
+                                        {!!(importPreview?.content?.bcc || '').trim() && <div className="db-mail-meta"><strong>BCC:</strong> {importPreview.content.bcc}</div>}
+                                        <div className="db-mail-meta"><strong>Date:</strong> {formatMailDateLong(importPreview?.content?.date || importPreview?.mail?.date)}</div>
+                                        {!!importError && (
+                                            <div className="db-mail-meta" style={{ color: '#c0392b' }}>
+                                                {importError}
+                                            </div>
+                                        )}
+                                        <hr className="db-mail-divider" />
+                                        {importPreview?.content?.html_body ? (
+                                            <div className="db-mail-body-html">
+                                                <iframe
+                                                    title="imported-mail-content"
+                                                    sandbox="allow-same-origin"
+                                                    srcDoc={importPreview.content.html_body}
+                                                />
+                                            </div>
+                                        ) : (
+                                            <div className="db-mail-body">{importPreview?.content?.plain_body || '(No content)'}</div>
+                                        )}
+                                        {importPreview?.content?.attachments?.length > 0 && (
+                                            <div className="db-attachments">
+                                                <div className="db-attachments__header">Attachments ({importPreview.content.attachments.length})</div>
+                                                <ul className="db-attachments__list">
+                                                    {importPreview.content.attachments.map((at) => (
+                                                        <li key={at.id} className="db-attachments__item">
+                                                            <div className="db-attachments__info">
+                                                                <span className="db-attachments__name">{at.filename}</span>
+                                                                <span className="db-attachments__meta">{at.content_type} · {formatBytes(at.size)}</span>
+                                                            </div>
+                                                            {at.data_base64 ? (
+                                                                <button
+                                                                    type="button"
+                                                                    className="db-attachments__link"
+                                                                    onClick={() => downloadAttachmentFromBase64(at)}
+                                                                >
+                                                                    Download
+                                                                </button>
+                                                            ) : null}
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            </div>
+                                        )}
+                                    </div>
                                 ) : !selectedMail ? (
                                     <div className="db-empty-state">
                                         <div className="db-empty-icon"><img src="/img/logo/guvercin-notext-nobackground.svg" alt="Guvercin" style={{ width: '600px', height: 'auto' }} /></div>
