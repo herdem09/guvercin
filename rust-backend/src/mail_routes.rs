@@ -8,6 +8,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::DateTime;
+use mailparse::MailHeaderMap;
 use serde::Deserialize;
 use serde_json::json;
 use sqlx::Row;
@@ -426,6 +427,70 @@ pub async fn get_mail_raw(
         .into_response()
 }
 
+fn parse_reply_seed_from_raw(raw: &[u8]) -> serde_json::Value {
+    let mut message_id = String::new();
+    let mut references = String::new();
+    let mut in_reply_to = String::new();
+    let mut reply_to = String::new();
+
+    if let Ok(parsed) = mailparse::parse_mail(raw) {
+        let headers = parsed.get_headers();
+        message_id = headers
+            .get_first_value("Message-ID")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        references = headers
+            .get_first_value("References")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        in_reply_to = headers
+            .get_first_value("In-Reply-To")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        reply_to = headers
+            .get_first_value("Reply-To")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+    }
+
+    json!({
+        "message_id": message_id,
+        "references": references,
+        "in_reply_to": in_reply_to,
+        "reply_to": reply_to,
+    })
+}
+
+pub async fn get_reply_seed(
+    State(state): State<Arc<MailAppState>>,
+    Path((account_id, uid)): Path<(i64, String)>,
+    Query(q): Query<MailContentQuery>,
+) -> impl IntoResponse {
+    let raw = tokio::task::spawn_blocking({
+        let imap_state = state.imap.clone();
+        let uid = uid.clone();
+        let mailbox = q.mailbox.clone();
+        move || imap_session::fetch_mail_raw_in_mailbox(&imap_state, account_id, &mailbox, &uid)
+    })
+    .await
+    .ok()
+    .flatten();
+
+    if let Some(raw_bytes) = raw {
+        Json(parse_reply_seed_from_raw(&raw_bytes)).into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": "Mail not found"})),
+        )
+            .into_response()
+    }
+}
+
 pub async fn download_attachment(
     State(state): State<Arc<MailAppState>>,
     Path((account_id, uid, attachment_index)): Path<(i64, String, usize)>,
@@ -475,6 +540,32 @@ pub async fn download_attachment(
         Json(json!({"error": "Mail not found"})),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_reply_seed_from_raw_includes_reply_to() {
+        let raw = concat!(
+            "From: sender@example.com\r\n",
+            "To: me@example.com\r\n",
+            "Reply-To: reply@example.com\r\n",
+            "Message-ID: <m1>\r\n",
+            "\r\n",
+            "Hello\r\n",
+        );
+        let seed = parse_reply_seed_from_raw(raw.as_bytes());
+        assert_eq!(
+            seed.get("reply_to").and_then(|v| v.as_str()).unwrap_or(""),
+            "reply@example.com"
+        );
+        assert_eq!(
+            seed.get("message_id").and_then(|v| v.as_str()).unwrap_or(""),
+            "<m1>"
+        );
+    }
 }
 
 pub async fn disconnect_imap(

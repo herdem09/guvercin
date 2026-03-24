@@ -15,6 +15,8 @@ const {
   parseComposeBody,
 } = await import('./compose.js')
 
+const { queueComposeSend } = await import('./composeSend.js')
+
 test('normalizeComposeDraft hydrates recipient arrays from legacy strings', () => {
   const draft = normalizeComposeDraft({
     to: 'a@example.com; b@example.com',
@@ -35,8 +37,35 @@ test('normalizeComposeDraft preserves forward metadata', () => {
     forwardOptions: { subjectPrefix: 'Fwd:' },
   })
 
-  assert.deepEqual(draft.forwardTargets, [{ uid: '123', mailbox: 'INBOX' }])
-  assert.deepEqual(draft.forwardOptions, { subjectPrefix: 'Fwd:' })
+  assert.deepEqual(draft.forwardTargets, [{ uid: '123', mailbox: 'INBOX', from: '', subject: '', date: '' }])
+  assert.deepEqual(draft.forwardOptions, { subjectPrefix: 'Fwd:', forwardStyle: 'copy', bundle: false })
+})
+
+test('normalizeComposeDraft coerces numeric uids for forward/bulk reply', () => {
+  const draft = normalizeComposeDraft({
+    forwardTargets: [{ uid: 101, mailbox: 'INBOX' }, { uid: '102', mailbox: 'INBOX' }],
+    bulkReplyTargets: [{ uid: 201, mailbox: 'INBOX', subject: 'Hello', address: 'a@example.com' }],
+    replyContext: { uid: 301, mailbox: 'INBOX' },
+  })
+
+  assert.deepEqual(draft.forwardTargets, [
+    { uid: '101', mailbox: 'INBOX', from: '', subject: '', date: '' },
+    { uid: '102', mailbox: 'INBOX', from: '', subject: '', date: '' },
+  ])
+  assert.equal(draft.bulkReplyTargets[0].uid, '201')
+  assert.equal(draft.replyContext.uid, '301')
+})
+
+test('normalizeComposeDraft preserves bulk reply metadata', () => {
+  const draft = normalizeComposeDraft({
+    bulkReplyTargets: [{ uid: '10', mailbox: 'INBOX', subject: 'Hello', address: 'a@example.com' }],
+    bulkReplyOptions: { mode: 'reply_all', includeQuote: false },
+  })
+
+  assert.equal(draft.bulkReplyTargets.length, 1)
+  assert.equal(draft.bulkReplyTargets[0].uid, '10')
+  assert.equal(draft.bulkReplyOptions.mode, 'reply_all')
+  assert.equal(draft.bulkReplyOptions.includeQuote, false)
 })
 
 test('recipient helpers dedupe and serialize values', () => {
@@ -135,4 +164,84 @@ test('isComposeDraftModified detects forward target changes', () => {
     isComposeDraftModified({ ...baseline, forwardTargets: [{ uid: '202', mailbox: 'INBOX' }] }, baseline),
     true,
   )
+})
+
+test('queueComposeSend queues bulk replies as separate send actions', async () => {
+  const calls = []
+  const ok = await queueComposeSend({
+    draft: {
+      format: 'plain',
+      plainBody: 'Hello',
+      bulkReplyTargets: [
+        { uid: '1', mailbox: 'INBOX', subject: 'A', address: 'a@example.com', messageId: '<m1>' },
+        { uid: '2', mailbox: 'INBOX', subject: 'B', address: 'b@example.com', messageId: '<m2>' },
+      ],
+      bulkReplyOptions: { mode: 'reply', includeQuote: false },
+    },
+    accountEmail: 'me@example.com',
+    queueAction: async (...args) => { calls.push(args) },
+    confirm: async () => true,
+  })
+
+  assert.equal(ok, true)
+  assert.equal(calls.length, 2)
+  assert.equal(calls[0][0], 'send')
+})
+
+test('queueComposeSend parses reply_all recipient strings for bulk replies', async () => {
+  const calls = []
+  const ok = await queueComposeSend({
+    draft: {
+      format: 'plain',
+      plainBody: 'Hello',
+      bulkReplyTargets: [
+        {
+          uid: '1',
+          mailbox: 'INBOX',
+          subject: 'A',
+          address: 'sender@example.com',
+          recipientTo: 'me@example.com; other@example.com',
+          cc: 'Name <cc@example.com>\nCC2 <cc2@example.com>',
+          messageId: '<m1>',
+        },
+      ],
+      bulkReplyOptions: { mode: 'reply_all', includeQuote: false },
+    },
+    accountEmail: 'me@example.com',
+    queueAction: async (...args) => { calls.push(args) },
+    confirm: async () => true,
+  })
+
+  assert.equal(ok, true)
+  assert.equal(calls.length, 1)
+  const payload = calls[0][2]
+  assert.deepEqual(payload.to, ['sender@example.com', 'other@example.com'])
+  assert.deepEqual(payload.cc, ['cc@example.com', 'cc2@example.com'])
+})
+
+test('queueComposeSend asks for confirmation when forwarding many separately', async () => {
+  const calls = []
+  const confirmations = []
+
+  const ok = await queueComposeSend({
+    draft: {
+      format: 'plain',
+      plainBody: 'Intro',
+      toRecipients: ['to@example.com'],
+      forwardTargets: [
+        { uid: '1', mailbox: 'INBOX' },
+        { uid: '2', mailbox: 'INBOX' },
+      ],
+      forwardOptions: { subjectPrefix: 'Fwd:', forwardStyle: 'copy', bundle: false },
+    },
+    accountEmail: 'me@example.com',
+    queueAction: async (...args) => { calls.push(args) },
+    confirm: async (...args) => { confirmations.push(args); return false },
+  })
+
+  assert.equal(ok, false)
+  assert.equal(calls.length, 0)
+  assert.equal(confirmations.length, 1)
+  assert.equal(confirmations[0][1].type, 'forward_many')
+  assert.equal(confirmations[0][1].count, 2)
 })

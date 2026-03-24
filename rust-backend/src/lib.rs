@@ -109,6 +109,10 @@ pub async fn run(db_dir: Option<PathBuf>) -> Result<(), crate::error::AppError> 
         )
         .route("/api/mail/:account_id/raw/:uid", get(mail_routes::get_mail_raw))
         .route(
+            "/api/mail/:account_id/reply-seed/:uid",
+            get(mail_routes::get_reply_seed),
+        )
+        .route(
             "/api/mail/:account_id/content/:uid/attachments/:attachment_index",
             get(mail_routes::download_attachment),
         )
@@ -156,6 +160,10 @@ pub async fn run(db_dir: Option<PathBuf>) -> Result<(), crate::error::AppError> 
         .route(
             "/api/offline/:account_id/local-raw/:uid",
             get(offline_routes::get_local_mail_raw),
+        )
+        .route(
+            "/api/offline/:account_id/reply-seed/:uid",
+            get(offline_routes::get_local_reply_seed),
         )
         .route(
             "/api/offline/:account_id/local-content/:uid/prefetch-inline",

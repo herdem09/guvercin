@@ -21,6 +21,7 @@ import {
     parseComposeBody,
     parseComposeRecipients,
 } from '../utils/compose.js'
+import { queueComposeSend } from '../utils/composeSend.js'
 import './DashboardPage.css'
 import SettingsPage from './SettingsPage.jsx'
 
@@ -1787,38 +1788,33 @@ const DashboardPage = () => {
 
     const sendComposedMail = async (composed) => {
         try {
-            const normalized = normalizeComposeDraft(composed)
-            const hasForwardTargets = Array.isArray(normalized?.forwardTargets) && normalized.forwardTargets.length > 0
+            const ok = await queueComposeSend({
+                draft: composed,
+                accountEmail: email || accountEmailLabel,
+                queueAction,
+                confirm: async (normalized, context = {}) => {
+                    if (context?.type === 'forward_many') {
+                        const forwardCount = Number(context?.count) || 0
+                        if (forwardCount <= 1) return true
+                        const forwardPreview = (normalized?.forwardTargets || [])
+                            .slice(0, 8)
+                            .map((t) => `- ${(t?.from || '').trim() || '(unknown)'} :: ${(t?.subject || '').trim() || '(No Subject)'}`)
+                            .join('\n')
+                        const forwardSuffix = forwardCount > 8 ? `\n...and ${forwardCount - 8} more` : ''
+                        return window.confirm(`Send ${forwardCount} separate forwards?\n\n${forwardPreview}${forwardSuffix}`)
+                    }
 
-            if (hasForwardTargets) {
-                const recipientsPayload = parseComposeBody(normalized, email || accountEmailLabel)
-                const recipientCount = recipientsPayload.to.length + recipientsPayload.cc.length + recipientsPayload.bcc.length
-                if (recipientCount === 0) {
-                    window.alert('Please add at least one recipient.')
-                    return false
-                }
-
-                const subjectPrefix = normalized?.forwardOptions?.subjectPrefix || 'Fwd:'
-                const forwardPayload = {
-                    to: recipientsPayload.to,
-                    cc: recipientsPayload.cc,
-                    bcc: recipientsPayload.bcc,
-                    subject_prefix: subjectPrefix,
-                }
-
-                await Promise.all(normalized.forwardTargets.map((target) => (
-                    queueAction('forward', target.uid, forwardPayload, target.mailbox)
-                )))
-                return true
-            }
-
-            const payload = parseComposeBody(normalized, email || accountEmailLabel)
-            if (payload.to.length === 0) {
-                window.alert('Please add at least one recipient.')
-                return false
-            }
-            await queueAction('send', null, payload)
-            return true
+                    const count = Array.isArray(normalized?.bulkReplyTargets) ? normalized.bulkReplyTargets.length : 0
+                    if (count <= 0) return true
+                    const preview = normalized.bulkReplyTargets
+                        .slice(0, 8)
+                        .map((t) => `- ${t.address || '(unknown)'} :: ${t.subject || '(No Subject)'}`)
+                        .join('\n')
+                    const suffix = count > 8 ? `\n...and ${count - 8} more` : ''
+                    return window.confirm(`Send ${count} separate replies?\n\n${preview}${suffix}`)
+                },
+            })
+            return ok
         } catch (error) {
             console.error('Failed to queue send action:', error)
             window.alert(error?.message || 'Failed to send email.')
@@ -2726,7 +2722,7 @@ function MailSection({
     const hasAnyActionMail = actionableMails.length > 0
     const hasMultipleActionMails = actionableMails.length > 1
     const allActionMailsSeen = hasAnyActionMail && actionableMails.every((mail) => mail.seen === true)
-    const homeReplyLabel = hasMultipleActionMails ? 'Reply All' : 'Reply'
+    const homeReplyLabel = hasMultipleActionMails ? 'Bulk Reply' : 'Reply'
     const homeForwardLabel = hasMultipleActionMails ? 'Forward All' : 'Forward'
     const readToggleLabel = allActionMailsSeen ? 'Unread' : 'Read'
     const moveFolderOptions = useMemo(() => folders.filter(isMoveTargetMailbox), [folders])
@@ -2808,6 +2804,31 @@ function MailSection({
 
         return null
     }, [accountId, canUseRemoteMail, mailContent, selectedFolder, selectedMail])
+
+    const fetchReplySeed = useCallback(async (mail) => {
+        if (!mail || !accountId) return null
+        const mailbox = mail?.mailbox || selectedFolder || 'INBOX'
+        const candidates = canUseRemoteMail
+            ? [
+                `/api/mail/${accountId}/reply-seed/${encodeURIComponent(mail.id)}?mailbox=${encodeURIComponent(mailbox)}`,
+                `/api/offline/${accountId}/reply-seed/${encodeURIComponent(mail.id)}?mailbox=${encodeURIComponent(mailbox)}`,
+            ]
+            : [
+                `/api/offline/${accountId}/reply-seed/${encodeURIComponent(mail.id)}?mailbox=${encodeURIComponent(mailbox)}`,
+                `/api/mail/${accountId}/reply-seed/${encodeURIComponent(mail.id)}?mailbox=${encodeURIComponent(mailbox)}`,
+            ]
+
+        for (const endpoint of candidates) {
+            try {
+                const res = await fetch(apiUrl(endpoint), { cache: 'no-store' })
+                if (!res.ok) continue
+                return await res.json().catch(() => null)
+            } catch {
+                /* ignore */
+            }
+        }
+        return null
+    }, [accountId, canUseRemoteMail, selectedFolder])
 
     const hydrateComposeDraftFromSavedMail = useCallback((mail, content) => createEmptyComposeDraft({
         draftId: content?.id || mail?.id,
@@ -3157,19 +3178,14 @@ function MailSection({
 
     const dedupeEmails = (values) => {
         const seen = new Set()
-        return values.filter((value) => {
-            const email = value.trim()
+        return (values || []).filter((value) => {
+            const email = `${value || ''}`.trim()
             const key = email.toLowerCase()
             if (!email || seen.has(key)) return false
             seen.add(key)
             return true
         })
     }
-
-    const parseEmailList = (value) => value
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean)
 
     const buildQuotedMailBlock = (mail, content) => {
         const fromLabel = content?.from_name
@@ -4398,32 +4414,80 @@ function MailSection({
         }
     }
 
-    const composeReplyDraft = async (mailList) => {
+    const composeReplyDraft = async (mailList, replyMode = 'reply') => {
         const replyMails = Array.from(new Set((mailList || []).filter(Boolean)))
         if (replyMails.length === 0) return
 
         if (replyMails.length > 1) {
-            const recipients = dedupeEmails(replyMails.map((mail) => mail.address || ''))
+            const sourceFolder = selectedFolder || 'INBOX'
+            const targets = await Promise.all(replyMails.map(async (mail) => {
+                const mailbox = mail?.mailbox || sourceFolder
+                const content = await loadMailContentForDraft(mail)
+                const seed = await fetchReplySeed(mail)
+                const replyToCandidates = parseComposeRecipients(seed?.reply_to || '')
+                const replyTo = replyToCandidates[0]
+                    || content?.from_address
+                    || mail.address
+                    || ''
+                return {
+                    uid: mail.id,
+                    mailbox,
+                    subject: content?.subject || mail.subject || '',
+                    address: replyTo,
+                    recipientTo: mail?.recipient_to || '',
+                    cc: content?.cc || '',
+                    date: content?.date || mail.date || '',
+                    messageId: seed?.message_id || '',
+                    references: seed?.references || '',
+                    quote: buildQuotedMailBlock(mail, content),
+                }
+            }))
+
             composeDraft({
-                to: recipients.join(', '),
-                subject: 'Re: Selected mails',
-                plainBody: `\n\n${buildMultiMailSummary(replyMails)}`,
                 format: 'plain',
+                plainBody: '',
                 htmlBody: '',
+                attachments: [],
+                bulkReplyTargets: targets,
+                bulkReplyOptions: { mode: replyMode === 'reply_all' ? 'reply_all' : 'reply', includeQuote: true },
             }, 'reply')
             return
         }
 
         const mail = replyMails[0]
         const content = await loadMailContentForDraft(mail)
+        const seed = await fetchReplySeed(mail)
+
+        const selfEmail = email || accountEmailLabel
+        const replyToCandidates = parseComposeRecipients(seed?.reply_to || '')
+        const replyToFallback = content?.from_address || mail.address || ''
+        const replyTo = replyToCandidates[0] || replyToFallback
+        const replyAllTo = dedupeEmails([
+            ...(replyToCandidates.length > 0 ? replyToCandidates : [replyToFallback]),
+            ...parseComposeRecipients(mail?.recipient_to || ''),
+        ]).filter((addr) => addr.toLowerCase() !== (selfEmail || '').toLowerCase())
+        const replyAllCc = dedupeEmails(parseComposeRecipients(content?.cc || '')).filter((addr) => (
+            addr.toLowerCase() !== (selfEmail || '').toLowerCase()
+            && !replyAllTo.some((existing) => existing.toLowerCase() === addr.toLowerCase())
+        ))
+
+        const headers = []
+        if ((seed?.message_id || '').trim()) {
+            headers.push({ name: 'In-Reply-To', value: seed.message_id.trim() })
+            const refs = (seed?.references || '').trim()
+            headers.push({ name: 'References', value: refs ? `${refs} ${seed.message_id.trim()}` : seed.message_id.trim() })
+        }
+
         composeDraft({
-            to: mail.address || '',
-            cc: dedupeEmails(parseEmailList(content?.cc || '')).join(', '),
-            showCc: !!(content?.cc || '').trim(),
+            to: replyMode === 'reply_all' ? replyAllTo.join(', ') : replyTo,
+            cc: replyMode === 'reply_all' ? replyAllCc.join(', ') : '',
+            showCc: replyMode === 'reply_all' && replyAllCc.length > 0,
             subject: prefixSubject('Re:', content?.subject || mail.subject),
             plainBody: `\n\n${buildQuotedMailBlock(mail, content)}`,
             format: 'plain',
             htmlBody: '',
+            extraHeaders: headers,
+            replyContext: { uid: mail.id, mailbox: mail?.mailbox || selectedFolder || 'INBOX' },
         }, 'reply')
     }
 
@@ -4439,26 +4503,45 @@ function MailSection({
             const key = `${uid || ''}@@${mailbox || ''}`
             if (!uid || !mailbox || seenTargets.has(key)) return
             seenTargets.add(key)
-            forwardTargets.push({ uid, mailbox })
+            const from = mail?.name
+                ? `${mail.name} <${mail.address || ''}>`.trim()
+                : `${mail?.address || ''}`.trim()
+            forwardTargets.push({
+                uid,
+                mailbox,
+                from,
+                subject: mail?.subject || '',
+                date: mail?.date || '',
+            })
         })
+
+        const count = forwardTargets.length
+        const defaultOptions = count > 1
+            ? { subjectPrefix: 'Fwd:', forwardStyle: 'eml', bundle: true }
+            : { subjectPrefix: 'Fwd:', forwardStyle: 'copy', bundle: false }
 
         composeDraft({
             to: '',
             cc: '',
             bcc: '',
-            subject: '',
+            subject: count > 1 ? `Fwd: ${count} emails` : '',
             plainBody: '',
             htmlBody: '',
             format: 'plain',
             attachments: [],
             forwardTargets,
-            forwardOptions: { subjectPrefix: 'Fwd:' },
+            forwardOptions: defaultOptions,
         }, 'forward')
     }
 
     const handleReplyAction = async () => {
         if (!hasAnyActionMail) return
-        await composeReplyDraft(actionableMails)
+        await composeReplyDraft(actionableMails, 'reply')
+    }
+
+    const handleReplyAllAction = async () => {
+        if (!hasAnyActionMail) return
+        await composeReplyDraft(actionableMails, 'reply_all')
     }
 
     const handleForwardAction = async () => {
@@ -4589,28 +4672,20 @@ function MailSection({
 
     const handleActiveTabReplyAction = async () => {
         if (!activeTabMail) return
-        const content = await loadMailContentForDraft(activeTabMail)
-        composeDraft({
-            to: activeTabMail.address || '',
-            cc: dedupeEmails(parseEmailList(content?.cc || '')).join(', '),
-            showCc: !!(content?.cc || '').trim(),
-            subject: prefixSubject('Re:', content?.subject || activeTabMail.subject),
-            plainBody: `\n\n${buildQuotedMailBlock(activeTabMail, content)}`,
-            format: 'plain',
-            htmlBody: '',
-        }, 'reply')
+        const mailbox = activeTab?.mailbox || activeTabMail?.mailbox || selectedFolder || 'INBOX'
+        await composeReplyDraft([{ ...activeTabMail, mailbox }], 'reply')
+    }
+
+    const handleActiveTabReplyAllAction = async () => {
+        if (!activeTabMail) return
+        const mailbox = activeTab?.mailbox || activeTabMail?.mailbox || selectedFolder || 'INBOX'
+        await composeReplyDraft([{ ...activeTabMail, mailbox }], 'reply_all')
     }
 
     const handleActiveTabForwardAction = async () => {
         if (!activeTabMail) return
-        const content = await loadMailContentForDraft(activeTabMail)
-        composeDraft({
-            to: '',
-            subject: prefixSubject('Fwd:', content?.subject || activeTabMail.subject),
-            plainBody: buildQuotedMailBlock(activeTabMail, content),
-            format: 'plain',
-            htmlBody: '',
-        }, 'forward')
+        const mailbox = activeTab?.mailbox || activeTabMail?.mailbox || selectedFolder || 'INBOX'
+        await composeForwardDraft([{ ...activeTabMail, mailbox }])
     }
 
     const handleActiveTabReadToggleAction = async () => {
@@ -4763,6 +4838,7 @@ function MailSection({
                                     <li><button disabled={!activeTabMail} onClick={handleActiveTabMoveToTrashAction}><img src="/img/icons/move-to-folder.svg" className="svg-icon-inline" /> {t('Move to Trash')}</button></li>
                                     <li><button disabled={!activeTabMail} onClick={handleActiveTabArchiveAction}><img src="/img/icons/archive.svg" className="svg-icon-inline" /> {t('Archive')}</button></li>
                                     <li><button disabled={!activeTabMail} onClick={handleActiveTabReplyAction}><img src="/img/icons/reply.svg" className="svg-icon-inline" /> Reply</button></li>
+                                    <li><button disabled={!activeTabMail} onClick={handleActiveTabReplyAllAction}><img src="/img/icons/reply-all.svg" className="svg-icon-inline" /> Reply All</button></li>
                                     <li><button disabled={!activeTabMail} onClick={handleActiveTabForwardAction}><img src="/img/icons/forward.svg" className="svg-icon-inline" /> Forward</button></li>
                                     <li className="db-submenu-menu-wrap" ref={moveMenuRef}>
                                         <button
@@ -4828,6 +4904,9 @@ function MailSection({
                                 <li><button disabled={!hasAnyActionMail} onClick={handleMoveToTrashAction}><img src="/img/icons/move-to-folder.svg" className="svg-icon-inline" /> {t('Move to Trash')}</button></li>
                                 <li><button disabled={!hasAnyActionMail} onClick={handleArchiveAction}><img src="/img/icons/archive.svg" className="svg-icon-inline" /> {t('Archive')}</button></li>
                                 <li><button disabled={!hasAnyActionMail} onClick={handleReplyAction}>{hasMultipleActionMails ? <img src="/img/icons/reply-all.svg" className="svg-icon-inline" /> : <img src="/img/icons/reply.svg" className="svg-icon-inline" />} {homeReplyLabel}</button></li>
+                                {!hasMultipleActionMails && (
+                                    <li><button disabled={!hasAnyActionMail} onClick={handleReplyAllAction}><img src="/img/icons/reply-all.svg" className="svg-icon-inline" /> Reply All</button></li>
+                                )}
                                 <li><button disabled={!hasAnyActionMail} onClick={handleForwardAction}>{hasMultipleActionMails ? <img src="/img/icons/forward-all.svg" className="svg-icon-inline" /> : <img src="/img/icons/forward.svg" className="svg-icon-inline" />} {homeForwardLabel}</button></li>
                                 <li className="db-submenu-menu-wrap" ref={moveMenuRef}>
                                     <button

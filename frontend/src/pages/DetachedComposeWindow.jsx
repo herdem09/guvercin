@@ -6,8 +6,8 @@ import {
     isComposeDraftDirty,
     isComposeDraftModified,
     normalizeComposeDraft,
-    parseComposeBody,
 } from '../utils/compose.js'
+import { queueComposeSend } from '../utils/composeSend.js'
 import './DashboardPage.css'
 
 function safeParse(json) {
@@ -155,29 +155,24 @@ export default function DetachedComposeWindow({ initialLabel = '' } = {}) {
         if (!accountId) return
         try {
             setSending(true)
-            const normalized = normalizeComposeDraft(composed)
-            const payload = parseComposeBody(normalized, accountEmail)
-            const recipientCount = payload.to.length + payload.cc.length + payload.bcc.length
-            if (recipientCount === 0) {
-                window.alert('Please add at least one recipient.')
-                return false
-            }
-
-            const hasForwardTargets = Array.isArray(normalized?.forwardTargets) && normalized.forwardTargets.length > 0
-            if (hasForwardTargets) {
-                const subjectPrefix = normalized?.forwardOptions?.subjectPrefix || 'Fwd:'
-                const forwardPayload = {
-                    to: payload.to,
-                    cc: payload.cc,
-                    bcc: payload.bcc,
-                    subject_prefix: subjectPrefix,
-                }
-                await Promise.all(normalized.forwardTargets.map((target) => (
-                    queueOfflineAction('forward', forwardPayload, target.uid, target.mailbox)
-                )))
-            } else {
-                await queueOfflineAction('send', payload, `compose-${Date.now()}`, 'Sent')
-            }
+            const ok = await queueComposeSend({
+                draft: composed,
+                accountEmail,
+                queueAction: (actionType, targetUid, payload, targetFolder) => (
+                    queueOfflineAction(actionType, payload, targetUid, targetFolder)
+                ),
+                confirm: async (normalized, context = {}) => {
+                    if (context?.type === 'forward_many') {
+                        const forwardCount = Number(context?.count) || 0
+                        if (forwardCount <= 1) return true
+                        return window.confirm(`Send ${forwardCount} separate forwards?`)
+                    }
+                    const count = Array.isArray(normalized?.bulkReplyTargets) ? normalized.bulkReplyTargets.length : 0
+                    if (count <= 0) return true
+                    return window.confirm(`Send ${count} separate replies?`)
+                },
+            })
+            if (!ok) return false
 
             setPendingSend(null)
             setSent(true)
@@ -209,10 +204,13 @@ export default function DetachedComposeWindow({ initialLabel = '' } = {}) {
     const startDelayedSend = useCallback((composed) => {
         try {
             const normalized = normalizeComposeDraft(composed)
-            const payload = parseComposeBody(normalized, accountEmail)
-            if (payload.to.length + payload.cc.length + payload.bcc.length === 0) {
-                window.alert('Please add at least one recipient.')
-                return false
+            const hasBulkReplyTargets = Array.isArray(normalized?.bulkReplyTargets) && normalized.bulkReplyTargets.length > 0
+            if (!hasBulkReplyTargets) {
+                const recipientCount = (normalized.toRecipients || []).length + (normalized.ccRecipients || []).length + (normalized.bccRecipients || []).length
+                if (recipientCount === 0) {
+                    window.alert('Please add at least one recipient.')
+                    return false
+                }
             }
 
             clearPendingSend()

@@ -104,11 +104,21 @@ export function normalizeComposeDraft(draft = {}) {
   const toRecipients = normalizeComposeRecipients(draft?.toRecipients ?? draft?.to)
   const ccRecipients = normalizeComposeRecipients(draft?.ccRecipients ?? draft?.cc)
   const bccRecipients = normalizeComposeRecipients(draft?.bccRecipients ?? draft?.bcc)
+
+  const normalizeUid = (value) => {
+    if (typeof value === 'string') return value.trim()
+    if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+    return ''
+  }
+
   const forwardTargets = Array.isArray(draft?.forwardTargets)
     ? draft.forwardTargets
       .map((target) => ({
-        uid: typeof target?.uid === 'string' ? target.uid.trim() : '',
+        uid: normalizeUid(target?.uid),
         mailbox: typeof target?.mailbox === 'string' ? target.mailbox.trim() : '',
+        from: typeof target?.from === 'string' ? target.from : '',
+        subject: typeof target?.subject === 'string' ? target.subject : '',
+        date: typeof target?.date === 'string' ? target.date : '',
       }))
       .filter((target) => target.uid && target.mailbox)
     : []
@@ -117,6 +127,51 @@ export function normalizeComposeDraft(draft = {}) {
       subjectPrefix: typeof draft?.forwardOptions?.subjectPrefix === 'string' && draft.forwardOptions.subjectPrefix.trim()
         ? draft.forwardOptions.subjectPrefix.trim()
         : 'Fwd:',
+      forwardStyle: typeof draft?.forwardOptions?.forwardStyle === 'string'
+        && ['copy', 'eml'].includes(draft.forwardOptions.forwardStyle.trim().toLowerCase())
+        ? draft.forwardOptions.forwardStyle.trim().toLowerCase()
+        : (Boolean(draft?.forwardOptions?.bundle) && forwardTargets.length > 1 ? 'eml' : 'copy'),
+      bundle: Boolean(draft?.forwardOptions?.bundle),
+    }
+    : null
+
+  const extraHeaders = Array.isArray(draft?.extraHeaders)
+    ? draft.extraHeaders
+      .map((h) => ({
+        name: typeof h?.name === 'string' ? h.name.trim() : '',
+        value: typeof h?.value === 'string' ? h.value.trim() : '',
+      }))
+      .filter((h) => h.name && h.value)
+    : []
+
+  const replyContext = draft?.replyContext && typeof draft.replyContext === 'object'
+    ? {
+      uid: normalizeUid(draft.replyContext.uid),
+      mailbox: typeof draft.replyContext.mailbox === 'string' ? draft.replyContext.mailbox.trim() : '',
+    }
+    : null
+
+  const bulkReplyTargets = Array.isArray(draft?.bulkReplyTargets)
+    ? draft.bulkReplyTargets
+      .map((target) => ({
+        uid: normalizeUid(target?.uid),
+        mailbox: typeof target?.mailbox === 'string' ? target.mailbox.trim() : '',
+        subject: typeof target?.subject === 'string' ? target.subject : '',
+        address: typeof target?.address === 'string' ? target.address : '',
+        recipientTo: typeof target?.recipientTo === 'string' ? target.recipientTo : '',
+        cc: typeof target?.cc === 'string' ? target.cc : '',
+        date: typeof target?.date === 'string' ? target.date : '',
+        messageId: typeof target?.messageId === 'string' ? target.messageId.trim() : '',
+        references: typeof target?.references === 'string' ? target.references.trim() : '',
+        quote: typeof target?.quote === 'string' ? target.quote : '',
+      }))
+      .filter((target) => target.uid && target.mailbox)
+    : []
+
+  const bulkReplyOptions = bulkReplyTargets.length > 0
+    ? {
+      mode: draft?.bulkReplyOptions?.mode === 'reply_all' ? 'reply_all' : 'reply',
+      includeQuote: draft?.bulkReplyOptions?.includeQuote !== false,
     }
     : null
 
@@ -144,10 +199,18 @@ export function normalizeComposeDraft(draft = {}) {
     restorableSource: draft?.restorableSource || null,
     forwardTargets,
     forwardOptions,
+    extraHeaders,
+    replyContext: replyContext?.uid && replyContext?.mailbox ? replyContext : null,
+    bulkReplyTargets,
+    bulkReplyOptions,
   }
 }
 
 export function getComposeTitle(draft) {
+  const bulkReplyCount = Array.isArray(draft?.bulkReplyTargets) ? draft.bulkReplyTargets.length : 0
+  if (bulkReplyCount > 0) {
+    return bulkReplyCount === 1 ? 'Reply' : `Reply (${bulkReplyCount})`
+  }
   const forwardCount = Array.isArray(draft?.forwardTargets) ? draft.forwardTargets.length : 0
   if (forwardCount > 0) {
     return forwardCount === 1 ? 'Forward' : `Forward (${forwardCount})`
@@ -257,7 +320,7 @@ function composeDraftSignature(draft = {}) {
     .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)))
 
   return {
-    forwardTargets: normalized.forwardTargets || [],
+    forwardTargets: (normalized.forwardTargets || []).map((target) => ({ uid: target.uid, mailbox: target.mailbox })),
     forwardOptions: normalized.forwardOptions || null,
     format: normalized.format,
     toRecipients: normalized.toRecipients,

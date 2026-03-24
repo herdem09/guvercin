@@ -258,6 +258,43 @@ pub async fn send_mail(
     plain_body: &str,
     attachments: &[OutgoingAttachment],
 ) -> Result<(), String> {
+    send_mail_with_headers(
+        smtp_host,
+        smtp_port,
+        ssl_mode,
+        email,
+        password,
+        from,
+        to,
+        cc,
+        bcc,
+        subject,
+        format,
+        html_body,
+        plain_body,
+        attachments,
+        &[],
+    )
+    .await
+}
+
+pub async fn send_mail_with_headers(
+    smtp_host: &str,
+    smtp_port: u16,
+    ssl_mode: &str,
+    email: &str,
+    password: &str,
+    from: &str,
+    to: Vec<String>,
+    cc: Vec<String>,
+    bcc: Vec<String>,
+    subject: &str,
+    format: OutgoingMailFormat,
+    html_body: &str,
+    plain_body: &str,
+    attachments: &[OutgoingAttachment],
+    raw_headers: &[(String, String)],
+) -> Result<(), String> {
     info!(
         "Preparing to send email to {} recipients via {}:{} ({})",
         to.len() + cc.len() + bcc.len(),
@@ -291,7 +328,7 @@ pub async fn send_mail(
         html_body,
         plain_body,
         attachments,
-        &[],
+        raw_headers,
     )?;
 
     let credentials = Credentials::new(email.to_string(), password.to_string());
@@ -472,5 +509,26 @@ mod tests {
         assert!(formatted.contains("multipart/mixed"));
         assert!(formatted.contains("multipart/related"));
         assert!(formatted.contains("filename=\"doc.pdf\""));
+    }
+
+    #[test]
+    fn builds_message_with_raw_headers() {
+        let message = build_message(
+            "sender@example.com",
+            vec!["to@example.com".to_string()],
+            vec![],
+            vec![],
+            "Headers",
+            OutgoingMailFormat::Plain,
+            "",
+            "Body",
+            &[],
+            &[("In-Reply-To".to_string(), "<msg-1@example.com>".to_string())],
+        )
+        .expect("message with raw headers");
+
+        let bytes = message.formatted();
+        let formatted = String::from_utf8_lossy(&bytes);
+        assert!(formatted.contains("In-Reply-To: <msg-1@example.com>"));
     }
 }

@@ -11,6 +11,7 @@ use axum::{
 };
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use mailparse::MailHeaderMap;
 use serde::Deserialize;
 use serde_json::{self, json};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
@@ -178,6 +179,56 @@ fn parse_subject_prefix(payload: &serde_json::Value) -> String {
         .to_string()
 }
 
+fn parse_forward_style(payload: &serde_json::Value) -> String {
+    payload
+        .get("forward_style")
+        .or_else(|| payload.get("forwardStyle"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .map(|value| value.to_ascii_lowercase())
+        .filter(|value| value == "copy" || value == "eml")
+        .unwrap_or_else(|| "copy".to_string())
+}
+
+fn parse_optional_subject_override(payload: &serde_json::Value) -> Option<String> {
+    payload
+        .get("subject")
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn parse_payload_headers(payload: &serde_json::Value) -> Vec<(String, String)> {
+    payload
+        .get("headers")
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let name = item.get("name")?.as_str()?.trim();
+                    let value = item.get("value")?.as_str()?.trim();
+                    if name.is_empty() || value.is_empty() {
+                        return None;
+                    }
+                    Some((name.to_string(), value.to_string()))
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn parse_post_send_mark_answered(payload: &serde_json::Value) -> Option<(String, String)> {
+    let reply = payload.get("post_send")?.get("mark_answered")?;
+    let uid = reply.get("uid")?.as_str()?.trim();
+    let mailbox = reply.get("mailbox")?.as_str()?.trim();
+    if uid.is_empty() || mailbox.is_empty() {
+        return None;
+    }
+    Some((uid.to_string(), mailbox.to_string()))
+}
+
 fn apply_subject_prefix(prefix: &str, subject: &str) -> String {
     let prefix = prefix.trim();
     let subject = subject.trim();
@@ -198,6 +249,41 @@ fn apply_subject_prefix(prefix: &str, subject: &str) -> String {
     }
 
     format!("{prefix} {subject}").trim().to_string()
+}
+
+fn build_forward_bundle_default_subject(subject_prefix: &str, count: usize) -> String {
+    apply_subject_prefix(subject_prefix, &format!("{} messages", count))
+}
+
+fn sanitize_filename_component(raw: &str, max_len: usize) -> String {
+    let mut out = String::new();
+    for ch in raw.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-' | ' ') {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+        if out.len() >= max_len {
+            break;
+        }
+    }
+    out.trim().trim_matches('.').trim_matches('_').to_string()
+}
+
+fn build_forward_separator_plain() -> &'static str {
+    "\n\n---- Forwarded message ----\n\n"
+}
+
+fn build_forward_separator_html() -> &'static str {
+    "<hr>"
+}
+
+fn escape_html_basic(raw: &str) -> String {
+    raw.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
 }
 
 struct PreparedForwardContent {
@@ -1340,6 +1426,92 @@ pub async fn get_local_mail_raw(
         .into_response()
 }
 
+fn parse_reply_seed_from_raw(raw: &[u8]) -> serde_json::Value {
+    let mut message_id = String::new();
+    let mut references = String::new();
+    let mut in_reply_to = String::new();
+    let mut reply_to = String::new();
+
+    if let Ok(parsed) = mailparse::parse_mail(raw) {
+        let headers = parsed.get_headers();
+        message_id = headers
+            .get_first_value("Message-ID")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        references = headers
+            .get_first_value("References")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        in_reply_to = headers
+            .get_first_value("In-Reply-To")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        reply_to = headers
+            .get_first_value("Reply-To")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+    }
+
+    json!({
+        "message_id": message_id,
+        "references": references,
+        "in_reply_to": in_reply_to,
+        "reply_to": reply_to,
+    })
+}
+
+pub async fn get_local_reply_seed(
+    State(state): State<Arc<MailAppState>>,
+    Path((account_id, uid)): Path<(i64, String)>,
+    Query(q): Query<LocalMailListQuery>,
+) -> impl IntoResponse {
+    let pool = match db::get_user_db_pool(&state._db, account_id).await {
+        Ok(p) => p,
+        Err(e) => return e.into_response(),
+    };
+
+    let cached_raw: Option<Vec<u8>> = sqlx::query_scalar(
+        "SELECT raw_rfc822 FROM local_mail_cache WHERE uid = ? AND folder = ?",
+    )
+    .bind(&uid)
+    .bind(&q.mailbox)
+    .fetch_optional(&pool)
+    .await
+    .ok()
+    .flatten()
+    .flatten();
+
+    let mut raw = cached_raw;
+    if raw.is_none() {
+        let _ = ensure_imap_connected(&state._db, &state.imap, account_id).await;
+        raw = imap_session::fetch_mail_raw_in_mailbox(&state.imap, account_id, &q.mailbox, &uid);
+        if let Some(ref raw_bytes) = raw {
+            let _ = sqlx::query(
+                "UPDATE local_mail_cache SET raw_rfc822 = ?, updated_at = CURRENT_TIMESTAMP WHERE uid = ? AND folder = ?",
+            )
+            .bind(raw_bytes)
+            .bind(&uid)
+            .bind(&q.mailbox)
+            .execute(&pool)
+            .await;
+        }
+    }
+
+    let Some(raw_bytes) = raw else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error":"Raw mail not cached offline"})),
+        )
+            .into_response();
+    };
+
+    Json(parse_reply_seed_from_raw(&raw_bytes)).into_response()
+}
+
 pub async fn get_inline_asset(
     State(state): State<Arc<MailAppState>>,
     Path((account_id, asset_id)): Path<(i64, String)>,
@@ -2003,7 +2175,8 @@ pub async fn process_queue_once(
                                 .unwrap_or_default();
                             let attachments = parse_send_attachments(&parsed);
 
-                            crate::smtp_send::send_mail(
+                            let headers = parse_payload_headers(&parsed);
+                            match crate::smtp_send::send_mail_with_headers(
                                 &smtp_host,
                                 smtp_port,
                                 &ssl_mode,
@@ -2018,17 +2191,28 @@ pub async fn process_queue_once(
                                 html_body,
                                 plain_body,
                                 &attachments,
+                                &headers,
                             )
                             .await
+                            {
+                                Ok(()) => {
+                                    if let Some((uid, mailbox)) = parse_post_send_mark_answered(&parsed) {
+                                        let _ = ensure_imap_connected(&state._db, &state.imap, account_id).await;
+                                        let _ = imap_session::mark_answered(&state.imap, account_id, &mailbox, &uid, true);
+                                    }
+                                    Ok(())
+                                }
+                                Err(err) => Err(err),
+                            }
                         }
                     } else {
                         Err("Account not found".to_string())
                     }
                 }
-                "forward" => {
-                    if target_uid.trim().is_empty() || target_folder.trim().is_empty() {
-                        Ok(()) // nothing to forward
-                    } else {
+	                "forward" => {
+	                    if target_uid.trim().is_empty() || target_folder.trim().is_empty() {
+	                        Ok(()) // nothing to forward
+	                    } else {
                         let account_row = sqlx::query(
                             "SELECT email_address, auth_token, smtp_host, smtp_port, ssl_mode FROM accounts WHERE account_id = ?",
                         )
@@ -2071,8 +2255,24 @@ pub async fn process_queue_once(
                                 let bcc = parse_address_list(&parsed, "bcc");
                                 if to.is_empty() && cc.is_empty() && bcc.is_empty() {
                                     Err("Forward requires at least one recipient".to_string())
-                                } else {
-                                    let subject_prefix = parse_subject_prefix(&parsed);
+	                                } else {
+	                                    let subject_prefix = parse_subject_prefix(&parsed);
+	                                    let forward_style = parse_forward_style(&parsed);
+	                                    let subject_override = parse_optional_subject_override(&parsed);
+	                                    let intro_format = parse_send_format(&parsed);
+	                                    let intro_html = parsed
+	                                        .get("body_html")
+	                                        .or_else(|| parsed.get("html_body"))
+	                                        .and_then(|v| v.as_str())
+	                                        .unwrap_or_default()
+	                                        .to_string();
+	                                    let intro_plain = parsed
+	                                        .get("body_text")
+	                                        .or_else(|| parsed.get("body"))
+	                                        .and_then(|v| v.as_str())
+	                                        .unwrap_or_default()
+	                                        .to_string();
+	                                    let extra_attachments = parse_send_attachments(&parsed);
 
                                     let cached_raw: Option<Vec<u8>> = sqlx::query_scalar(
                                         "SELECT raw_rfc822 FROM local_mail_cache WHERE uid = ? AND folder = ?",
@@ -2095,11 +2295,11 @@ pub async fn process_queue_once(
                                         );
                                     }
 
-                                    if let Some(raw_bytes) = raw {
-                                        if !raw_was_cached {
-                                            let _ = sqlx::query(
-                                                "UPDATE local_mail_cache SET raw_rfc822 = ?, updated_at = CURRENT_TIMESTAMP WHERE uid = ? AND folder = ?",
-                                            )
+	                                    if let Some(raw_bytes) = raw {
+	                                        if !raw_was_cached {
+	                                            let _ = sqlx::query(
+	                                                "UPDATE local_mail_cache SET raw_rfc822 = ?, updated_at = CURRENT_TIMESTAMP WHERE uid = ? AND folder = ?",
+	                                            )
                                             .bind(&raw_bytes)
                                             .bind(&target_uid)
                                             .bind(&target_folder)
@@ -2107,42 +2307,361 @@ pub async fn process_queue_once(
                                             .await;
                                         }
 
-                                        let prepared = prepare_forward_from_raw(
-                                            &target_uid,
-                                            &raw_bytes,
-                                            &subject_prefix,
-                                        );
+		                                        let (subject, format, html_body, plain_body, attachments) = if forward_style == "eml" {
+		                                            let content = imap_session::parse_mail_content(target_uid.clone(), &raw_bytes);
+		                                            let subject = subject_override
+		                                                .clone()
+		                                                .unwrap_or_else(|| apply_subject_prefix(&subject_prefix, &content.subject));
+	                                            let format = intro_format;
+	                                            let html_body = intro_html.clone();
+	                                            let plain_body = if intro_plain.trim().is_empty() {
+	                                                "Forwarded message attached.".to_string()
+	                                            } else {
+	                                                intro_plain.clone()
+	                                            };
+		                                            let mut base = sanitize_filename_component(
+		                                                &format!("{}-{}", target_uid, content.subject),
+		                                                80,
+		                                            );
+		                                            if base.is_empty() {
+		                                                base = "forwarded".to_string();
+		                                            }
+		                                            let mut attachments = vec![OutgoingAttachment {
+		                                                filename: format!("{base}.eml"),
+		                                                content_type: "message/rfc822".to_string(),
+		                                                data_base64: BASE64_STANDARD.encode(&raw_bytes),
+		                                                disposition: OutgoingAttachmentDisposition::Attachment,
+		                                                content_id: None,
+		                                            }];
+	                                            attachments.extend(extra_attachments.clone());
+	                                            (subject, format, html_body, plain_body, attachments)
+	                                        } else {
+	                                            let prepared = prepare_forward_from_raw(
+	                                                &target_uid,
+	                                                &raw_bytes,
+	                                                &subject_prefix,
+	                                            );
 
-                                        crate::smtp_send::send_mail(
-                                            &smtp_host,
-                                            smtp_port,
-                                            &ssl_mode,
-                                            &email,
-                                            &password,
-                                            &email,
-                                            to,
-                                            cc,
-                                            bcc,
-                                            &prepared.subject,
-                                            prepared.format,
-                                            &prepared.html_body,
-                                            &prepared.plain_body,
-                                            &prepared.attachments,
-                                        )
-                                        .await
-                                    } else {
-                                        Err("Raw mail not available for forward (not cached offline and IMAP unavailable)".to_string())
-                                    }
-                                }
+	                                            let subject = subject_override.clone().unwrap_or(prepared.subject);
+	                                            let final_format = if matches!(intro_format, OutgoingMailFormat::Html)
+	                                                || matches!(prepared.format, OutgoingMailFormat::Html)
+	                                            {
+	                                                OutgoingMailFormat::Html
+	                                            } else {
+	                                                OutgoingMailFormat::Plain
+	                                            };
+
+		                                            let prepared_plain = prepared.plain_body;
+		                                            let prepared_html = prepared.html_body;
+
+		                                            let plain_body = if intro_plain.trim().is_empty() {
+		                                                prepared_plain.clone()
+		                                            } else {
+		                                                format!(
+		                                                    "{intro_plain}{}{}",
+		                                                    build_forward_separator_plain(),
+		                                                    prepared_plain.clone()
+		                                                )
+		                                            };
+
+		                                            let forward_html = if prepared_html.trim().is_empty() {
+		                                                format!("<pre>{}</pre>", escape_html_basic(&prepared_plain))
+		                                            } else {
+		                                                prepared_html
+		                                            };
+	                                            let html_body = if intro_html.trim().is_empty() {
+	                                                forward_html
+	                                            } else {
+	                                                format!("{intro_html}{}{}", build_forward_separator_html(), forward_html)
+	                                            };
+
+		                                            let mut attachments = prepared.attachments;
+		                                            attachments.extend(extra_attachments.clone());
+		                                            (subject, final_format, html_body, plain_body, attachments)
+	                                        };
+
+	                                        // Ensure any user attachments are appended (already in attachments for both branches via extra_attachments).
+	                                        // (Keep as-is; the comment is here to clarify intent.)
+
+	                                        let result = crate::smtp_send::send_mail(
+	                                            &smtp_host,
+	                                            smtp_port,
+	                                            &ssl_mode,
+	                                            &email,
+	                                            &password,
+	                                            &email,
+	                                            to,
+	                                            cc,
+	                                            bcc,
+	                                            &subject,
+	                                            format,
+	                                            &html_body,
+	                                            &plain_body,
+	                                            &attachments,
+	                                        )
+	                                        .await;
+
+	                                        if result.is_ok() {
+	                                            let _ = ensure_imap_connected(&state._db, &state.imap, account_id).await;
+	                                            let _ = imap_session::mark_forwarded(&state.imap, account_id, &target_folder, &target_uid, true);
+	                                        }
+
+	                                        result
+	                                    } else {
+	                                        Err("Raw mail not available for forward (not cached offline and IMAP unavailable)".to_string())
+	                                    }
+	                                }
                             }
                         } else {
                             Err("Account not found".to_string())
                         }
-                    }
-                }
-                _ => Err(format!("Unsupported action type: {action_type}")),
-            }
-        };
+	                    }
+	                }
+	                "forward_bundle" => {
+	                    let account_row = sqlx::query(
+	                        "SELECT email_address, auth_token, smtp_host, smtp_port, ssl_mode FROM accounts WHERE account_id = ?",
+	                    )
+	                    .bind(account_id)
+	                    .fetch_optional(&state._db.require_general_pool().await?)
+	                    .await?;
+
+	                    if let Some(row) = account_row {
+	                        let email = row
+	                            .try_get::<Option<String>, _>("email_address")
+	                            .ok()
+	                            .flatten()
+	                            .unwrap_or_default();
+	                        let password = row
+	                            .try_get::<Option<String>, _>("auth_token")
+	                            .ok()
+	                            .flatten()
+	                            .unwrap_or_default();
+	                        let smtp_host = row
+	                            .try_get::<Option<String>, _>("smtp_host")
+	                            .ok()
+	                            .flatten()
+	                            .unwrap_or_default();
+	                        let smtp_port = row
+	                            .try_get::<Option<i64>, _>("smtp_port")
+	                            .ok()
+	                            .flatten()
+	                            .unwrap_or(465) as u16;
+	                        let ssl_mode = row
+	                            .try_get::<Option<String>, _>("ssl_mode")
+	                            .ok()
+	                            .flatten()
+	                            .unwrap_or_else(|| "STARTTLS".to_string());
+
+	                        if smtp_host.is_empty() || password.is_empty() || email.is_empty() {
+	                            Err("Missing SMTP configuration for account".to_string())
+	                        } else {
+	                            let to = parse_address_list(&parsed, "to");
+	                            let cc = parse_address_list(&parsed, "cc");
+	                            let bcc = parse_address_list(&parsed, "bcc");
+	                            if to.is_empty() && cc.is_empty() && bcc.is_empty() {
+	                                Err("Forward requires at least one recipient".to_string())
+	                            } else {
+	                                let targets = parsed
+	                                    .get("targets")
+	                                    .and_then(|value| value.as_array())
+	                                    .map(|items| {
+	                                        items
+	                                            .iter()
+	                                            .filter_map(|item| {
+	                                                let uid = item.get("uid")?.as_str()?.trim();
+	                                                let mailbox = item.get("mailbox")?.as_str()?.trim();
+	                                                if uid.is_empty() || mailbox.is_empty() {
+	                                                    return None;
+	                                                }
+	                                                Some((uid.to_string(), mailbox.to_string()))
+	                                            })
+	                                            .collect::<Vec<_>>()
+	                                    })
+	                                    .unwrap_or_default();
+
+	                                if targets.is_empty() {
+	                                    Ok(())
+	                                } else {
+	                                    let subject_prefix = parse_subject_prefix(&parsed);
+	                                    let subject = parse_optional_subject_override(&parsed)
+	                                        .unwrap_or_else(|| build_forward_bundle_default_subject(&subject_prefix, targets.len()));
+	                                    let format = parse_send_format(&parsed);
+	                                    let intro_html = parsed
+	                                        .get("body_html")
+	                                        .or_else(|| parsed.get("html_body"))
+	                                        .and_then(|v| v.as_str())
+	                                        .unwrap_or_default()
+	                                        .to_string();
+	                                    let intro_plain = parsed
+	                                        .get("body_text")
+	                                        .or_else(|| parsed.get("body"))
+	                                        .and_then(|v| v.as_str())
+	                                        .unwrap_or_default()
+	                                        .to_string();
+	                                    let extra_attachments = parse_send_attachments(&parsed);
+
+	                                    let mut raw_entries: Vec<(String, String, Vec<u8>)> = Vec::new();
+	                                    let mut fetch_error: Option<String> = None;
+
+	                                    for (uid, mailbox) in targets.iter() {
+	                                        let cached_raw: Option<Vec<u8>> = sqlx::query_scalar(
+	                                            "SELECT raw_rfc822 FROM local_mail_cache WHERE uid = ? AND folder = ?",
+	                                        )
+	                                        .bind(uid)
+	                                        .bind(mailbox)
+	                                        .fetch_optional(&pool)
+	                                        .await?
+	                                        .flatten();
+	                                        let raw_was_cached = cached_raw.is_some();
+
+	                                        let mut raw = cached_raw;
+	                                        if raw.is_none() {
+	                                            let _ = ensure_imap_connected(&state._db, &state.imap, account_id).await;
+	                                            raw = imap_session::fetch_mail_raw_in_mailbox(
+	                                                &state.imap,
+	                                                account_id,
+	                                                mailbox,
+	                                                uid,
+	                                            );
+	                                        }
+
+	                                        let Some(raw_bytes) = raw else {
+	                                            fetch_error = Some(
+	                                                "Raw mail not available for forward bundle (not cached offline and IMAP unavailable)"
+	                                                    .to_string(),
+	                                            );
+	                                            break;
+	                                        };
+
+	                                        if !raw_was_cached {
+	                                            let _ = sqlx::query(
+	                                                "UPDATE local_mail_cache SET raw_rfc822 = ?, updated_at = CURRENT_TIMESTAMP WHERE uid = ? AND folder = ?",
+	                                            )
+	                                            .bind(&raw_bytes)
+	                                            .bind(uid)
+	                                            .bind(mailbox)
+	                                            .execute(&pool)
+	                                            .await;
+	                                        }
+
+	                                        raw_entries.push((uid.clone(), mailbox.clone(), raw_bytes));
+	                                    }
+
+	                                    if let Some(err) = fetch_error {
+	                                        Err(err)
+	                                    } else {
+	                                        let mut eml_attachments = Vec::new();
+	                                        let mut used_filenames = std::collections::HashSet::<String>::new();
+	                                        let mut summary_plain_lines = Vec::new();
+	                                        let mut summary_html_items = Vec::new();
+
+	                                        for (idx, (uid, _mailbox, raw_bytes)) in raw_entries.iter().enumerate() {
+	                                            let content = imap_session::parse_mail_content(uid.clone(), raw_bytes);
+	                                            let subject_hint = content.subject.clone();
+	                                            let date_hint = content.date.clone();
+	                                            let from_hint = if content.from_name.trim().is_empty() {
+	                                                content.from_address.clone()
+	                                            } else {
+	                                                format!("{} <{}>", content.from_name, content.from_address)
+	                                            };
+
+	                                            summary_plain_lines.push(format!(
+	                                                "{}. From: {} | Date: {} | Subject: {}",
+	                                                idx + 1,
+	                                                from_hint,
+	                                                date_hint,
+	                                                subject_hint
+	                                            ));
+	                                            summary_html_items.push(format!(
+	                                                "<li><strong>From:</strong> {}<br><strong>Date:</strong> {}<br><strong>Subject:</strong> {}</li>",
+	                                                escape_html_basic(&from_hint),
+	                                                escape_html_basic(&date_hint),
+	                                                escape_html_basic(&subject_hint),
+	                                            ));
+
+	                                            let mut base = sanitize_filename_component(
+	                                                &format!("{}-{}-{}-{}", idx + 1, uid, date_hint, subject_hint),
+	                                                80,
+	                                            );
+	                                            if base.is_empty() {
+	                                                base = format!("forwarded-{}", idx + 1);
+	                                            }
+
+	                                            let mut filename = format!("{base}.eml");
+	                                            if used_filenames.contains(&filename) {
+	                                                filename = format!("{base}-{}.eml", idx + 1);
+	                                            }
+	                                            used_filenames.insert(filename.clone());
+
+	                                            eml_attachments.push(OutgoingAttachment {
+	                                                filename,
+	                                                content_type: "message/rfc822".to_string(),
+	                                                data_base64: BASE64_STANDARD.encode(raw_bytes),
+	                                                disposition: OutgoingAttachmentDisposition::Attachment,
+	                                                content_id: None,
+	                                            });
+	                                        }
+
+	                                        let summary_plain = summary_plain_lines.join("\n");
+	                                        let summary_html = format!("<ul>{}</ul>", summary_html_items.join("\n"));
+
+	                                        let plain_body = if intro_plain.trim().is_empty() {
+	                                            summary_plain
+	                                        } else {
+	                                            format!("{intro_plain}\n\n{summary_plain}")
+	                                        };
+	                                        let html_body = if intro_html.trim().is_empty() {
+	                                            summary_html
+	                                        } else {
+	                                            format!("{intro_html}{}{}", build_forward_separator_html(), summary_html)
+	                                        };
+
+	                                        let mut attachments = eml_attachments;
+	                                        attachments.extend(extra_attachments);
+
+	                                        let result = crate::smtp_send::send_mail(
+	                                            &smtp_host,
+	                                            smtp_port,
+	                                            &ssl_mode,
+	                                            &email,
+	                                            &password,
+	                                            &email,
+	                                            to,
+	                                            cc,
+	                                            bcc,
+	                                            &subject,
+	                                            format,
+	                                            &html_body,
+	                                            &plain_body,
+	                                            &attachments,
+	                                        )
+	                                        .await;
+
+	                                        if result.is_ok() {
+	                                            let _ = ensure_imap_connected(&state._db, &state.imap, account_id).await;
+	                                            for (uid, mailbox, _raw_bytes) in raw_entries {
+	                                                let _ = imap_session::mark_forwarded(
+	                                                    &state.imap,
+	                                                    account_id,
+	                                                    &mailbox,
+	                                                    &uid,
+	                                                    true,
+	                                                );
+	                                            }
+	                                        }
+
+	                                        result
+	                                    }
+	                                }
+	                            }
+	                        }
+	                    } else {
+	                        Err("Account not found".to_string())
+	                    }
+	                }
+	                _ => Err(format!("Unsupported action type: {action_type}")),
+	            }
+	        };
 
         match result {
             Ok(_) => {
@@ -3554,6 +4073,33 @@ mod tests {
         assert_eq!(apply_subject_prefix("Fwd:", "fwd: Hello"), "fwd: Hello");
         assert_eq!(apply_subject_prefix("Fwd:", ""), "Fwd:");
         assert_eq!(apply_subject_prefix("", "Hello"), "Hello");
+    }
+
+    #[test]
+    fn build_forward_bundle_default_subject_applies_prefix() {
+        assert_eq!(
+            build_forward_bundle_default_subject("Fwd:", 5),
+            "Fwd: 5 messages"
+        );
+        assert_eq!(
+            build_forward_bundle_default_subject("FW:", 1),
+            "FW: 1 messages"
+        );
+    }
+
+    #[test]
+    fn parse_reply_seed_from_raw_includes_reply_to() {
+        let raw = concat!(
+            "From: sender@example.com\r\n",
+            "To: me@example.com\r\n",
+            "Reply-To: Reply Person <reply@example.com>\r\n",
+            "Message-ID: <m1>\r\n",
+            "\r\n",
+            "Hello\r\n",
+        );
+        let seed = parse_reply_seed_from_raw(raw.as_bytes());
+        assert_eq!(seed.get("reply_to").and_then(|v| v.as_str()).unwrap_or(""), "Reply Person <reply@example.com>");
+        assert_eq!(seed.get("message_id").and_then(|v| v.as_str()).unwrap_or(""), "<m1>");
     }
 
     #[test]

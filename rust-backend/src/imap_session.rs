@@ -825,6 +825,36 @@ pub fn mark_seen(
     session.uid_store_flag(uid, "\\Seen", seen)
 }
 
+pub fn mark_answered(
+    state: &Arc<ImapState>,
+    account_id: i64,
+    mailbox: &str,
+    uid: &str,
+    answered: bool,
+) -> Result<(), String> {
+    let mut sessions = state.sessions.lock().unwrap();
+    let session = sessions
+        .get_mut(&account_id)
+        .ok_or_else(|| format!("No IMAP session for account {account_id}"))?;
+    session.select_mailbox(mailbox)?;
+    session.uid_store_flag(uid, "\\Answered", answered)
+}
+
+pub fn mark_forwarded(
+    state: &Arc<ImapState>,
+    account_id: i64,
+    mailbox: &str,
+    uid: &str,
+    forwarded: bool,
+) -> Result<(), String> {
+    let mut sessions = state.sessions.lock().unwrap();
+    let session = sessions
+        .get_mut(&account_id)
+        .ok_or_else(|| format!("No IMAP session for account {account_id}"))?;
+    session.select_mailbox(mailbox)?;
+    session.uid_store_keyword(uid, "$Forwarded", forwarded)
+}
+
 pub fn set_label(
     state: &Arc<ImapState>,
     account_id: i64,
