@@ -72,6 +72,10 @@ pub async fn run(db_dir: Option<PathBuf>) -> Result<(), crate::error::AppError> 
             "/api/account/:account_id/mailbox-count-display",
             post(routes::set_mailbox_count_display),
         )
+        .route(
+            "/api/account/:account_id/conversation-view",
+            post(routes::set_conversation_view),
+        )
         .route("/api/account/:account_id/mailbox-order", post(routes::set_mailbox_order))
         .route("/api/account/:account_id/label-order", post(routes::set_label_order))
         .route(

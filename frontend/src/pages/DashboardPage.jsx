@@ -22,8 +22,73 @@ import {
     parseComposeRecipients,
 } from '../utils/compose.js'
 import { queueComposeSend } from '../utils/composeSend.js'
+import { buildThreads } from '../utils/threading.js'
 import './DashboardPage.css'
 import SettingsPage from './SettingsPage.jsx'
+
+function resizeIframeToContent(iframe) {
+    if (!iframe) return
+    try {
+        const doc = iframe.contentDocument
+        if (!doc) return
+        const body = doc.body
+        const html = doc.documentElement
+        const height = Math.max(
+            1,
+            Math.ceil(
+                Math.max(
+                    html?.scrollHeight || 0,
+                    body?.scrollHeight || 0,
+                    html?.getBoundingClientRect?.().height || 0,
+                    body?.getBoundingClientRect?.().height || 0,
+                ),
+            ),
+        )
+        iframe.style.height = `${height}px`
+    } catch {
+        // ignore (sandbox / cross-origin)
+    }
+}
+
+function ResizableHtmlIframe({ html, title }) {
+    const ref = useRef(null)
+
+    useEffect(() => {
+        const iframe = ref.current
+        if (!iframe) return
+
+        const handleResize = () => resizeIframeToContent(iframe)
+        const attachImageListeners = () => {
+            try {
+                const doc = iframe.contentDocument
+                const images = Array.from(doc?.images || [])
+                images.forEach((img) => {
+                    if (!img) return
+                    if (img.complete && img.naturalWidth > 0) return
+                    img.addEventListener('load', handleResize, { once: true })
+                    img.addEventListener('error', handleResize, { once: true })
+                })
+            } catch {
+                // ignore
+            }
+        }
+
+        iframe.onload = () => {
+            handleResize()
+            attachImageListeners()
+            window.setTimeout(handleResize, 50)
+            window.setTimeout(handleResize, 250)
+        }
+
+        iframe.srcdoc = html || ''
+        window.setTimeout(handleResize, 50)
+        return () => {
+            if (iframe) iframe.onload = null
+        }
+    }, [html])
+
+    return <iframe ref={ref} title={title} sandbox="allow-same-origin" />
+}
 
 const SubmenuBar = ({ children, submenuScrollRef, submenuMoreRef, submenuVisibleCount, setSubmenuVisibleCount }) => {
     const [isMoreOpen, setIsMoreOpen] = useState(false)
@@ -2090,13 +2155,27 @@ const DashboardPage = () => {
     }
 
     useEffect(() => {
-        if (iframeRef.current && mailContent?.html_body) {
-            const doc = iframeRef.current.contentDocument
+        if (!iframeRef.current || !mailContent?.html_body) return
+        const iframe = iframeRef.current
+        try {
+            const doc = iframe.contentDocument
             doc.open()
             doc.write(mailContent.html_body)
             doc.close()
+            resizeIframeToContent(iframe)
+            window.setTimeout(() => resizeIframeToContent(iframe), 50)
+            window.setTimeout(() => resizeIframeToContent(iframe), 250)
+            const images = Array.from(doc?.images || [])
+            images.forEach((img) => {
+                if (!img) return
+                if (img.complete && img.naturalWidth > 0) return
+                img.addEventListener('load', () => resizeIframeToContent(iframe), { once: true })
+                img.addEventListener('error', () => resizeIframeToContent(iframe), { once: true })
+            })
+        } catch {
+            // ignore
         }
-    }, [mailContent])
+    }, [iframeRef, mailContent])
 
     const nowForClock = new Date()
     const hour12Pref = systemHour12Preference()
@@ -2326,14 +2405,15 @@ const DashboardPage = () => {
                                 setMails={setMails}
                                 selectedMail={selectedMail}
                                 setSelectedMail={setSelectedMail}
-                                mailContent={mailContent}
-                                setMailContent={setMailContent}
-                                loadingMails={loadingMails}
-                                loadingContent={loadingContent}
-                                connecting={connecting}
-                                loadMails={loadMails}
-                                loadMailsFromCache={loadMailsFromCache}
-                                syncMailsFromRemote={syncMailsFromRemote}
+	                                mailContent={mailContent}
+	                                setMailContent={setMailContent}
+	                                loadingMails={loadingMails}
+	                                loadingContent={loadingContent}
+	                                setLoadingContent={setLoadingContent}
+	                                connecting={connecting}
+	                                loadMails={loadMails}
+	                                loadMailsFromCache={loadMailsFromCache}
+	                                syncMailsFromRemote={syncMailsFromRemote}
                                 prefetchInlineAssets={prefetchInlineAssets}
                                 isSyncing={isSyncing}
                                 openMail={openMail}
@@ -2676,11 +2756,11 @@ function MailSection({
     activeSearch,
     onClearSearch,
     onSelectFolder,
-    ensureImapConnected,
-    folders, labels, selectedFolder, setSelectedFolder, mails, setMails,
-    selectedMail, setSelectedMail, mailContent, setMailContent, loadingMails, loadingContent,
-    connecting, loadMailsFromCache, syncMailsFromRemote, prefetchInlineAssets, isSyncing,
-    openMail, detachMailToWindow, detachMailToWindowFromList, iframeRef, getShortTime,
+	    ensureImapConnected,
+	    folders, labels, selectedFolder, setSelectedFolder, mails, setMails,
+	    selectedMail, setSelectedMail, mailContent, setMailContent, loadingMails, loadingContent, setLoadingContent,
+	    connecting, loadMailsFromCache, syncMailsFromRemote, prefetchInlineAssets, isSyncing,
+	    openMail, detachMailToWindow, detachMailToWindowFromList, iframeRef, getShortTime,
     currentPage, setCurrentPage, maxPage: _maxPage, perPage, setPerPage,
     isMailFullscreen, toggleMailFullscreen,
     deleteMailsOptimistic, moveMailsOptimistic, setMailsSeenState, queueAction, createMailbox,
@@ -2700,6 +2780,11 @@ function MailSection({
     const [folderWidth, setFolderWidth] = useState(240)
     const [listWidth, setListWidth] = useState(360)
     const [minListWidth, setMinListWidth] = useState(360)
+    const [expandedThreadIds, setExpandedThreadIds] = useState(() => new Set())
+    const [activeThreadReaderId, setActiveThreadReaderId] = useState(null)
+    const [threadReaderOpenIds, setThreadReaderOpenIds] = useState(() => new Set())
+    const [threadReaderLoadingIds, setThreadReaderLoadingIds] = useState(() => new Set())
+    const [threadReaderContentById, setThreadReaderContentById] = useState(() => ({}))
     const [foldersHidden, setFoldersHidden] = useState(false)
     const [mailsHidden, setMailsHidden] = useState(false)
     const [layoutMode, setLayoutMode] = useState('full') // 'full' | 'medium' | 'narrow'
@@ -2740,6 +2825,12 @@ function MailSection({
     const [blockSenderSelectedFolder, setBlockSenderSelectedFolder] = useState('')
     const displayCols = isMailFullscreen ? layoutCols : 1
     const perPageValue = Math.max(1, Number.parseInt(perPage, 10) || 50)
+
+    useEffect(() => {
+        if (!accountId) return
+        setExpandedThreadIds(new Set())
+        setActiveThreadReaderId(null)
+    }, [accountId])
 
     const resolveLayoutData = (layout) => {
         const fallback = {
@@ -2850,16 +2941,49 @@ function MailSection({
         return filtered
     }, [accountEmail, activeFilter, mails, sortBy, sortDirection])
 
-    const filteredMaxPage = Math.max(1, Math.ceil(visibleMails.length / perPageValue))
+    const threadedEnabled = listMode !== 'search'
+    useEffect(() => {
+        if (threadedEnabled) return
+        setActiveThreadReaderId(null)
+    }, [threadedEnabled])
+    const threadData = useMemo(() => {
+        if (!threadedEnabled) return { threads: [], threadByMailId: new Map() }
+        const threads = buildThreads(visibleMails, { threadOrder: 'asc', mailbox: selectedFolder })
+        const threadByMailId = new Map()
+        threads.forEach((thread) => {
+            ;(thread?.mails || []).forEach((mail) => {
+                if (mail?.id != null) threadByMailId.set(String(mail.id), thread)
+            })
+        })
+        return { threads, threadByMailId }
+    }, [threadedEnabled, visibleMails, selectedFolder])
+
+    const visibleThreads = threadData.threads
+    const selectedThread = selectedMail ? threadData.threadByMailId.get(String(selectedMail.id)) : null
+    const showThreadReader = !!(threadedEnabled && selectedThread && activeThreadReaderId && String(activeThreadReaderId) === String(selectedThread.id))
+
+    useEffect(() => {
+        if (!threadedEnabled || !selectedThread?.id) return
+        setExpandedThreadIds((prev) => {
+            const next = new Set(prev)
+            next.add(selectedThread.id)
+            return next
+        })
+    }, [selectedThread?.id, threadedEnabled])
+
+    const itemCount = threadedEnabled ? visibleThreads.length : visibleMails.length
+    const filteredMaxPage = Math.max(1, Math.ceil(itemCount / perPageValue))
     const displayPage = Math.min(currentPage, filteredMaxPage)
     const pageStart = (displayPage - 1) * perPageValue
-    const pagedVisibleMails = visibleMails.slice(pageStart, pageStart + perPageValue)
+    const pagedVisibleMails = threadedEnabled ? [] : visibleMails.slice(pageStart, pageStart + perPageValue)
+    const pagedVisibleThreads = threadedEnabled ? visibleThreads.slice(pageStart, pageStart + perPageValue) : []
     const selectedGlobalIndex = useMemo(() => {
         if (!selectedMail) return -1
         const selectedKey = String(selectedMail?.id ?? '')
         if (!selectedKey) return -1
         return visibleMails.findIndex((mail) => String(mail?.id ?? '') === selectedKey)
     }, [selectedMail, visibleMails])
+
     const selectedPage = selectedGlobalIndex >= 0 ? Math.floor(selectedGlobalIndex / perPageValue) + 1 : 1
     const selectedPageStart = (selectedPage - 1) * perPageValue
     const selectedIndexInPage = selectedGlobalIndex >= 0 ? (selectedGlobalIndex - selectedPageStart + 1) : 0
@@ -2870,6 +2994,110 @@ function MailSection({
     const nextMail = selectedGlobalIndex >= 0 && selectedGlobalIndex < visibleMails.length - 1
         ? visibleMails[selectedGlobalIndex + 1]
         : null
+
+    const selectedThreadGlobalIndex = useMemo(() => {
+        if (!threadedEnabled || !selectedThread?.id) return -1
+        return visibleThreads.findIndex((t) => String(t?.id ?? '') === String(selectedThread.id))
+    }, [selectedThread?.id, threadedEnabled, visibleThreads])
+    const selectedThreadPage = selectedThreadGlobalIndex >= 0
+        ? Math.floor(selectedThreadGlobalIndex / perPageValue) + 1
+        : 1
+
+    const selectedThreadIndex = useMemo(() => {
+        if (!threadedEnabled || !selectedThread) return -1
+        return (selectedThread.mails || []).findIndex((m) => String(m?.id ?? '') === String(selectedMail?.id ?? ''))
+    }, [selectedMail?.id, selectedThread, threadedEnabled])
+    const selectedThreadCount = threadedEnabled && selectedThread ? (selectedThread.mails || []).length : 0
+    const latestThreadMail = threadedEnabled && selectedThreadCount > 0
+        ? selectedThread.mails[selectedThreadCount - 1]
+        : null
+    const selectedIsThreadAnchor = !!(latestThreadMail && selectedMail && String(selectedMail.id) === String(latestThreadMail.id))
+    const prevThreadMail = threadedEnabled && selectedThreadIndex > 0 ? selectedThread.mails[selectedThreadIndex - 1] : null
+    const nextThreadMail = threadedEnabled && selectedThread && selectedThreadIndex >= 0 && selectedThreadIndex < selectedThreadCount - 1
+        ? selectedThread.mails[selectedThreadIndex + 1]
+        : null
+
+    const fetchMailContentForThreadReader = useCallback(async (mail) => {
+        if (!mail || !accountId || !backendReachable) return null
+        try {
+            const mailbox = mail?.mailbox || selectedFolder || 'INBOX'
+            let endpoint = `/api/offline/${accountId}/local-content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
+            let res = await fetch(apiUrl(endpoint), { cache: 'no-store' })
+            if (!res.ok && canUseRemoteMail) {
+                endpoint = `/api/mail/${accountId}/content/${mail.id}?mailbox=${encodeURIComponent(mailbox)}`
+                res = await fetch(apiUrl(endpoint), { cache: 'no-store' })
+            }
+            if (!res.ok) return null
+            let data = await res.json()
+            const html = await prefetchInlineAssets(mail.id, mailbox)
+            if (html) data = { ...data, html_body: html }
+            return data
+        } catch {
+            return null
+        }
+    }, [accountId, backendReachable, canUseRemoteMail, prefetchInlineAssets, selectedFolder])
+
+    const toggleThreadReaderMail = useCallback((mail) => {
+        const id = String(mail?.id ?? '')
+        if (!id) return
+        const wasOpen = threadReaderOpenIds.has(id)
+        setThreadReaderOpenIds((prev) => {
+            const next = new Set(prev)
+            if (next.has(id)) next.delete(id)
+            else next.add(id)
+            return next
+        })
+
+        if (wasOpen) return
+        const alreadyHave = !!threadReaderContentById?.[id]
+        const alreadyLoading = threadReaderLoadingIds.has(id)
+        if (alreadyHave || alreadyLoading) return
+
+        setThreadReaderLoadingIds((prev) => {
+            const next = new Set(prev)
+            next.add(id)
+            return next
+        })
+        fetchMailContentForThreadReader(mail).then((data) => {
+            if (data) setThreadReaderContentById((prev) => ({ ...(prev || {}), [id]: data }))
+        }).finally(() => {
+            setThreadReaderLoadingIds((prev) => {
+                const next = new Set(prev)
+                next.delete(id)
+                return next
+            })
+        })
+    }, [fetchMailContentForThreadReader, threadReaderContentById, threadReaderLoadingIds, threadReaderOpenIds])
+
+    useEffect(() => {
+        if (!showThreadReader || !selectedThread?.id) {
+            setThreadReaderOpenIds(new Set())
+            setThreadReaderLoadingIds(new Set())
+            setThreadReaderContentById({})
+            return
+        }
+        setThreadReaderOpenIds(new Set())
+        setThreadReaderLoadingIds(new Set())
+        setThreadReaderContentById({})
+    }, [selectedThread?.id, showThreadReader])
+
+    useEffect(() => {
+        if (!threadedEnabled || !showThreadReader) return
+        const id = String(selectedMail?.id ?? '')
+        if (!id || !mailContent || String(mailContent.id) !== id) return
+        setThreadReaderContentById((prev) => ({ ...(prev || {}), [id]: mailContent }))
+    }, [mailContent, selectedMail?.id, showThreadReader, threadedEnabled])
+
+    const pagedSelectableMails = useMemo(() => {
+        if (!threadedEnabled) return pagedVisibleMails
+        const out = []
+        pagedVisibleThreads.forEach((thread) => {
+            ;(thread?.mails || []).forEach((mail) => {
+                if (mail) out.push(mail)
+            })
+        })
+        return out
+    }, [pagedVisibleMails, pagedVisibleThreads, threadedEnabled])
     const selectedIdSet = selectedMailIds
     const actionableMails = useMemo(() => {
         if (selectMode && selectedIdSet.size > 0) {
@@ -3246,6 +3474,11 @@ function MailSection({
             if (intent === 'open_mail' && pendingMail) {
                 openMailOrDraft(pendingMail)
             }
+            if (intent === 'select_mail' && pendingMail) {
+                setSelectedMail(pendingMail)
+                setMailContent(null)
+                setLoadingContent(false)
+            }
             return
         }
 
@@ -3255,13 +3488,18 @@ function MailSection({
             intent,
             pendingMail,
         })
-    }, [closeComposeTarget, openMailOrDraft])
+    }, [closeComposeTarget, openMailOrDraft, setMailContent, setSelectedMail])
 
     const continueComposeExitIntent = useCallback(async (prompt) => {
         if (prompt?.intent === 'open_mail' && prompt.pendingMail) {
             await openMailOrDraft(prompt.pendingMail)
         }
-    }, [openMailOrDraft])
+        if (prompt?.intent === 'select_mail' && prompt.pendingMail) {
+            setSelectedMail(prompt.pendingMail)
+            setMailContent(null)
+            setLoadingContent(false)
+        }
+    }, [openMailOrDraft, setMailContent, setSelectedMail])
 
     const handleComposeExitAction = useCallback(async (action) => {
         if (!composeExitPrompt) return
@@ -3311,6 +3549,7 @@ function MailSection({
 
     const attemptOpenMail = useCallback(async (mail) => {
         if (!mail) return
+        setActiveThreadReaderId(null)
         if (!inlineComposeSession) {
             await openMailOrDraft(mail)
             return
@@ -3336,6 +3575,38 @@ function MailSection({
             pendingMail: mail,
         })
     }, [inlineComposeSession, openMailOrDraft, setInlineComposeSession])
+
+    const attemptSelectMailPreview = useCallback(async (mail) => {
+        if (!mail) return
+        if (!inlineComposeSession) {
+            setSelectedMail(mail)
+            setMailContent(null)
+            setLoadingContent(false)
+            return
+        }
+
+        const hasMeaningfulChanges = inlineComposeSession?.baselineDraft
+            ? isComposeDraftModified(inlineComposeSession.draft, inlineComposeSession.baselineDraft)
+            : isComposeDraftDirty(inlineComposeSession.draft)
+        if (!hasMeaningfulChanges) {
+            setInlineComposeSession(null)
+            setSelectedMail(mail)
+            setMailContent(null)
+            setLoadingContent(false)
+            return
+        }
+
+        setComposeExitPrompt({
+            target: {
+                type: 'inline',
+                id: inlineComposeSession.id,
+                source: inlineComposeSession.source,
+            },
+            draft: inlineComposeSession.draft,
+            intent: 'select_mail',
+            pendingMail: mail,
+        })
+    }, [inlineComposeSession, setInlineComposeSession, setMailContent, setSelectedMail])
 
     const composeDraft = useCallback((draft, source = 'new') => {
         openInlineCompose({ source, draft })
@@ -3961,7 +4232,7 @@ function MailSection({
             mail,
             moveMenuOpen: false,
             labelMenuOpen: false,
-            style: clampFloatingMenuPosition(left, top),
+            style: clampFloatingMenuPosition(left, top, 240, 420),
         })
     }, [clampFloatingMenuPosition])
 
@@ -3976,6 +4247,25 @@ function MailSection({
         event.stopPropagation()
         openMailItemMenuAt(mail, event.clientX, event.clientY)
     }, [openMailItemMenuAt])
+
+    useLayoutEffect(() => {
+        if (!mailItemMenu?.mail || !mailItemMenuRef.current) return
+        const raf = window.requestAnimationFrame(() => {
+            const node = mailItemMenuRef.current?.querySelector?.('.db-submenu-popover.db-mail-item-menu')
+            if (!node) return
+            const rect = node.getBoundingClientRect()
+            const current = mailItemMenu?.style || {}
+            const left = Number.parseFloat(current.left) || rect.left
+            const top = Number.parseFloat(current.top) || rect.top
+            const width = Math.max(200, Math.ceil(rect.width || 240))
+            const height = Math.max(160, Math.ceil(rect.height || 420))
+            const nextStyle = clampFloatingMenuPosition(left, top, width, height)
+            if (nextStyle.left !== current.left || nextStyle.top !== current.top) {
+                setMailItemMenu((prev) => (prev ? { ...prev, style: nextStyle } : prev))
+            }
+        })
+        return () => window.cancelAnimationFrame(raf)
+    }, [clampFloatingMenuPosition, mailItemMenu?.labelMenuOpen, mailItemMenu?.mail, mailItemMenu?.moveMenuOpen])
 
     const toggleMailItemMoveMenu = useCallback((event) => {
         event.stopPropagation()
@@ -4124,6 +4414,16 @@ function MailSection({
             doc.open()
             doc.write(content.html_body)
             doc.close()
+            resizeIframeToContent(ref)
+            window.setTimeout(() => resizeIframeToContent(ref), 50)
+            window.setTimeout(() => resizeIframeToContent(ref), 250)
+            const images = Array.from(doc?.images || [])
+            images.forEach((img) => {
+                if (!img) return
+                if (img.complete && img.naturalWidth > 0) return
+                img.addEventListener('load', () => resizeIframeToContent(ref), { once: true })
+                img.addEventListener('error', () => resizeIframeToContent(ref), { once: true })
+            })
         }
     }, [activeTabId, tabContents])
 
@@ -4265,11 +4565,25 @@ function MailSection({
 
     useEffect(() => {
         if (!selectedMail) return
-        if (selectedGlobalIndex < 0) return
-        if (currentPage !== selectedPage) {
-            setCurrentPage(selectedPage)
+        if (threadedEnabled) {
+            if (!selectedThread?.id) return
+            if (selectedThreadGlobalIndex < 0) return
+            if (currentPage !== selectedThreadPage) setCurrentPage(selectedThreadPage)
+            return
         }
-    }, [currentPage, selectedGlobalIndex, selectedMail, selectedPage, setCurrentPage])
+        if (selectedGlobalIndex < 0) return
+        if (currentPage !== selectedPage) setCurrentPage(selectedPage)
+    }, [
+        currentPage,
+        selectedGlobalIndex,
+        selectedMail,
+        selectedPage,
+        selectedThread?.id,
+        selectedThreadGlobalIndex,
+        selectedThreadPage,
+        setCurrentPage,
+        threadedEnabled,
+    ])
 
     useEffect(() => {
         const handleMouseMove = (e) => {
@@ -4376,13 +4690,13 @@ function MailSection({
         setSelectMode(true)
 
         if (event.shiftKey && lastSelectedMailId && lastSelectedMailId !== mailId) {
-            const currentIndex = pagedVisibleMails.findIndex(mail => mail.id === mailId)
-            const lastIndex = pagedVisibleMails.findIndex(mail => mail.id === lastSelectedMailId)
+            const currentIndex = pagedSelectableMails.findIndex(mail => mail.id === mailId)
+            const lastIndex = pagedSelectableMails.findIndex(mail => mail.id === lastSelectedMailId)
 
             if (currentIndex !== -1 && lastIndex !== -1) {
                 const startIndex = Math.min(currentIndex, lastIndex)
                 const endIndex = Math.max(currentIndex, lastIndex)
-                const rangeIds = pagedVisibleMails.slice(startIndex, endIndex + 1).map(mail => mail.id)
+                const rangeIds = pagedSelectableMails.slice(startIndex, endIndex + 1).map(mail => mail.id)
 
                 setSelectedMailIds(prev => {
                     const next = new Set(prev)
@@ -5565,21 +5879,27 @@ function MailSection({
                         />
     ) : null;
 
-    const foldedTabsNode = (
-                    <div className={`db-dock-tabs ${isMailboxesRight ? 'db-dock-tabs--right' : 'db-dock-tabs--left'}`}>
-                        {foldersHidden && (
-                            <CollapsedTab
-                                label={t('Mailboxes')}
-                                title={t('Show mailboxes')}
-                                onClick={() => {
-                                    // In both medium and narrow mode: use overlay so mail content isn't compressed
-                                    setOverlayPanel(prev => prev === 'folders' ? null : 'folders')
-                                }}
-                            />
-                        )}
-                        {mailsHidden && (
-                            <CollapsedTab
-                                label={t('Mails')}
+	    const foldedTabsNode = (
+	                    <div className={`db-dock-tabs ${isMailboxesRight ? 'db-dock-tabs--right' : 'db-dock-tabs--left'}`}>
+	                        {foldersHidden && (
+	                            <CollapsedTab
+	                                label={t('Mailboxes')}
+	                                title={t('Show mailboxes')}
+	                                onClick={() => {
+	                                    // Medium/narrow: use overlay so mail content isn't compressed. Full: restore docked panel.
+	                                    if (layoutMode === 'full') {
+	                                        userClosedFolders.current = false
+	                                        setOverlayPanel(null)
+	                                        setFoldersHidden(false)
+	                                    } else {
+	                                        setOverlayPanel(prev => prev === 'folders' ? null : 'folders')
+	                                    }
+	                                }}
+	                            />
+	                        )}
+	                        {mailsHidden && (
+	                            <CollapsedTab
+	                                label={t('Mails')}
                                 title={t('Show mails')}
                                 onClick={() => {
                                     if (layoutMode === 'narrow') {
@@ -6053,96 +6373,294 @@ function MailSection({
                                 ) : (
                                     <>
                                         <ul className="db-mail-list" data-cols={displayCols}>
-                                            {pagedVisibleMails.map((mail) => {
-                                                const isChecked = selectedMailIds.has(mail.id)
-                                                const mailLabels = getMailLabels(mail)
-                                                const visibleMailLabels = mailLabels.slice(0, 2)
-                                                const remainingMailLabelCount = Math.max(0, mailLabels.length - visibleMailLabels.length)
+                                            {threadedEnabled ? (
+                                                pagedVisibleThreads.map((thread) => {
+                                                    const mailsInThread = Array.isArray(thread?.mails) ? thread.mails : []
+                                                    const mailIds = Array.isArray(thread?.mail_ids)
+                                                        ? thread.mail_ids
+                                                        : mailsInThread.map((m) => String(m?.id ?? '')).filter(Boolean)
 
-                                                return (
-                                                    <li
-                                                        key={mail.id}
-                                                        className={`db-mail-item ${mail.seen !== true ? 'unread' : ''} ${selectedMail?.id === mail.id ? 'selected' : ''} ${selectMode ? 'select-mode' : ''} ${isChecked ? 'checked' : ''}`}
-                                                        onClick={() => {
-                                                            if (isDraggingRef.current) return
-                                                            attemptOpenMail(mail)
-                                                        }}
-                                                        onContextMenu={(event) => openMailItemMenuFromContext(event, mail)}
-                                                        draggable
-                                                        onDragStart={(event) => handleMailDragStart(event, mail)}
-                                                        onDragEnd={handleMailDragEnd}
-                                                    >
-                                                        <div className="db-mail-avatar-wrap">
-                                                            <Avatar
-                                                                email={mail.address}
-                                                                name={mail.name}
-                                                                accountId={accountId}
-                                                                size={36}
-                                                                className="db-mail-avatar"
-                                                            />
-                                                            <button
-                                                                type="button"
-                                                                className={`db-mail-avatar-toggle ${selectMode ? 'visible' : ''} ${isChecked ? 'checked' : ''}`}
-                                                                onClick={(event) => handleMailSelectionToggle(event, mail.id)}
-                                                                aria-pressed={isChecked}
-                                                                aria-label={isChecked ? 'Unselect mail' : 'Select mail'}
-                                                                title={selectMode ? 'Select mail' : 'Enter selection mode'}
+                                                    const selectedCount = mailIds.reduce(
+                                                        (acc, id) => acc + (selectedMailIds.has(id) ? 1 : 0),
+                                                        0,
+                                                    )
+                                                    const allSelected = mailIds.length > 0 && selectedCount === mailIds.length
+                                                    const anySelected = selectedCount > 0
+                                                    const isExpanded = expandedThreadIds.has(thread.id)
+                                                    const isUnread = (thread?.unread_count || 0) > 0
+                                                    const latestMail = mailsInThread.length > 0 ? mailsInThread[mailsInThread.length - 1] : null
+                                                    const isThread = mailsInThread.length > 1
+                                                    const childMails = isThread ? mailsInThread.slice().reverse() : []
+                                                    const isAnchorSelected = !!(latestMail && selectedMail?.id === latestMail.id)
+                                                    const threadSender = latestMail?.name || latestMail?.address || thread?.latest_from || 'Unknown'
+                                                    const threadTime = getShortTime(latestMail?.date || thread?.latest_date || '')
+                                                    const threadSubject = latestMail?.subject || thread?.subject_display || '(No Subject)'
+                                                    const mailLabels = latestMail ? getMailLabels(latestMail) : []
+                                                    const visibleMailLabels = mailLabels.slice(0, 2)
+                                                    const remainingMailLabelCount = Math.max(0, mailLabels.length - visibleMailLabels.length)
+
+                                                    const toggleThreadSelection = (event) => {
+                                                        event.stopPropagation()
+                                                        setSelectMode(true)
+                                                        setSelectedMailIds((prev) => {
+                                                            const next = new Set(prev)
+                                                            const currentlyAll = mailIds.every((id) => next.has(id))
+                                                            if (currentlyAll) mailIds.forEach((id) => next.delete(id))
+                                                            else mailIds.forEach((id) => next.add(id))
+                                                            return next
+                                                        })
+                                                        if (latestMail?.id) setLastSelectedMailId(latestMail.id)
+                                                    }
+
+                                                    const handleThreadMarkReadToggle = async (event) => {
+                                                        event.stopPropagation()
+                                                        if (mailIds.length === 0) return
+                                                        await setMailsSeenState(mailIds, isUnread)
+                                                    }
+
+                                                    const handleThreadArchive = async (event) => {
+                                                        event.stopPropagation()
+                                                        if (mailIds.length === 0) return
+                                                        await moveMailsOptimistic(mailIds, resolveFolderDestination('Archive'))
+                                                    }
+
+                                                    const handleThreadTrash = async (event) => {
+                                                        event.stopPropagation()
+                                                        if (mailIds.length === 0) return
+                                                        await moveMailsOptimistic(mailIds, resolveFolderDestination('Trash'))
+                                                    }
+
+                                                    const handleThreadDelete = async (event) => {
+                                                        event.stopPropagation()
+                                                        if (mailIds.length === 0) return
+                                                        await deleteMailsOptimistic(mailIds)
+                                                    }
+
+                                                    return (
+                                                        <React.Fragment key={thread.id}>
+                                                            <li
+                                                                className={`db-mail-item ${isUnread ? 'unread' : ''} ${isAnchorSelected ? 'selected' : ''} ${selectMode ? 'select-mode' : ''} ${allSelected ? 'checked' : ''} ${anySelected && !allSelected ? 'partial' : ''}`}
+                                                                onClick={async () => {
+                                                                    if (isDraggingRef.current) return
+                                                                    if (isThread) {
+                                                                        setExpandedThreadIds((prev) => {
+                                                                            const next = new Set(prev)
+                                                                            next.add(thread.id)
+                                                                            return next
+                                                                        })
+                                                                    }
+                                                                    if (!latestMail) return
+                                                                    if (isThread) {
+                                                                        setActiveThreadReaderId(thread.id)
+                                                                        await attemptSelectMailPreview(latestMail)
+                                                                    } else {
+                                                                        setActiveThreadReaderId(null)
+                                                                        await attemptOpenMail(latestMail)
+                                                                    }
+                                                                }}
                                                             >
-                                                                <img src="/img/icons/choice-choosen.svg" className="svg-icon-inline db-mail-avatar-toggle__icon" />
-                                                            </button>
-                                                        </div>
-                                                        <div className="db-mail-item-content">
-                                                            <div className="db-mail-item-head">
-                                                                <span className="db-mail-sender">{mail.name || mail.address || 'Unknown'}</span>
-                                                                <span className="db-mail-time">{getShortTime(mail.date)}</span>
-                                                            </div>
-                                                            <span className="db-mail-subject">{mail.subject || '(No Subject)'}</span>
-                                                            {mailLabels.length > 0 && (
-                                                                <div className="db-mail-labels" title={mailLabels.join(', ')}>
-                                                                    {visibleMailLabels.map((label) => (
-                                                                        <span key={`${mail.id}-${label}`} className="db-mail-label-chip">
-                                                                            {label}
-                                                                        </span>
-                                                                    ))}
-                                                                    {remainingMailLabelCount > 0 && (
-                                                                        <span className="db-mail-label-chip db-mail-label-chip--more">
-                                                                            +{remainingMailLabelCount}
-                                                                        </span>
-                                                                    )}
+                                                                {isThread && (
+                                                                    <button
+                                                                        type="button"
+                                                                        className={`db-thread-expander ${isExpanded ? 'expanded' : ''}`}
+                                                                        onClick={(event) => {
+                                                                            event.stopPropagation()
+                                                                            setExpandedThreadIds((prev) => {
+                                                                                const next = new Set(prev)
+                                                                                if (next.has(thread.id)) next.delete(thread.id)
+                                                                                else next.add(thread.id)
+                                                                                return next
+                                                                            })
+                                                                        }}
+                                                                        aria-label={isExpanded ? 'Collapse thread' : 'Expand thread'}
+                                                                        aria-pressed={isExpanded}
+                                                                        title={isExpanded ? 'Collapse thread' : 'Expand thread'}
+                                                                    >
+                                                                        <img src="/img/icons/arrow-no-tail.svg" className="svg-icon-inline" />
+                                                                    </button>
+                                                                )}
+                                                                <div className="db-mail-avatar-wrap">
+                                                                    <Avatar
+                                                                        email={latestMail?.address || ''}
+                                                                        name={latestMail?.name || threadSender}
+                                                                        accountId={accountId}
+                                                                        size={36}
+                                                                        className="db-mail-avatar"
+                                                                    />
+                                                                    <button
+                                                                        type="button"
+                                                                        className={`db-mail-avatar-toggle ${selectMode ? 'visible' : ''} ${allSelected ? 'checked' : ''} ${anySelected && !allSelected ? 'partial' : ''}`}
+                                                                        onClick={toggleThreadSelection}
+                                                                        aria-pressed={allSelected}
+                                                                        aria-label={allSelected ? 'Unselect conversation' : 'Select conversation'}
+                                                                        title={selectMode ? 'Select conversation' : 'Enter selection mode'}
+                                                                    >
+                                                                        <img src="/img/icons/choice-choosen.svg" className="svg-icon-inline db-mail-avatar-toggle__icon" />
+                                                                    </button>
                                                                 </div>
-                                                            )}
-                                                        </div>
-                                                        <div className="db-mail-quick-actions">
-                                                            <button
-                                                                className="db-mail-qa-btn"
-                                                                title="More actions"
-                                                                onClick={(event) => openMailItemMenuFromButton(event, mail)}
-                                                            >
-                                                                <img src="/img/icons/three-point.svg" className="svg-icon-inline" />
-                                                            </button>
-                                                            <div className="db-mail-qa-row">
+	                                                                <div className="db-mail-item-content">
+	                                                                    <div className="db-mail-item-head">
+	                                                                        <span className="db-mail-sender">{threadSender}</span>
+	                                                                        <span className="db-mail-time">{threadTime}</span>
+	                                                                    </div>
+	                                                                    <span className="db-mail-subject">{threadSubject}</span>
+	                                                                    {mailLabels.length > 0 && (
+	                                                                        <div className="db-mail-labels" title={mailLabels.join(', ')}>
+	                                                                            {visibleMailLabels.map((label) => (
+	                                                                                <span key={`${thread.id}-${label}`} className="db-mail-label-chip">
+	                                                                                    {label}
+	                                                                                </span>
+	                                                                            ))}
+	                                                                            {remainingMailLabelCount > 0 && (
+	                                                                                <span className="db-mail-label-chip db-mail-label-chip--more">
+	                                                                                    +{remainingMailLabelCount}
+	                                                                                </span>
+	                                                                            )}
+	                                                                        </div>
+	                                                                    )}
+	                                                                </div>
+	                                                                {latestMail && (
+	                                                                    <div className="db-mail-hover-actions">
+	                                                                        <button
+	                                                                            type="button"
+	                                                                            className="db-mail-hover-action-btn"
+	                                                                            title="More actions"
+	                                                                            onClick={(event) => openMailItemMenuFromButton(event, latestMail)}
+	                                                                        >
+	                                                                            <img src="/img/icons/three-point.svg" className="svg-icon-inline" />
+	                                                                        </button>
+	                                                                    </div>
+	                                                                )}
+	                                                            </li>
+	                                                            {isExpanded && childMails.map((mail) => {
+	                                                                const isChecked = selectedMailIds.has(mail.id)
+	                                                                return (
+                                                                    <li
+                                                                        key={`${thread.id}-${mail.id}`}
+                                                                        className={`db-mail-item db-mail-item--thread-child ${mail.seen !== true ? 'unread' : ''} ${selectedMail?.id === mail.id ? 'selected' : ''} ${selectMode ? 'select-mode' : ''} ${isChecked ? 'checked' : ''}`}
+                                                                        onClick={() => {
+                                                                            if (isDraggingRef.current) return
+                                                                            setActiveThreadReaderId(null)
+                                                                            attemptOpenMail(mail)
+                                                                        }}
+                                                                        onContextMenu={(event) => openMailItemMenuFromContext(event, mail)}
+                                                                    >
+                                                                        <div className="db-mail-avatar-wrap">
+                                                                            <Avatar
+                                                                                email={mail.address}
+                                                                                name={mail.name}
+                                                                                accountId={accountId}
+                                                                                size={28}
+                                                                                className="db-mail-avatar"
+                                                                            />
+                                                                            <button
+                                                                                type="button"
+                                                                                className={`db-mail-avatar-toggle ${selectMode ? 'visible' : ''} ${isChecked ? 'checked' : ''}`}
+                                                                                onClick={(event) => handleMailSelectionToggle(event, mail.id)}
+                                                                                aria-pressed={isChecked}
+                                                                                aria-label={isChecked ? 'Unselect mail' : 'Select mail'}
+                                                                                title={selectMode ? 'Select mail' : 'Enter selection mode'}
+                                                                            >
+                                                                                <img src="/img/icons/choice-choosen.svg" className="svg-icon-inline db-mail-avatar-toggle__icon" />
+                                                                            </button>
+                                                                        </div>
+	                                                                        <div className="db-mail-item-content">
+	                                                                            <div className="db-mail-item-head">
+	                                                                                <span className="db-mail-sender">{mail.name || mail.address || 'Unknown'}</span>
+	                                                                                <span className="db-mail-time">{getShortTime(mail.date)}</span>
+	                                                                            </div>
+	                                                                            <span className="db-mail-subject">{mail.subject || '(No Subject)'}</span>
+	                                                                        </div>
+	                                                                        <div className="db-mail-hover-actions">
+	                                                                            <button
+	                                                                                type="button"
+	                                                                                className="db-mail-hover-action-btn"
+	                                                                                title="More actions"
+	                                                                                onClick={(event) => openMailItemMenuFromButton(event, mail)}
+	                                                                            >
+	                                                                                <img src="/img/icons/three-point.svg" className="svg-icon-inline" />
+	                                                                            </button>
+	                                                                        </div>
+	                                                                    </li>
+	                                                                )
+	                                                            })}
+	                                                        </React.Fragment>
+                                                    )
+                                                })
+                                            ) : (
+                                                pagedVisibleMails.map((mail) => {
+                                                    const isChecked = selectedMailIds.has(mail.id)
+                                                    const mailLabels = getMailLabels(mail)
+                                                    const visibleMailLabels = mailLabels.slice(0, 2)
+                                                    const remainingMailLabelCount = Math.max(0, mailLabels.length - visibleMailLabels.length)
+
+                                                    return (
+                                                        <li
+                                                            key={mail.id}
+                                                            className={`db-mail-item ${mail.seen !== true ? 'unread' : ''} ${selectedMail?.id === mail.id ? 'selected' : ''} ${selectMode ? 'select-mode' : ''} ${isChecked ? 'checked' : ''}`}
+                                                            onClick={() => {
+                                                                if (isDraggingRef.current) return
+                                                                attemptOpenMail(mail)
+                                                            }}
+                                                            onContextMenu={(event) => openMailItemMenuFromContext(event, mail)}
+                                                            draggable
+                                                            onDragStart={(event) => handleMailDragStart(event, mail)}
+                                                            onDragEnd={handleMailDragEnd}
+                                                        >
+                                                            <div className="db-mail-avatar-wrap">
+                                                                <Avatar
+                                                                    email={mail.address}
+                                                                    name={mail.name}
+                                                                    accountId={accountId}
+                                                                    size={36}
+                                                                    className="db-mail-avatar"
+                                                                />
                                                                 <button
-                                                                    className="db-mail-qa-btn"
-                                                                    title="Open in new tab"
-                                                                    onClick={(e) => {
-                                                                        e.stopPropagation()
-                                                                        openMailInTab(mail)
-                                                                    }}
+                                                                    type="button"
+                                                                    className={`db-mail-avatar-toggle ${selectMode ? 'visible' : ''} ${isChecked ? 'checked' : ''}`}
+                                                                    onClick={(event) => handleMailSelectionToggle(event, mail.id)}
+                                                                    aria-pressed={isChecked}
+                                                                    aria-label={isChecked ? 'Unselect mail' : 'Select mail'}
+                                                                    title={selectMode ? 'Select mail' : 'Enter selection mode'}
                                                                 >
-                                                                    <img src="/img/icons/open-in-new-tab.svg" className="svg-icon-inline" />
-                                                                </button>
-                                                                <button
-                                                                    className="db-mail-qa-btn"
-                                                                    title="Open in new window"
-                                                                    onClick={(e) => detachMailToWindowFromList(e, mail)}
-                                                                >
-                                                                    <img src="/img/icons/open-in-new-window.svg" className="svg-icon-inline" />
+                                                                    <img src="/img/icons/choice-choosen.svg" className="svg-icon-inline db-mail-avatar-toggle__icon" />
                                                                 </button>
                                                             </div>
-                                                        </div>
-                                                    </li>
-                                                )
-                                            })}
+	                                                            <div className="db-mail-item-content">
+	                                                                <div className="db-mail-item-head">
+	                                                                    <span className="db-mail-sender">{mail.name || mail.address || 'Unknown'}</span>
+	                                                                    <span className="db-mail-time">{getShortTime(mail.date)}</span>
+	                                                                </div>
+	                                                                <span className="db-mail-subject">{mail.subject || '(No Subject)'}</span>
+	                                                                {mailLabels.length > 0 && (
+	                                                                    <div className="db-mail-labels" title={mailLabels.join(', ')}>
+	                                                                        {visibleMailLabels.map((label) => (
+	                                                                            <span key={`${mail.id}-${label}`} className="db-mail-label-chip">
+	                                                                                {label}
+	                                                                            </span>
+	                                                                        ))}
+	                                                                        {remainingMailLabelCount > 0 && (
+	                                                                            <span className="db-mail-label-chip db-mail-label-chip--more">
+	                                                                                +{remainingMailLabelCount}
+	                                                                            </span>
+	                                                                        )}
+	                                                                    </div>
+	                                                                )}
+	                                                            </div>
+	                                                            <div className="db-mail-hover-actions">
+	                                                                <button
+	                                                                    type="button"
+	                                                                    className="db-mail-hover-action-btn"
+	                                                                    title="More actions"
+	                                                                    onClick={(event) => openMailItemMenuFromButton(event, mail)}
+	                                                                >
+	                                                                    <img src="/img/icons/three-point.svg" className="svg-icon-inline" />
+	                                                                </button>
+	                                                            </div>
+	                                                        </li>
+	                                                    )
+	                                                })
+	                                            )}
                                         </ul>
                                         {mailItemMenuMail && (
                                             <div ref={mailItemMenuRef}>
@@ -6163,13 +6681,35 @@ function MailSection({
                                                     <button type="button" className="db-submenu-popover__item" onClick={handleMailItemMenuReply}>
                                                         <img src="/img/icons/reply.svg" className="svg-icon-inline" /> Reply
                                                     </button>
-                                                    <button type="button" className="db-submenu-popover__item" onClick={handleMailItemMenuForward}>
-                                                        <img src="/img/icons/forward.svg" className="svg-icon-inline" /> Forward
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        className="db-submenu-popover__item db-mail-item-menu__submenu-trigger"
-                                                        onClick={toggleMailItemMoveMenu}
+	                                                    <button type="button" className="db-submenu-popover__item" onClick={handleMailItemMenuForward}>
+	                                                        <img src="/img/icons/forward.svg" className="svg-icon-inline" /> Forward
+	                                                    </button>
+	                                                    <button
+	                                                        type="button"
+	                                                        className="db-submenu-popover__item"
+	                                                        onClick={async () => {
+	                                                            if (!mailItemMenuMail) return
+	                                                            closeMailItemMenu()
+	                                                            await openMailInTab(mailItemMenuMail)
+	                                                        }}
+	                                                    >
+	                                                        <img src="/img/icons/open-in-new-tab.svg" className="svg-icon-inline" /> Open in new tab
+	                                                    </button>
+	                                                    <button
+	                                                        type="button"
+	                                                        className="db-submenu-popover__item"
+	                                                        onClick={async () => {
+	                                                            if (!mailItemMenuMail) return
+	                                                            closeMailItemMenu()
+	                                                            await detachMailToWindowFromList({ stopPropagation: () => {} }, mailItemMenuMail)
+	                                                        }}
+	                                                    >
+	                                                        <img src="/img/icons/open-in-new-window.svg" className="svg-icon-inline" /> Open in new window
+	                                                    </button>
+	                                                    <button
+	                                                        type="button"
+	                                                        className="db-submenu-popover__item db-mail-item-menu__submenu-trigger"
+	                                                        onClick={toggleMailItemMoveMenu}
                                                     >
                                                         <span><img src="/img/icons/folder.svg" className="svg-icon-inline" /> Move</span>
                                                         <span className="db-mail-item-menu__chevron">›</span>
@@ -6337,17 +6877,13 @@ function MailSection({
                                             </div>
                                         )}
                                         <hr className="db-mail-divider" />
-                                        {importPreview?.content?.html_body ? (
-                                            <div className="db-mail-body-html">
-                                                <iframe
-                                                    title="imported-mail-content"
-                                                    sandbox="allow-same-origin"
-                                                    srcDoc={importPreview.content.html_body}
-                                                />
-                                            </div>
-                                        ) : (
-                                            <div className="db-mail-body">{importPreview?.content?.plain_body || '(No content)'}</div>
-                                        )}
+	                                        {importPreview?.content?.html_body ? (
+	                                            <div className="db-mail-body-html">
+	                                                <ResizableHtmlIframe title="imported-mail-content" html={importPreview.content.html_body} />
+	                                            </div>
+	                                        ) : (
+	                                            <div className="db-mail-body">{importPreview?.content?.plain_body || '(No content)'}</div>
+	                                        )}
                                         {importPreview?.content?.attachments?.length > 0 && (
                                             <div className="db-attachments">
                                                 <div className="db-attachments__header">Attachments ({importPreview.content.attachments.length})</div>
@@ -6382,105 +6918,107 @@ function MailSection({
                                     <div className="db-loading" style={{ paddingTop: 60 }}><div className="db-spinner" />Loading content...</div>
                                 ) : (
                                     <div className="db-mail-content">
-                                        <div className="db-mail-content-header">
-                                            <div className="db-mail-content-subject">{mailContent?.subject || selectedMail.subject || '(No Subject)'}</div>
-                                            <div className="db-mail-content-actions">
-                                                {selectedGlobalIndex >= 0 && selectedPageCount > 0 && (
-                                                    <div className="db-mail-pager" aria-label="Mail navigation">
-                                                        <button
-                                                            type="button"
-                                                            className="db-mail-action-btn"
-                                                            onClick={() => prevMail && openMailOrDraft(prevMail)}
-                                                            disabled={!prevMail}
-                                                            title="Previous mail"
-                                                            aria-label="Previous mail"
-                                                        >
-                                                            <img
-                                                                src="/img/icons/arrow-no-tail.svg"
-                                                                className="svg-icon-inline db-mail-pager-icon db-mail-pager-icon--prev"
-                                                            />
-                                                        </button>
-                                                        <div className="db-mail-pager-label" aria-label="Mail position">
-                                                            {selectedIndexInPage} / {selectedPageCount}
+	                                        <div className="db-mail-content-header">
+	                                            <div className="db-mail-content-subject">
+	                                                {(showThreadReader && selectedThread)
+	                                                    ? (selectedThread.subject_display || '(No Subject)')
+	                                                    : (mailContent?.subject || selectedMail.subject || '(No Subject)')}
+	                                            </div>
+	                                        </div>
+	                                        {showThreadReader && selectedThread ? (
+	                                            <div className="db-thread-reader" aria-label="Conversation">
+	                                                {(selectedThread.mails || []).slice().reverse().map((m) => {
+	                                                    const id = String(m?.id ?? '')
+	                                                    const isOpen = threadReaderOpenIds.has(id)
+                                                    const isLoading = threadReaderLoadingIds.has(id)
+                                                    const content = threadReaderContentById?.[id] || null
+                                                    const fromLabel = (content?.from_name || '').trim()
+                                                        ? `${content.from_name} <${content.from_address}>`
+                                                        : (m?.name ? `${m.name} <${m.address || ''}>`.trim() : (m?.address || 'Unknown'))
+                                                    const dateLabel = formatMailDateLong(content?.date || m?.date || '')
+                                                    const previewTo = (m?.recipient_to || '').trim()
+                                                    return (
+                                                        <div key={`thread-mail-${selectedThread.id}-${id}`} className={`db-thread-reader-mail ${isOpen ? 'open' : 'collapsed'}`}>
+                                                            <button
+                                                                type="button"
+                                                                className="db-thread-reader-header"
+                                                                onClick={() => toggleThreadReaderMail(m)}
+                                                                aria-expanded={isOpen}
+                                                            >
+                                                                <div className="db-thread-reader-head-left">
+                                                                    <div className="db-thread-reader-from">{fromLabel || 'Unknown'}</div>
+                                                                    {!!previewTo && (
+                                                                        <div className="db-thread-reader-to">
+                                                                            To: {previewTo}
+                                                                        </div>
+                                                                    )}
+                                                                </div>
+                                                                <div className="db-thread-reader-head-right">
+                                                                    <div className="db-thread-reader-date">{dateLabel}</div>
+                                                                    <img src="/img/icons/arrow-no-tail.svg" className="svg-icon-inline db-thread-reader-caret" />
+                                                                </div>
+                                                            </button>
+                                                            {isOpen && (
+                                                                <div className="db-thread-reader-body">
+                                                                    {isLoading && !content ? (
+                                                                        <div className="db-thread-reader-loading">Loading...</div>
+                                                                    ) : content?.html_body ? (
+                                                                        <div className="db-mail-body-html">
+                                                                            <ResizableHtmlIframe title={`mail-content-${id}`} html={content.html_body} />
+                                                                        </div>
+                                                                    ) : (
+                                                                        <div className="db-mail-body">{content?.plain_body || '(No content)'}</div>
+                                                                    )}
+                                                                </div>
+                                                            )}
                                                         </div>
-                                                        <button
-                                                            type="button"
-                                                            className="db-mail-action-btn"
-                                                            onClick={() => nextMail && openMailOrDraft(nextMail)}
-                                                            disabled={!nextMail}
-                                                            title="Next mail"
-                                                            aria-label="Next mail"
+                                                    )
+                                                })}
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <div className="db-mail-meta"><strong>From:</strong> {mailContent?.from_name ? `${mailContent.from_name} <${mailContent.from_address}>` : selectedMail.address}</div>
+                                                {!!(mailContent?.cc || '').trim() && <div className="db-mail-meta"><strong>CC:</strong> {mailContent.cc}</div>}
+                                                {!!(mailContent?.bcc || '').trim() && <div className="db-mail-meta"><strong>BCC:</strong> {mailContent.bcc}</div>}
+                                                <div className="db-mail-meta"><strong>Date:</strong> {formatMailDateLong(mailContent?.date || selectedMail.date)}</div>
+                                                <hr className="db-mail-divider" />
+                                                {mailContent?.html_body ? (
+                                                    <div className="db-mail-body-html"><iframe ref={iframeRef} title="mail-content" sandbox="allow-same-origin" /></div>
+                                                ) : (
+                                                    <div className="db-mail-body">{mailContent?.plain_body || '(No content)'}</div>
+                                                )}
+                                                {mailContent?.attachments?.length > 0 && (
+                                                    <div className="db-attachments">
+                                                        <div
+                                                            className="db-attachments__header"
+                                                            onClick={() => setAttachmentsExpanded(!attachmentsExpanded)}
+                                                            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', userSelect: 'none' }}
                                                         >
-                                                            <img
-                                                                src="/img/icons/arrow-no-tail.svg"
-                                                                className="svg-icon-inline db-mail-pager-icon"
-                                                            />
-                                                        </button>
+                                                            {attachmentsExpanded ? <img src="/img/icons/dock-shown.svg" className="svg-icon-inline" style={{ marginRight: "6px" }} /> : <img src="/img/icons/dock-hidden.svg" className="svg-icon-inline" style={{ marginRight: "6px" }} />}
+                                                            Attachments ({mailContent.attachments.length})
+                                                        </div>
+                                                        {attachmentsExpanded && (
+                                                            <ul className="db-attachments__list">
+                                                                {mailContent.attachments.map((at) => (
+                                                                    <li key={at.id} className="db-attachments__item">
+                                                                        <div className="db-attachments__info">
+                                                                            <span className="db-attachments__name">{at.filename}</span>
+                                                                            <span className="db-attachments__meta">{at.content_type} · {formatBytes(at.size)}</span>
+                                                                        </div>
+                                                                        <a
+                                                                            className="db-attachments__link"
+                                                                            href={attachmentUrl(accountId, mailContent.id, at.id, selectedMail?.mailbox || selectedFolder || 'INBOX', canUseRemoteMail)}
+                                                                            download={at.filename}
+                                                                        >
+                                                                            Download
+                                                                        </a>
+                                                                    </li>
+                                                                ))}
+                                                            </ul>
+                                                        )}
                                                     </div>
                                                 )}
-                                                <button
-                                                    className="db-mail-action-btn"
-                                                    onClick={() => openMailInTab(selectedMail, mailContent)}
-                                                    title="Open in new tab"
-                                                >
-                                                    <img src="/img/icons/open-in-new-tab.svg" className="svg-icon-inline" />
-                                                </button>
-                                                <button
-                                                    className="db-mail-action-btn"
-                                                    onClick={detachMailToWindow}
-                                                    title="Open in new window"
-                                                >
-                                                    <img src="/img/icons/open-in-new-window.svg" className="svg-icon-inline" />
-                                                </button>
-                                                <button
-                                                    className="db-mail-action-btn"
-                                                    onClick={() => setSelectedMail(null)}
-                                                    title="Close"
-                                                >
-                                                    <img src="/img/icons/close.svg" className="svg-icon-inline" />
-                                                </button>
-                                            </div>
-                                        </div>
-                                        <div className="db-mail-meta"><strong>From:</strong> {mailContent?.from_name ? `${mailContent.from_name} <${mailContent.from_address}>` : selectedMail.address}</div>
-                                        {!!(mailContent?.cc || '').trim() && <div className="db-mail-meta"><strong>CC:</strong> {mailContent.cc}</div>}
-                                        {!!(mailContent?.bcc || '').trim() && <div className="db-mail-meta"><strong>BCC:</strong> {mailContent.bcc}</div>}
-                                        <div className="db-mail-meta"><strong>Date:</strong> {formatMailDateLong(mailContent?.date || selectedMail.date)}</div>
-                                        <hr className="db-mail-divider" />
-                                        {mailContent?.html_body ? (
-                                            <div className="db-mail-body-html"><iframe ref={iframeRef} title="mail-content" sandbox="allow-same-origin" /></div>
-                                        ) : (
-                                            <div className="db-mail-body">{mailContent?.plain_body || '(No content)'}</div>
-                                        )}
-                                        {mailContent?.attachments?.length > 0 && (
-                                            <div className="db-attachments">
-                                                <div
-                                                    className="db-attachments__header"
-                                                    onClick={() => setAttachmentsExpanded(!attachmentsExpanded)}
-                                                    style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', userSelect: 'none' }}
-                                                >
-                                                    {attachmentsExpanded ? <img src="/img/icons/dock-shown.svg" className="svg-icon-inline" style={{ marginRight: "6px" }} /> : <img src="/img/icons/dock-hidden.svg" className="svg-icon-inline" style={{ marginRight: "6px" }} />}
-                                                    Attachments ({mailContent.attachments.length})
-                                                </div>
-                                                {attachmentsExpanded && (
-                                                    <ul className="db-attachments__list">
-                                                        {mailContent.attachments.map((at) => (
-                                                            <li key={at.id} className="db-attachments__item">
-                                                                <div className="db-attachments__info">
-                                                                    <span className="db-attachments__name">{at.filename}</span>
-                                                                    <span className="db-attachments__meta">{at.content_type} · {formatBytes(at.size)}</span>
-                                                                </div>
-                                                                <a
-                                                                    className="db-attachments__link"
-                                                                    href={attachmentUrl(accountId, mailContent.id, at.id, selectedMail?.mailbox || selectedFolder || 'INBOX', canUseRemoteMail)}
-                                                                    download={at.filename}
-                                                                >
-                                                                    Download
-                                                                </a>
-                                                            </li>
-                                                        ))}
-                                                    </ul>
-                                                )}
-                                            </div>
+                                            </>
                                         )}
                                     </div>
                                 )}
@@ -6719,15 +7257,15 @@ export function MailDynamicLayout({ layoutMode, layoutData, mailboxesBar, mailli
         ))
     }
 
-    return (
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', overflow: 'hidden', background: 'var(--c-bg)' }}>
-            {renderStack(topStack, false, 'top')}
-            <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-                {renderStack(leftStack, false, 'left')}
-                <div
-                    style={
-                        hideCenterPlane
-                            ? { display: 'none' }
+	    return (
+	        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', overflow: 'hidden', background: 'var(--c-bg)' }}>
+	            {renderStack(topStack, false, 'top')}
+	            <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden', position: 'relative' }}>
+	                {renderStack(leftStack, false, 'left')}
+	                <div
+	                    style={
+	                        hideCenterPlane
+	                            ? { display: 'none' }
                             : { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden', position: 'relative' }
                     }
                     aria-hidden={hideCenterPlane ? 'true' : undefined}

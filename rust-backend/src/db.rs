@@ -471,7 +471,9 @@ async fn init_general_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             theme         TEXT DEFAULT 'SYSTEM',
             font          TEXT,
             layout        TEXT,
-            ssl_mode      TEXT DEFAULT 'STARTTLS'
+            ssl_mode      TEXT DEFAULT 'STARTTLS',
+            conversation_view TEXT DEFAULT 'messages',
+            thread_order  TEXT DEFAULT 'asc'
         )
         "#,
     )
@@ -503,6 +505,28 @@ async fn init_general_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
 
     let _ = sqlx::query(
         "ALTER TABLE accounts ADD COLUMN mailbox_count_display TEXT DEFAULT 'both'",
+    )
+    .execute(pool)
+    .await;
+
+    let _ = sqlx::query(
+        "ALTER TABLE accounts ADD COLUMN conversation_view TEXT DEFAULT 'messages'",
+    )
+    .execute(pool)
+    .await;
+    let _ = sqlx::query(
+        "UPDATE accounts SET conversation_view = 'messages' WHERE conversation_view IS NULL OR conversation_view = ''",
+    )
+    .execute(pool)
+    .await;
+
+    let _ = sqlx::query(
+        "ALTER TABLE accounts ADD COLUMN thread_order TEXT DEFAULT 'asc'",
+    )
+    .execute(pool)
+    .await;
+    let _ = sqlx::query(
+        "UPDATE accounts SET thread_order = 'asc' WHERE thread_order IS NULL OR thread_order = ''",
     )
     .execute(pool)
     .await;
@@ -792,6 +816,9 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             uid TEXT NOT NULL,
             folder TEXT NOT NULL,
+            message_id TEXT,
+            in_reply_to TEXT,
+            references_value TEXT,
             sender_name TEXT,
             sender_address TEXT,
             recipient_to TEXT,
@@ -831,6 +858,18 @@ async fn init_user_db(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .await;
 
     let _ = sqlx::query("ALTER TABLE local_mail_cache ADD COLUMN bcc_value TEXT")
+        .execute(pool)
+        .await;
+
+    let _ = sqlx::query("ALTER TABLE local_mail_cache ADD COLUMN message_id TEXT")
+        .execute(pool)
+        .await;
+
+    let _ = sqlx::query("ALTER TABLE local_mail_cache ADD COLUMN in_reply_to TEXT")
+        .execute(pool)
+        .await;
+
+    let _ = sqlx::query("ALTER TABLE local_mail_cache ADD COLUMN references_value TEXT")
         .execute(pool)
         .await;
 

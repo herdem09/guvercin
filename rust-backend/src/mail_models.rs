@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Clone)]
 pub struct MailPreview {
     pub id: String,
+    pub message_id: String,
+    pub in_reply_to: String,
+    pub references: String,
     pub name: String,
     pub address: String,
     pub subject: String,
@@ -250,6 +253,9 @@ mod tests {
     fn merge_mailbox_label_adds_missing_label_to_preview() {
         let mut preview = MailPreview {
             id: "1".to_string(),
+            message_id: String::new(),
+            in_reply_to: String::new(),
+            references: String::new(),
             name: String::new(),
             address: String::new(),
             subject: String::new(),

@@ -18,6 +18,25 @@ use mailparse::{
     addrparse_header, parse_headers, parse_mail, DispositionType, MailAddr, MailHeaderMap, ParsedMail,
 };
 
+fn parse_threading_headers(headers: &[mailparse::MailHeader<'_>]) -> (String, String, String) {
+    let message_id = headers
+        .get_first_value("Message-ID")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let in_reply_to = headers
+        .get_first_value("In-Reply-To")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let references = headers
+        .get_first_value("References")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    (message_id, in_reply_to, references)
+}
+
 pub struct ImapState {
     
     sessions: Mutex<HashMap<i64, ImapSession>>,
@@ -74,11 +93,11 @@ impl ImapSession {
         let data = match self {
             ImapSession::Plain(s) => s.fetch(
                 sequence,
-                "(BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE CONTENT-TYPE IMPORTANCE X-PRIORITY KEYWORDS X-CATEGORY)] FLAGS UID RFC822.SIZE)",
+                "(BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES CONTENT-TYPE IMPORTANCE X-PRIORITY KEYWORDS X-CATEGORY)] FLAGS UID RFC822.SIZE)",
             ),
             ImapSession::Tls(s) => s.fetch(
                 sequence,
-                "(BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE CONTENT-TYPE IMPORTANCE X-PRIORITY KEYWORDS X-CATEGORY)] FLAGS UID RFC822.SIZE)",
+                "(BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES CONTENT-TYPE IMPORTANCE X-PRIORITY KEYWORDS X-CATEGORY)] FLAGS UID RFC822.SIZE)",
             ),
         };
 
@@ -125,6 +144,7 @@ impl ImapSession {
                 let from_raw = parsed_headers.get_first_value("From").unwrap_or_default();
                 let recipient_to = parsed_headers.get_first_value("To").unwrap_or_default();
                 let date = parsed_headers.get_first_value("Date").unwrap_or_default();
+                let (message_id, in_reply_to, references) = parse_threading_headers(&parsed_headers);
                 let content_type =
                     parse_content_type(&parsed_headers.get_first_value("Content-Type").unwrap_or_default());
                 let importance = parse_importance_from_headers(&parsed_headers);
@@ -139,6 +159,9 @@ impl ImapSession {
 
                 previews.push(MailPreview {
                     id: uid,
+                    message_id,
+                    in_reply_to,
+                    references,
                     name,
                     address,
                     subject,
@@ -269,11 +292,11 @@ impl ImapSession {
         let data = match self {
             ImapSession::Plain(s) => s.uid_fetch(
                 uid_set,
-                "(BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE CONTENT-TYPE IMPORTANCE X-PRIORITY KEYWORDS X-CATEGORY)] FLAGS UID RFC822.SIZE)",
+                "(BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES CONTENT-TYPE IMPORTANCE X-PRIORITY KEYWORDS X-CATEGORY)] FLAGS UID RFC822.SIZE)",
             ),
             ImapSession::Tls(s) => s.uid_fetch(
                 uid_set,
-                "(BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE CONTENT-TYPE IMPORTANCE X-PRIORITY KEYWORDS X-CATEGORY)] FLAGS UID RFC822.SIZE)",
+                "(BODY.PEEK[HEADER.FIELDS (FROM TO SUBJECT DATE MESSAGE-ID IN-REPLY-TO REFERENCES CONTENT-TYPE IMPORTANCE X-PRIORITY KEYWORDS X-CATEGORY)] FLAGS UID RFC822.SIZE)",
             ),
         };
 
@@ -328,6 +351,7 @@ impl ImapSession {
                 let from_raw = parsed_headers.get_first_value("From").unwrap_or_default();
                 let recipient_to = parsed_headers.get_first_value("To").unwrap_or_default();
                 let date = parsed_headers.get_first_value("Date").unwrap_or_default();
+                let (message_id, in_reply_to, references) = parse_threading_headers(&parsed_headers);
                 let content_type =
                     parse_content_type(&parsed_headers.get_first_value("Content-Type").unwrap_or_default());
                 let importance = parse_importance_from_headers(&parsed_headers);
@@ -342,6 +366,9 @@ impl ImapSession {
 
                 previews.push(MailPreview {
                     id: uid,
+                    message_id,
+                    in_reply_to,
+                    references,
                     name,
                     address,
                     subject,
@@ -358,6 +385,22 @@ impl ImapSession {
             }
         }
         previews
+    }
+}
+
+#[cfg(test)]
+mod threading_header_tests {
+    use super::parse_threading_headers;
+    use mailparse::parse_headers;
+
+    #[test]
+    fn extracts_message_id_reply_and_references() {
+        let raw = b"Message-ID: <m1>\r\nIn-Reply-To: <m0>\r\nReferences: <m0> <m1>\r\n\r\n";
+        let (headers, _) = parse_headers(raw).expect("parse_headers");
+        let (message_id, in_reply_to, references) = parse_threading_headers(&headers);
+        assert_eq!(message_id, "<m1>");
+        assert_eq!(in_reply_to, "<m0>");
+        assert_eq!(references, "<m0> <m1>");
     }
 }
 

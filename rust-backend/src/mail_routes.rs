@@ -470,11 +470,15 @@ pub async fn get_mail_list(
             let _ = sqlx::query(
                 r#"
                 INSERT INTO local_mail_cache (
-                    uid, folder, sender_name, sender_address, recipient_to, subject, date_value, date_ms,
+                    uid, folder, message_id, in_reply_to, references_value,
+                    sender_name, sender_address, recipient_to, subject, date_value, date_ms,
                     seen, flagged, size_bytes, importance_value, content_type, category, labels_json, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(uid, folder) DO UPDATE SET
+                    message_id = excluded.message_id,
+                    in_reply_to = excluded.in_reply_to,
+                    references_value = excluded.references_value,
                     sender_name = excluded.sender_name,
                     sender_address = excluded.sender_address,
                     recipient_to = excluded.recipient_to,
@@ -493,6 +497,9 @@ pub async fn get_mail_list(
             )
             .bind(&mail.id)
             .bind(&q.mailbox)
+            .bind(&mail.message_id)
+            .bind(&mail.in_reply_to)
+            .bind(&mail.references)
             .bind(&mail.name)
             .bind(&mail.address)
             .bind(&mail.recipient_to)

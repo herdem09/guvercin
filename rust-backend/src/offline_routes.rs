@@ -843,7 +843,9 @@ pub async fn get_local_mail_list(
 
     let rows = sqlx::query(
         r#"
-        SELECT uid, sender_name, sender_address, recipient_to, subject, date_value, seen, flagged, size_bytes, importance_value, content_type, category, labels_json
+        SELECT uid, message_id, in_reply_to, references_value,
+               sender_name, sender_address, recipient_to, subject, date_value,
+               seen, flagged, size_bytes, importance_value, content_type, category, labels_json
         FROM local_mail_cache
         WHERE folder = ?
         ORDER BY date_ms DESC, uid DESC
@@ -861,6 +863,21 @@ pub async fn get_local_mail_list(
         .map(|r| {
             let mut preview = MailPreview {
                 id: r.try_get::<String, _>("uid").unwrap_or_default(),
+                message_id: r
+                    .try_get::<Option<String>, _>("message_id")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                in_reply_to: r
+                    .try_get::<Option<String>, _>("in_reply_to")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                references: r
+                    .try_get::<Option<String>, _>("references_value")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
                 name: r
                     .try_get::<Option<String>, _>("sender_name")
                     .ok()
@@ -963,7 +980,8 @@ pub async fn search_advanced(
 
     let mut qb = QueryBuilder::<Sqlite>::new(
         r#"
-        SELECT uid, sender_name, sender_address, recipient_to, subject, date_value, seen, flagged,
+        SELECT uid, message_id, in_reply_to, references_value,
+               sender_name, sender_address, recipient_to, subject, date_value, seen, flagged,
                size_bytes, importance_value, content_type, category, labels_json, folder
         FROM local_mail_cache
         WHERE 1=1
@@ -983,6 +1001,21 @@ pub async fn search_advanced(
                 .unwrap_or_default();
             let mut preview = MailPreview {
                 id: r.try_get::<String, _>("uid").unwrap_or_default(),
+                message_id: r
+                    .try_get::<Option<String>, _>("message_id")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                in_reply_to: r
+                    .try_get::<Option<String>, _>("in_reply_to")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
+                references: r
+                    .try_get::<Option<String>, _>("references_value")
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default(),
                 name: r
                     .try_get::<Option<String>, _>("sender_name")
                     .ok()
@@ -3866,6 +3899,9 @@ mod tests {
     fn preview(id: &str) -> MailPreview {
         MailPreview {
             id: id.to_string(),
+            message_id: String::new(),
+            in_reply_to: String::new(),
+            references: String::new(),
             name: "n".to_string(),
             address: "a@example.com".to_string(),
             recipient_to: "me@example.com".to_string(),
@@ -4162,11 +4198,15 @@ async fn cache_mail_preview(
     sqlx::query(
         r#"
         INSERT INTO local_mail_cache (
-            uid, folder, sender_name, sender_address, recipient_to, subject, seen, flagged,
+            uid, folder, message_id, in_reply_to, references_value,
+            sender_name, sender_address, recipient_to, subject, seen, flagged,
             date_value, date_ms, size_bytes, importance_value, content_type, category, labels_json, updated_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         ON CONFLICT(uid, folder) DO UPDATE SET
+            message_id = excluded.message_id,
+            in_reply_to = excluded.in_reply_to,
+            references_value = excluded.references_value,
             sender_name = excluded.sender_name,
             sender_address = excluded.sender_address,
             recipient_to = excluded.recipient_to,
@@ -4185,6 +4225,9 @@ async fn cache_mail_preview(
     )
     .bind(&mail.id)
     .bind(mailbox)
+    .bind(&mail.message_id)
+    .bind(&mail.in_reply_to)
+    .bind(&mail.references)
     .bind(&mail.name)
     .bind(&mail.address)
     .bind(&mail.recipient_to)

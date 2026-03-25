@@ -2068,6 +2068,38 @@ body.resizing * {
   flex: 0 0 auto;
 }
 
+.db-thread-expander {
+  width: 26px;
+  height: 26px;
+  margin-right: 10px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--c-surface-2) 70%, transparent);
+  color: var(--c-text-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex: 0 0 auto;
+  opacity: 0.9;
+  transition: background 0.16s ease, border-color 0.16s ease, transform 0.16s ease, opacity 0.16s ease;
+}
+
+.db-thread-expander:hover {
+  background: var(--overlay-hover-1);
+  border-color: var(--shell-panel-border, var(--c-border-1));
+  opacity: 1;
+}
+
+.db-thread-expander .svg-icon-inline {
+  transform: rotate(0deg);
+  transition: transform 0.16s ease;
+}
+
+.db-thread-expander.expanded .svg-icon-inline {
+  transform: rotate(90deg);
+}
+
 .db-mail-avatar {
   width: 36px;
   height: 36px;
@@ -2145,6 +2177,15 @@ body.resizing * {
   background: var(--c-warm-accent-2);
 }
 
+.db-mail-avatar-toggle.partial {
+  opacity: 1;
+  transform: scale(1);
+  background: color-mix(in srgb, var(--c-primary) 22%, var(--overlay-surface-3));
+  border-color: color-mix(in srgb, var(--c-primary) 44%, var(--c-warm-border-2));
+  color: var(--c-text-1);
+  box-shadow: 0 6px 14px var(--shadow-color-primary-1);
+}
+
 .db-mail-avatar-toggle:focus-visible {
   outline: 2px solid var(--c-warm-border-5);
   outline-offset: 2px;
@@ -2172,10 +2213,7 @@ body.resizing * {
   min-width: 0;
 }
 
-.db-mail-quick-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+.db-mail-hover-actions {
   margin-left: 0;
   opacity: 0;
   width: 0;
@@ -2185,34 +2223,28 @@ body.resizing * {
   transition: opacity 0.12s ease-in-out, width 0.14s ease, margin-left 0.14s ease;
 }
 
-.db-mail-qa-row {
-  display: flex;
-  gap: 2px;
-}
-
-.db-mail-item:hover .db-mail-quick-actions {
+.db-mail-item:hover .db-mail-hover-actions {
   opacity: 1;
-  width: 62px;
+  width: 34px;
   margin-left: 8px;
   pointer-events: auto;
 }
 
-.db-mail-qa-btn {
+.db-mail-hover-action-btn {
   background: color-mix(in srgb, var(--c-surface-2) 74%, transparent);
   border: 1px solid transparent;
   border-radius: 10px;
   cursor: pointer;
   padding: 4px;
-  font-size: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--c-text-2);
-  opacity: 0.84;
+  opacity: 0.9;
   transition: all 0.2s ease;
 }
 
-.db-mail-qa-btn:hover {
+.db-mail-hover-action-btn:hover {
   background: var(--overlay-hover-1);
   border-color: var(--shell-panel-border, var(--c-border-1));
   opacity: 1;
@@ -2252,6 +2284,235 @@ body.resizing * {
   display: inline-block;
   margin-right: 6px;
   color: var(--c-warm-text-3);
+}
+
+.db-thread-count {
+  position: absolute;
+  bottom: -6px;
+  right: -8px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--c-surface-3) 70%, var(--c-primary) 30%);
+  color: var(--c-text-1);
+  border: 1px solid color-mix(in srgb, var(--c-border-1) 60%, var(--c-primary) 40%);
+  font-size: 11px;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 16px var(--shadow-color-2);
+}
+
+.db-thread-summary {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.db-thread-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--shell-panel-border, var(--c-border-1));
+  background: color-mix(in srgb, var(--c-surface-2) 82%, transparent);
+  color: var(--c-text-2);
+}
+
+.db-thread-chip--unread {
+  background: color-mix(in srgb, var(--c-warm-surface-4) 74%, transparent);
+  border-color: color-mix(in srgb, var(--c-warm-border-3) 64%, transparent);
+  color: var(--c-text-1);
+  font-weight: 700;
+}
+
+.db-mail-item--thread-child {
+  margin-left: 46px;
+  width: calc(100% - 46px);
+  padding: 10px 14px;
+  border-radius: 16px;
+  box-shadow: 0 10px 22px var(--shadow-color-1);
+  border-left: 2px solid color-mix(in srgb, var(--c-primary) 35%, transparent);
+}
+
+.db-thread-reader {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.db-thread-reader-mail {
+  border: 1px solid var(--shell-panel-border, var(--c-border-1));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--c-surface-2) 88%, transparent);
+  box-shadow: 0 10px 24px var(--shadow-color-1);
+  overflow: hidden;
+}
+
+.db-thread-reader-header {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.db-thread-reader-head-left {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.db-thread-reader-from {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--c-text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-thread-reader-to {
+  font-size: 12px;
+  color: var(--c-text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-thread-reader-head-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex: 0 0 auto;
+  color: var(--c-text-2);
+}
+
+.db-thread-reader-date {
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.db-thread-reader-caret {
+  transform: rotate(0deg);
+  transition: transform 0.16s ease;
+  opacity: 0.8;
+}
+
+.db-thread-reader-mail.open .db-thread-reader-caret {
+  transform: rotate(90deg);
+  opacity: 1;
+}
+
+.db-thread-reader-body {
+  border-top: 1px solid var(--shell-panel-border, var(--c-border-1));
+  padding: 14px 14px 16px 14px;
+  display: flex;
+  flex-direction: column;
+}
+
+.db-thread-reader-loading {
+  font-size: 13px;
+  color: var(--c-text-2);
+  padding: 8px 0;
+}
+
+.db-thread-reader .db-mail-body-html {
+  min-height: 180px;
+}
+
+.db-mail-item--thread-child .db-mail-avatar-wrap {
+  width: 28px;
+  height: 28px;
+  margin-right: 12px;
+}
+
+.db-mail-item--thread-child .db-mail-avatar {
+  width: 28px;
+  height: 28px;
+}
+
+.db-conversation-bar {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--shell-panel-border, var(--c-border-1));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--c-surface-2) 86%, transparent);
+  box-shadow: 0 10px 24px var(--shadow-color-1);
+}
+
+.db-conversation-bar__meta {
+  font-size: 12px;
+  color: var(--c-text-2);
+  margin-bottom: 8px;
+  user-select: none;
+}
+
+.db-conversation-bar__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 180px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.db-conversation-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  background: color-mix(in srgb, var(--c-surface-3) 78%, transparent);
+  color: var(--c-text-1);
+  cursor: pointer;
+  transition: background 0.14s ease, border-color 0.14s ease, transform 0.14s ease;
+}
+
+.db-conversation-item:hover {
+  background: color-mix(in srgb, var(--c-surface-3) 92%, white 8%);
+  border-color: var(--shell-panel-border, var(--c-border-1));
+  transform: translateY(-1px);
+}
+
+.db-conversation-item.active {
+  border-color: color-mix(in srgb, var(--c-primary) 50%, transparent);
+  background: color-mix(in srgb, var(--c-primary) 12%, var(--c-surface-2));
+}
+
+.db-conversation-item.unread .db-conversation-item__from::before {
+  content: "●";
+  display: inline-block;
+  margin-right: 6px;
+  color: var(--c-warm-text-3);
+}
+
+.db-conversation-item__from {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--c-text-1);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.db-conversation-item__time {
+  font-size: 11px;
+  color: var(--c-text-2);
+  flex: 0 0 auto;
 }
 
 .db-mail-sender {
@@ -2425,17 +2686,14 @@ body.resizing * {
 }
 
 .db-mail-body-html {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-height: 400px;
+  display: block;
+  min-height: 0;
 }
 
 .db-mail-body-html iframe {
   width: 100%;
-  height: 100%;
-  flex: 1;
   border: none;
+  display: block;
 }
 
 .db-attachments {

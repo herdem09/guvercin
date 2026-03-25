@@ -21,6 +21,8 @@ pub struct AccountSummary {
     pub mailbox_order: Option<String>,
     pub label_order: Option<String>,
     pub mailbox_count_display: Option<String>,
+    pub conversation_view: Option<String>,
+    pub thread_order: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -136,6 +138,13 @@ pub struct SetMailboxCountDisplayBody {
 }
 
 #[derive(Deserialize)]
+pub struct SetConversationViewBody {
+    pub mode: String,
+    #[serde(default)]
+    pub thread_order: Option<String>,
+}
+
+#[derive(Deserialize)]
 pub struct SetOrderBody {
     pub order: Vec<String>,
 }
@@ -167,6 +176,8 @@ pub struct AccountSettingsResponse {
     pub mailbox_order: Option<String>,
     pub label_order: Option<String>,
     pub mailbox_count_display: Option<String>,
+    pub conversation_view: Option<String>,
+    pub thread_order: Option<String>,
 }
 
 #[derive(Deserialize, Serialize, Clone)]

@@ -16,7 +16,7 @@ use crate::{
         AccountSettingsResponse, AccountSummary, AccountsResponse, FinalizeAccountBody,
         FinalizeAccountData,         FinalizeSuccessResponse, MailboxPreviewRequest,
         MailboxPreviewResponse, SetFontBody, SetLayoutBody, SetMailboxCountDisplayBody, SetOrderBody, SetThemeBody,
-        SetupAccountForm, SetupFailureFormData,
+        SetConversationViewBody, SetupAccountForm, SetupFailureFormData,
         SetupFailureResponse, SetupSuccessResponse, UpdateAccountSettingsBody,
     },
     offline_routes,
@@ -37,7 +37,7 @@ pub async fn get_accounts(
         SELECT account_id, email_address, display_name, provider_type,
                imap_host, imap_port, smtp_host, smtp_port, sync_status,
                last_sync_time, language, theme, font, layout, ssl_mode, mailbox_order, label_order,
-               mailbox_count_display
+               mailbox_count_display, conversation_view, thread_order
         FROM accounts
         "#,
     )
@@ -386,6 +386,53 @@ pub async fn set_mailbox_count_display(
     Ok((StatusCode::OK, Json(serde_json::json!({ "status": "success" }))))
 }
 
+pub async fn set_conversation_view(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(account_id): axum::extract::Path<i64>,
+    Json(payload): Json<SetConversationViewBody>,
+) -> Result<impl IntoResponse, AppError> {
+    let mode = payload.mode.trim().to_lowercase();
+    if !matches!(mode.as_str(), "messages" | "threads") {
+        return Err(AppError::BadRequest(tr("Invalid display mode")));
+    }
+
+    let pool = &state.ensure_ready(false).await?.general_pool;
+    let existing_order: Option<String> =
+        sqlx::query_scalar("SELECT thread_order FROM accounts WHERE account_id = ?")
+            .bind(account_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+
+    let order_raw = payload
+        .thread_order
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .to_lowercase();
+    let thread_order = if order_raw.is_empty() {
+        existing_order.unwrap_or_else(|| "asc".to_string())
+    } else {
+        order_raw
+    };
+
+    if !matches!(thread_order.as_str(), "asc" | "desc") {
+        return Err(AppError::BadRequest(tr("Invalid sort order")));
+    }
+
+    sqlx::query(
+        "UPDATE accounts SET conversation_view = ?, thread_order = ? WHERE account_id = ?",
+    )
+    .bind(&mode)
+    .bind(&thread_order)
+    .bind(account_id)
+    .execute(pool)
+    .await?;
+
+    Ok((StatusCode::OK, Json(serde_json::json!({ "status": "success" }))))
+}
+
 pub async fn set_mailbox_order(
     State(state): State<Arc<AppState>>,
     axum::extract::Path(account_id): axum::extract::Path<i64>,
@@ -426,7 +473,7 @@ pub async fn get_account_settings(
         r#"
         SELECT account_id, email_address, display_name, imap_host, imap_port,
                smtp_host, smtp_port, ssl_mode, font, layout, mailbox_order, label_order,
-               mailbox_count_display
+               mailbox_count_display, conversation_view, thread_order
         FROM accounts WHERE account_id = ?
         "#,
     )
@@ -451,6 +498,8 @@ pub async fn get_account_settings(
         mailbox_order: row.try_get("mailbox_order").ok(),
         label_order: row.try_get("label_order").ok(),
         mailbox_count_display: row.try_get("mailbox_count_display").ok(),
+        conversation_view: row.try_get("conversation_view").ok(),
+        thread_order: row.try_get("thread_order").ok(),
     }))
 }
 
