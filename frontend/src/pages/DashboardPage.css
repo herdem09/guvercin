@@ -2594,6 +2594,33 @@ body.resizing * {
   color: var(--c-primary-contrast);
 }
 
+.db-mail-action-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.db-mail-pager {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 8px;
+  margin-right: 8px;
+  border-right: 1px solid var(--c-border-1);
+}
+
+.db-mail-pager-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-text-2);
+  min-width: 44px;
+  text-align: center;
+  flex: 0 0 auto;
+}
+
+.db-mail-pager-icon--prev {
+  transform: rotate(180deg);
+}
+
 .mail-section-wrapper {
   display: flex;
   flex-direction: column;

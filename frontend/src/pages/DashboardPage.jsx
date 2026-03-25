@@ -2854,6 +2854,22 @@ function MailSection({
     const displayPage = Math.min(currentPage, filteredMaxPage)
     const pageStart = (displayPage - 1) * perPageValue
     const pagedVisibleMails = visibleMails.slice(pageStart, pageStart + perPageValue)
+    const selectedGlobalIndex = useMemo(() => {
+        if (!selectedMail) return -1
+        const selectedKey = String(selectedMail?.id ?? '')
+        if (!selectedKey) return -1
+        return visibleMails.findIndex((mail) => String(mail?.id ?? '') === selectedKey)
+    }, [selectedMail, visibleMails])
+    const selectedPage = selectedGlobalIndex >= 0 ? Math.floor(selectedGlobalIndex / perPageValue) + 1 : 1
+    const selectedPageStart = (selectedPage - 1) * perPageValue
+    const selectedIndexInPage = selectedGlobalIndex >= 0 ? (selectedGlobalIndex - selectedPageStart + 1) : 0
+    const selectedPageCount = selectedGlobalIndex >= 0
+        ? visibleMails.slice(selectedPageStart, selectedPageStart + perPageValue).length
+        : 0
+    const prevMail = selectedGlobalIndex > 0 ? visibleMails[selectedGlobalIndex - 1] : null
+    const nextMail = selectedGlobalIndex >= 0 && selectedGlobalIndex < visibleMails.length - 1
+        ? visibleMails[selectedGlobalIndex + 1]
+        : null
     const selectedIdSet = selectedMailIds
     const actionableMails = useMemo(() => {
         if (selectMode && selectedIdSet.size > 0) {
@@ -4246,6 +4262,14 @@ function MailSection({
             setCurrentPage(filteredMaxPage)
         }
     }, [currentPage, filteredMaxPage, setCurrentPage])
+
+    useEffect(() => {
+        if (!selectedMail) return
+        if (selectedGlobalIndex < 0) return
+        if (currentPage !== selectedPage) {
+            setCurrentPage(selectedPage)
+        }
+    }, [currentPage, selectedGlobalIndex, selectedMail, selectedPage, setCurrentPage])
 
     useEffect(() => {
         const handleMouseMove = (e) => {
@@ -6361,6 +6385,39 @@ function MailSection({
                                         <div className="db-mail-content-header">
                                             <div className="db-mail-content-subject">{mailContent?.subject || selectedMail.subject || '(No Subject)'}</div>
                                             <div className="db-mail-content-actions">
+                                                {selectedGlobalIndex >= 0 && selectedPageCount > 0 && (
+                                                    <div className="db-mail-pager" aria-label="Mail navigation">
+                                                        <button
+                                                            type="button"
+                                                            className="db-mail-action-btn"
+                                                            onClick={() => prevMail && openMailOrDraft(prevMail)}
+                                                            disabled={!prevMail}
+                                                            title="Previous mail"
+                                                            aria-label="Previous mail"
+                                                        >
+                                                            <img
+                                                                src="/img/icons/arrow-no-tail.svg"
+                                                                className="svg-icon-inline db-mail-pager-icon db-mail-pager-icon--prev"
+                                                            />
+                                                        </button>
+                                                        <div className="db-mail-pager-label" aria-label="Mail position">
+                                                            {selectedIndexInPage} / {selectedPageCount}
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            className="db-mail-action-btn"
+                                                            onClick={() => nextMail && openMailOrDraft(nextMail)}
+                                                            disabled={!nextMail}
+                                                            title="Next mail"
+                                                            aria-label="Next mail"
+                                                        >
+                                                            <img
+                                                                src="/img/icons/arrow-no-tail.svg"
+                                                                className="svg-icon-inline db-mail-pager-icon"
+                                                            />
+                                                        </button>
+                                                    </div>
+                                                )}
                                                 <button
                                                     className="db-mail-action-btn"
                                                     onClick={() => openMailInTab(selectedMail, mailContent)}
