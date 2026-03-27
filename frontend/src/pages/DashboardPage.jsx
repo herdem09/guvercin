@@ -26,6 +26,8 @@ import { buildThreads } from '../utils/threading.js'
 import './DashboardPage.css'
 import SettingsPage from './SettingsPage.jsx'
 
+const EMPTY_OBJECT = Object.freeze({})
+
 function resizeIframeToContent(iframe) {
     if (!iframe) return
     try {
@@ -2780,15 +2782,20 @@ function MailSection({
     const [folderWidth, setFolderWidth] = useState(240)
     const [listWidth, setListWidth] = useState(360)
     const [minListWidth, setMinListWidth] = useState(360)
-    const [expandedThreadIds, setExpandedThreadIds] = useState(() => new Set())
-    const [activeThreadReaderId, setActiveThreadReaderId] = useState(null)
-    const [threadReaderOpenIds, setThreadReaderOpenIds] = useState(() => new Set())
-    const [threadReaderLoadingIds, setThreadReaderLoadingIds] = useState(() => new Set())
-    const [threadReaderContentById, setThreadReaderContentById] = useState(() => ({}))
-    const [foldersHidden, setFoldersHidden] = useState(false)
-    const [mailsHidden, setMailsHidden] = useState(false)
-    const [layoutMode, setLayoutMode] = useState('full') // 'full' | 'medium' | 'narrow'
-    const [overlayPanel, setOverlayPanel] = useState(null) // null | 'folders' | 'mails'
+	    const [expandedThreadIds, setExpandedThreadIds] = useState(() => new Set())
+	    const [activeThreadReaderId, setActiveThreadReaderId] = useState(null)
+	    const [threadReaderOpenIds, setThreadReaderOpenIds] = useState(() => new Set())
+	    const [threadReaderLoadingIds, setThreadReaderLoadingIds] = useState(() => new Set())
+	    const [threadReaderContentById, setThreadReaderContentById] = useState(() => ({}))
+	    // Guard against rare builds/runtime states where this identifier is missing/undefined.
+	    // `typeof` is safe even for undeclared identifiers (avoids ReferenceError in WebKit).
+	    const threadReaderContentByIdSafe = (
+	        typeof threadReaderContentById === 'undefined' || !threadReaderContentById
+	    ) ? EMPTY_OBJECT : threadReaderContentById
+	    const [foldersHidden, setFoldersHidden] = useState(false)
+	    const [mailsHidden, setMailsHidden] = useState(false)
+	    const [layoutMode, setLayoutMode] = useState('full') // 'full' | 'medium' | 'narrow'
+	    const [overlayPanel, setOverlayPanel] = useState(null) // null | 'folders' | 'mails'
     // track if user manually closed each panel (so auto-expand doesn't override)
     const userClosedFolders = useRef(false)
     const userClosedMails = useRef(false)
@@ -3046,12 +3053,12 @@ function MailSection({
             if (next.has(id)) next.delete(id)
             else next.add(id)
             return next
-        })
-
-        if (wasOpen) return
-        const alreadyHave = !!threadReaderContentById?.[id]
-        const alreadyLoading = threadReaderLoadingIds.has(id)
-        if (alreadyHave || alreadyLoading) return
+	        })
+	
+	        if (wasOpen) return
+	        const alreadyHave = !!threadReaderContentByIdSafe?.[id]
+	        const alreadyLoading = threadReaderLoadingIds.has(id)
+	        if (alreadyHave || alreadyLoading) return
 
         setThreadReaderLoadingIds((prev) => {
             const next = new Set(prev)
@@ -3065,9 +3072,9 @@ function MailSection({
                 const next = new Set(prev)
                 next.delete(id)
                 return next
-            })
-        })
-    }, [fetchMailContentForThreadReader, threadReaderContentById, threadReaderLoadingIds, threadReaderOpenIds])
+	            })
+	        })
+	    }, [fetchMailContentForThreadReader, threadReaderContentByIdSafe, threadReaderLoadingIds, threadReaderOpenIds])
 
     useEffect(() => {
         if (!showThreadReader || !selectedThread?.id) {
@@ -6930,11 +6937,11 @@ function MailSection({
 	                                                {(selectedThread.mails || []).slice().reverse().map((m) => {
 	                                                    const id = String(m?.id ?? '')
 	                                                    const isOpen = threadReaderOpenIds.has(id)
-                                                    const isLoading = threadReaderLoadingIds.has(id)
-                                                    const content = threadReaderContentById?.[id] || null
-                                                    const fromLabel = (content?.from_name || '').trim()
-                                                        ? `${content.from_name} <${content.from_address}>`
-                                                        : (m?.name ? `${m.name} <${m.address || ''}>`.trim() : (m?.address || 'Unknown'))
+	                                                    const isLoading = threadReaderLoadingIds.has(id)
+	                                                    const content = threadReaderContentByIdSafe?.[id] || null
+	                                                    const fromLabel = (content?.from_name || '').trim()
+	                                                        ? `${content.from_name} <${content.from_address}>`
+	                                                        : (m?.name ? `${m.name} <${m.address || ''}>`.trim() : (m?.address || 'Unknown'))
                                                     const dateLabel = formatMailDateLong(content?.date || m?.date || '')
                                                     const previewTo = (m?.recipient_to || '').trim()
                                                     return (
