@@ -40,6 +40,58 @@ export default function DetachedComposeWindow({ initialLabel = '' } = {}) {
     const [actionBusy, setActionBusy] = useState(false)
     const sendTimeoutRef = useRef(null)
 
+    const allowCloseRef = useRef(false)
+    const dataRef = useRef(data)
+    const draftRef = useRef(draft)
+    const baselineDraftRef = useRef(baselineDraft)
+    const sentRef = useRef(sent)
+
+    useEffect(() => { dataRef.current = data }, [data])
+    useEffect(() => { draftRef.current = draft }, [draft])
+    useEffect(() => { baselineDraftRef.current = baselineDraft }, [baselineDraft])
+    useEffect(() => { sentRef.current = sent }, [sent])
+
+    useEffect(() => {
+        let unlistenPromise
+        const setup = async () => {
+            try {
+                const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow')
+                const appWindow = getCurrentWebviewWindow()
+                unlistenPromise = appWindow.onCloseRequested((event) => {
+                    if (allowCloseRef.current || sentRef.current) return
+                    
+                    // Always prevent default to take control of the close process
+                    event.preventDefault()
+                    
+                    const currentDraft = draftRef.current
+                    const currentBaseline = baselineDraftRef.current
+                    const currentData = dataRef.current
+
+                    const hasMeaningfulChanges = currentData?.baselineDraft
+                        ? isComposeDraftModified(currentDraft, currentBaseline)
+                        : isComposeDraftDirty(currentDraft)
+
+                    if (hasMeaningfulChanges) {
+                        setExitPromptOpen(true)
+                    } else {
+                        // No changes, allow closing
+                        allowCloseRef.current = true
+                        appWindow.close()
+                    }
+                })
+            } catch {
+                // fallback
+            }
+        }
+        setup()
+        
+        return () => {
+            if (unlistenPromise) {
+                unlistenPromise.then(u => { if (typeof u === 'function') u() })
+            }
+        }
+    }, [])
+
     const accountId = data?.accountId
     const accountEmail = data?.accountEmail || ''
 
@@ -118,6 +170,7 @@ export default function DetachedComposeWindow({ initialLabel = '' } = {}) {
     }, [pendingSend])
 
     const closeWindow = useCallback(async () => {
+        allowCloseRef.current = true
         try {
             const { invoke } = await import('@tauri-apps/api/core')
             if (windowLabel) {
@@ -233,7 +286,7 @@ export default function DetachedComposeWindow({ initialLabel = '' } = {}) {
             window.alert(error?.message || 'Failed to schedule send.')
             return false
         }
-    }, [accountEmail, clearPendingSend, handleSendNow])
+    }, [clearPendingSend, handleSendNow])
 
     const handleSend = useCallback((composed) => {
         startDelayedSend(composed)
@@ -267,6 +320,10 @@ export default function DetachedComposeWindow({ initialLabel = '' } = {}) {
                 return
             }
 
+            if (action === 'send') {
+                await handleSendNow(draft)
+                return
+            }
             if (action === 'discard') {
                 await closeWindow()
                 return
@@ -282,7 +339,7 @@ export default function DetachedComposeWindow({ initialLabel = '' } = {}) {
         } finally {
             setActionBusy(false)
         }
-    }, [closeWindow, draft, handleSaveDraft, startDelayedSend])
+    }, [closeWindow, draft, handleSaveDraft, handleSendNow, startDelayedSend])
 
     if (sent) {
         return (
@@ -326,7 +383,8 @@ export default function DetachedComposeWindow({ initialLabel = '' } = {}) {
                         onDraftChange={setDraft}
                         onSend={handleSend}
                         onDiscard={handleDiscard}
-                        accountEmail={accountEmail}
+                    showTopDiscard={false}
+                    accountEmail={accountEmail}
                         sending={sending}
                     />
                 )}
@@ -366,18 +424,9 @@ export default function DetachedComposeWindow({ initialLabel = '' } = {}) {
                         aria-label="Leave message"
                     >
                         <div className="db-compose-exit-panel__header">
-                            <div className="db-compose-exit-panel__title">Do you want to leave this message?</div>
-                            <button
-                                type="button"
-                                className="db-advanced-search-panel__close"
-                                onClick={() => handleExitAction('cancel')}
-                                aria-label="Close"
-                                title="Close"
-                            >
-                                ✕
-                            </button>
+                            <div className="db-compose-exit-panel__title">Unsaved Changes</div>
                         </div>
-                        <div className="db-compose-exit-panel__body">This message has unsaved changes.</div>
+                        <div className="db-compose-exit-panel__body">This message has unsaved changes. Do you want to save it to drafts or discard?</div>
                         <div className="db-compose-exit-panel__actions">
                             <button
                                 type="button"
@@ -386,6 +435,14 @@ export default function DetachedComposeWindow({ initialLabel = '' } = {}) {
                                 disabled={actionBusy}
                             >
                                 {actionBusy ? 'Working...' : 'Send'}
+                            </button>
+                            <button
+                                type="button"
+                                className="db-advanced-search-btn db-compose-exit-panel__btn db-compose-exit-panel__btn--save"
+                                onClick={() => handleExitAction('save')}
+                                disabled={actionBusy}
+                            >
+                                {actionBusy ? 'Working...' : 'Save to Drafts'}
                             </button>
                             <button
                                 type="button"
@@ -401,15 +458,7 @@ export default function DetachedComposeWindow({ initialLabel = '' } = {}) {
                                 onClick={() => handleExitAction('cancel')}
                                 disabled={actionBusy}
                             >
-                                Cancel
-                            </button>
-                            <button
-                                type="button"
-                                className="db-advanced-search-btn db-compose-exit-panel__btn db-compose-exit-panel__btn--save"
-                                onClick={() => handleExitAction('save')}
-                                disabled={actionBusy}
-                            >
-                                Save to Drafts
+                                Continue Editing
                             </button>
                         </div>
                     </div>

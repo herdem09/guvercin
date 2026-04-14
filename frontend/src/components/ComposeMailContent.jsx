@@ -10,6 +10,7 @@ export default function ComposeMailContent({
     onOpenInWindow,
     accountEmail,
     sending = false,
+    showTopDiscard = true,
 }) {
     return (
         <div
@@ -37,13 +38,15 @@ export default function ComposeMailContent({
                             <img src="/img/icons/open-in-new-window.svg" className="svg-icon-inline" />
                         </button>
                     )}
-                    <button
-                        className="db-mail-action-btn"
-                        onClick={onDiscard}
-                        title="Close"
-                    >
-                        <img src="/img/icons/three-point.svg" className="svg-icon-inline" />
-                    </button>
+                    {onDiscard && showTopDiscard && (
+                        <button
+                            className="db-mail-action-btn"
+                            onClick={onDiscard}
+                            title="Close"
+                        >
+                            <img src="/img/icons/three-point.svg" className="svg-icon-inline" />
+                        </button>
+                    )}
                 </div>
             </div>
             <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>

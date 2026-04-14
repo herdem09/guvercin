@@ -3350,7 +3350,7 @@ function MailSection({
                     accountEmail,
                     source,
                     draft,
-                    baselineDraft: normalizedDraft,
+                    baselineDraft: sessionOrDraft?.baselineDraft || normalizedDraft,
                 }),
             })
 
@@ -5816,6 +5816,7 @@ function MailSection({
                             })}
                             onOpenInWindow={() => openComposeWindow(activeComposeTab, activeComposeTab.source)}
                             accountEmail={accountEmail}
+                            showTopDiscard={false}
                         />
                     ) : activeTab ? (
                         <div className="db-mail-content">
@@ -6835,6 +6836,7 @@ function MailSection({
                                         onOpenInTab={() => openComposeInTab(inlineComposeSession, inlineComposeSession.source)}
                                         onOpenInWindow={() => openComposeWindow(inlineComposeSession, inlineComposeSession.source)}
                                         accountEmail={accountEmail}
+                                        showTopDiscard={false}
                                     />
                                 ) : importPreview ? (
                                     <div className="db-mail-content">
@@ -7074,21 +7076,10 @@ function MailSection({
                         aria-label="Leave message"
                     >
                         <div className="db-compose-exit-panel__header">
-                            <div className="db-compose-exit-panel__title">Do you want to leave this message?</div>
-                            <button
-                                type="button"
-                                className="db-advanced-search-panel__close"
-                                onClick={() => handleComposeExitAction('cancel')}
-                                aria-label="Close"
-                                title="Close"
-                            >
-                                <img src="/img/icons/close.svg" className="svg-icon-inline" />
-                            </button>
+                            <div className="db-compose-exit-panel__title">Unsaved Changes</div>
                         </div>
                         <div className="db-compose-exit-panel__body">
-                            {composeExitPrompt.intent === 'open_mail'
-                                ? 'Opening another mail will close the current compose.'
-                                : 'This message has unsaved changes.'}
+                            This message has unsaved changes. Do you want to save it to drafts or discard?
                         </div>
                         <div className="db-compose-exit-panel__actions">
                             <button
@@ -7098,6 +7089,14 @@ function MailSection({
                                 disabled={composeActionBusy}
                             >
                                 {composeActionBusy ? 'Working...' : 'Send'}
+                            </button>
+                            <button
+                                type="button"
+                                className="db-advanced-search-btn db-compose-exit-panel__btn db-compose-exit-panel__btn--save"
+                                onClick={() => handleComposeExitAction('save')}
+                                disabled={composeActionBusy}
+                            >
+                                {composeActionBusy ? 'Working...' : 'Save to Drafts'}
                             </button>
                             <button
                                 type="button"
@@ -7113,15 +7112,7 @@ function MailSection({
                                 onClick={() => handleComposeExitAction('cancel')}
                                 disabled={composeActionBusy}
                             >
-                                Cancel
-                            </button>
-                            <button
-                                type="button"
-                                className="db-advanced-search-btn db-compose-exit-panel__btn db-compose-exit-panel__btn--save"
-                                onClick={() => handleComposeExitAction('save')}
-                                disabled={composeActionBusy}
-                            >
-                                Save to Drafts
+                                Continue Editing
                             </button>
                         </div>
                     </div>

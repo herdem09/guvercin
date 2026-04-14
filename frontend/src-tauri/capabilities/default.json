@@ -3,10 +3,16 @@
   "identifier": "default",
   "description": "enables the default permissions",
   "windows": [
-    "main"
+    "*"
   ],
   "permissions": [
     "core:default",
-    "dialog:default"
+    "dialog:default",
+    "core:event:default",
+    "core:window:default",
+    "core:webview:default",
+    "core:window:allow-destroy",
+    "core:window:allow-close",
+    "core:webview:allow-webview-close"
   ]
 }

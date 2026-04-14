@@ -3071,7 +3071,7 @@ body.resizing * {
 }
 
 .db-compose-exit-panel {
-  width: min(560px, 94vw);
+  width: min(600px, 96vw);
   background: var(--c-surface-2);
   border-radius: 12px;
   box-shadow: 0 22px 46px var(--shadow-color-6);
@@ -3104,14 +3104,16 @@ body.resizing * {
 
 .db-compose-exit-panel__actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
   padding: 0 16px 16px;
 }
 
 .db-compose-exit-panel__btn {
-  min-width: 120px;
+  min-width: 100px;
+  flex: 1;
+  white-space: nowrap;
 }
 
 .db-compose-exit-panel__btn--send {
