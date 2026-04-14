@@ -82,6 +82,7 @@ pub async fn run(db_dir: Option<PathBuf>) -> Result<(), crate::error::AppError> 
             "/api/account/:account_id/settings",
             get(routes::get_account_settings).patch(routes::update_account_settings),
         )
+        .route("/api/account/:account_id", delete(routes::delete_account))
         .route("/api/avatar/:account_id", get(avatar_routes::get_avatar))
         .route("/api/security/settings",
             get(security_routes::get_security_settings)

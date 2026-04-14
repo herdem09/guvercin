@@ -17,7 +17,7 @@ use crate::{
         FinalizeAccountData,         FinalizeSuccessResponse, MailboxPreviewRequest,
         MailboxPreviewResponse, SetFontBody, SetLayoutBody, SetMailboxCountDisplayBody, SetOrderBody, SetThemeBody,
         SetConversationViewBody, SetupAccountForm, SetupFailureFormData,
-        SetupFailureResponse, SetupSuccessResponse, UpdateAccountSettingsBody,
+        SetupFailureResponse, SetupSuccessResponse, UpdateAccountSettingsBody, DeleteAccountBody,
     },
     offline_routes,
 };
@@ -565,4 +565,48 @@ pub async fn update_account_settings(
     .await?;
 
     Ok((StatusCode::OK, Json(serde_json::json!({ "status": "success" }))))
+}
+
+pub async fn delete_account(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(account_id): axum::extract::Path<i64>,
+    Json(payload): Json<DeleteAccountBody>,
+) -> Result<impl IntoResponse, AppError> {
+    let pool = &state.ensure_ready(false).await?.general_pool;
+
+    let row = sqlx::query("SELECT auth_token FROM accounts WHERE account_id = ?")
+        .bind(account_id)
+        .fetch_optional(pool)
+        .await?;
+
+    let row = row.ok_or_else(|| AppError::BadRequest(tr("Account not found")))?;
+    
+    use sqlx::Row;
+    let stored_pw: Option<String> = row.try_get("auth_token").ok().flatten();
+
+    let password = payload.password.as_deref().unwrap_or("");
+    let stored_pw_str = stored_pw.as_deref().unwrap_or("");
+    
+    if stored_pw_str != password {
+        return Err(AppError::BadRequest(tr("Incorrect password")));
+    }
+
+    sqlx::query("DELETE FROM accounts WHERE account_id = ?")
+        .bind(account_id)
+        .execute(pool)
+        .await?;
+
+    // Also remove from user_db_pools if we can (though it requires locking and we might not strictly need it if we're shutting down or ignoring it).
+    // The easiest is just removing files.
+    let db_path = state.databases_dir.join(format!("{account_id}.db"));
+    let db_shm = state.databases_dir.join(format!("{account_id}.db-shm"));
+    let db_wal = state.databases_dir.join(format!("{account_id}.db-wal"));
+    let db_enc = state.databases_dir.join(format!("{account_id}.db.enc"));
+    
+    let _ = tokio::fs::remove_file(db_path).await;
+    let _ = tokio::fs::remove_file(db_shm).await;
+    let _ = tokio::fs::remove_file(db_wal).await;
+    let _ = tokio::fs::remove_file(db_enc).await;
+
+    Ok((StatusCode::OK, Json(serde_json::json!({ "status": "success", "message": "Account deleted." }))))
 }

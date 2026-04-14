@@ -1388,7 +1388,7 @@ const DashboardPage = () => {
     const closeAccountMenu = () => setAccountMenuOpen(false)
     const handleAccountSettings = () => {
         closeAccountMenu()
-        navigate('/account-select')
+        navigate('/account-settings')
     }
     const handleLogout = () => {
         closeAccountMenu()
@@ -4093,12 +4093,13 @@ function MailSection({
     const createMailDragPreview = useCallback((count) => {
         const node = document.createElement('div')
         node.className = 'db-mail-drag-preview'
-        node.textContent = `📧 ${count} mails`
+        node.textContent = count === 1 ? '1 mail' : `${count} mails`
         node.style.position = 'fixed'
         node.style.top = '-1000px'
         node.style.left = '-1000px'
         node.style.zIndex = '999999'
         node.style.pointerEvents = 'none'
+
         document.body.appendChild(node)
         return node
     }, [])
@@ -6465,6 +6466,9 @@ function MailSection({
                                                                         await attemptOpenMail(latestMail)
                                                                     }
                                                                 }}
+                                                                draggable
+                                                                onDragStart={(event) => latestMail && handleMailDragStart(event, latestMail)}
+                                                                onDragEnd={handleMailDragEnd}
                                                             >
                                                                 {isThread && (
                                                                     <button
@@ -6551,6 +6555,9 @@ function MailSection({
                                                                             attemptOpenMail(mail)
                                                                         }}
                                                                         onContextMenu={(event) => openMailItemMenuFromContext(event, mail)}
+                                                                        draggable
+                                                                        onDragStart={(event) => handleMailDragStart(event, mail)}
+                                                                        onDragEnd={handleMailDragEnd}
                                                                     >
                                                                         <div className="db-mail-avatar-wrap">
                                                                             <Avatar

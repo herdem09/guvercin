@@ -15,6 +15,8 @@ import i18n from './i18n'
 import { useTranslation } from 'react-i18next'
 import { hydrateAccountSession } from './utils/accountStorage.js'
 import ThemePage from './pages/ThemePage.jsx'
+import SettingsPage from './pages/SettingsPage.jsx'
+import AccountSettingsPage from './pages/AccountSettingsPage.jsx'
 
 function getDetachedHint() {
   try {
@@ -73,7 +75,7 @@ function App() {
 
     const tempFont = localStorage.getItem('temp_font')
     const savedFont = localStorage.getItem('font')
-    const onboardingPaths = ['/login', '/language', '/font', '/theme', '/offline-setup', '/not_auth']
+    const onboardingPaths = ['/login', '/language', '/font', '/theme', '/offline-setup', '/not_auth', '/settings', '/account-settings']
 
     let fontToUse = "'Inter', sans-serif"
 
@@ -125,6 +127,8 @@ function App() {
       <Route path="/offline-setup" element={<OfflineSetupPage />} />
       <Route path="/not_auth" element={<NotAuthPage />} />
       <Route path="/dashboard" element={<DashboardPage />} />
+      <Route path="/settings" element={<SettingsPageWrapper />} />
+      <Route path="/account-settings" element={<AccountSettingsPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   )
@@ -254,4 +258,9 @@ function StartupRouter() {
       <p>{t('Checking registered accounts...')}</p>
     </div>
   )
+}
+
+function SettingsPageWrapper() {
+  const navigate = useNavigate()
+  return <SettingsPage onClose={() => navigate(-1)} accountId={null} />
 }

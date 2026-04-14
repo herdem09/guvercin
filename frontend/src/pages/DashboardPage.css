@@ -2048,18 +2048,17 @@ body.resizing * {
 .db-mail-drag-preview {
   display: inline-flex;
   align-items: center;
-  padding: 8px 10px;
-  border-radius: 10px;
-  background: var(--c-surface-2);
-  border: 1px solid var(--c-border-1);
-  color: var(--c-text-1);
+  padding: 6px 12px;
+  border-radius: 20px;
+  background: var(--c-primary);
+  color: #ffffff;
   font-size: 13px;
-  font-weight: 700;
-  box-shadow: 0 10px 20px var(--shadow-color-5);
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   user-select: none;
   white-space: nowrap;
+  letter-spacing: 0.2px;
 }
-
 .db-mail-avatar-wrap {
   position: relative;
   width: 36px;

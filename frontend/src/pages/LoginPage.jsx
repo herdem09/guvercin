@@ -378,7 +378,7 @@ function LoginPage() {
                             type="button"
                             className="settings-btn"
                             title="Settings"
-                            onClick={() => alert(t('Settings module will be added soon.'))}
+                            onClick={() => navigate('/account-settings')}
                         >
                             ⚙️
                         </button>

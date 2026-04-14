@@ -15,6 +15,13 @@ html, body, #root {
   min-width: 800px;
 }
 
+/* Applied via JS during mouse drag to prevent accidental text selection */
+body.no-select,
+body.no-select *:not(input):not(textarea) {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+}
+
 body {
   font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   background: var(--shell-bg, var(--c-bg));
@@ -51,7 +58,8 @@ body {
 .login-page,
 .not-auth-page,
 .offline-setup-page,
-.theme-page {
+.theme-page,
+.account-settings-page {
   position: relative;
   isolation: isolate;
   background: transparent;
@@ -63,7 +71,8 @@ body {
 .login-page::before,
 .not-auth-page::before,
 .offline-setup-page::before,
-.theme-page::before {
+.theme-page::before,
+.account-settings-page::before {
   content: '';
   position: absolute;
   inset: 0;
@@ -81,7 +90,8 @@ body {
 .login-page .form-container,
 .not-auth-page .not-auth-container,
 .offline-setup-page .offline-setup-card,
-.theme-page .theme-container {
+.theme-page .theme-container,
+.account-settings-page .asp-container {
   background: color-mix(in srgb, var(--c-surface-1) 94%, transparent);
   border: 1px solid var(--shell-panel-border, var(--c-border-1));
   border-radius: 24px;
@@ -92,7 +102,8 @@ body {
 .login-page .form-container,
 .not-auth-page .not-auth-container,
 .font-page .font-container,
-.theme-page .theme-container {
+.theme-page .theme-container,
+.account-settings-page .asp-container {
   max-width: 720px;
 }
 

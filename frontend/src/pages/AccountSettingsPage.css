@@ -1,0 +1,292 @@
+.account-settings-page {
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    padding: 40px 20px;
+    /* Background and global properties are now handled by .account-settings-page global selectors in index.css */
+    color: var(--c-text-1);
+}
+
+.asp-container {
+    width: 100%;
+    max-width: 600px;
+    display: flex;
+    flex-direction: column;
+    padding: 30px;
+    /* Removed background, border, shadow and backdrop-filter since .account-settings-page .asp-container in index.css inherits them */
+}
+
+.asp-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 30px;
+    gap: 15px;
+    border-bottom: 1px solid var(--c-border-1);
+    padding-bottom: 20px;
+}
+
+.asp-back-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: transparent;
+    border: none;
+    color: var(--c-text-2);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: color 0.2s;
+    padding: 0;
+}
+
+.asp-back-btn:hover {
+    color: var(--c-text-1);
+}
+
+.asp-header h2 {
+    margin: 0;
+    font-size: 24px;
+    font-weight: 600;
+    flex: 1;
+}
+
+.asp-content {
+    flex: 1;
+}
+
+.asp-loading,
+.asp-error-state,
+.asp-empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 40px 0;
+    color: var(--c-text-2);
+    text-align: center;
+}
+
+.asp-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--c-border-1);
+    border-top-color: var(--c-primary);
+    border-radius: 50%;
+    animation: asp-spin 1s linear infinite;
+    margin-bottom: 15px;
+}
+
+@keyframes asp-spin {
+    to { transform: rotate(360deg); }
+}
+
+.asp-error-state button {
+    margin-top: 15px;
+    padding: 8px 16px;
+    background: var(--c-surface-2);
+    border: 1px solid var(--c-border-1);
+    color: var(--c-text-1);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.asp-error-state button:hover {
+    background: var(--c-surface-3);
+}
+
+.asp-account-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.asp-account-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px;
+    background: var(--c-surface-1);
+    border: 1px solid var(--c-border-1);
+    border-radius: 8px;
+    transition: border-color 0.2s, background 0.2s;
+}
+
+.asp-account-item:hover {
+    background: var(--c-surface-2);
+    border-color: var(--c-primary);
+}
+
+.asp-account-info {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.asp-account-name {
+    font-weight: 600;
+    font-size: 16px;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.asp-account-email {
+    font-size: 13px;
+    color: var(--c-text-2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.asp-delete-btn {
+    background: transparent;
+    border: none;
+    color: var(--c-text-2);
+    cursor: pointer;
+    padding: 10px;
+    border-radius: 6px;
+    transition: color 0.2s, background 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.asp-delete-btn:hover {
+    color: #ef4444;
+    background: rgba(239, 68, 68, 0.1);
+}
+
+/* Modal */
+.asp-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    padding: 20px;
+}
+
+.asp-modal {
+    background: var(--c-surface-1);
+    border: 1px solid var(--c-border-1);
+    border-radius: 12px;
+    width: 100%;
+    max-width: 400px;
+    padding: 24px;
+    box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+    animation: asp-modal-in 0.2s ease-out;
+}
+
+@keyframes asp-modal-in {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+.asp-modal-title {
+    margin: 0 0 16px 0;
+    font-size: 20px;
+    font-weight: 600;
+}
+
+.asp-modal-warning {
+    margin: 0 0 20px 0;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--c-text-2);
+}
+
+.asp-modal-warning strong {
+    color: var(--c-text-1);
+}
+
+.asp-input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 20px;
+}
+
+.asp-input-group label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--c-text-2);
+}
+
+.asp-input-group input {
+    background: var(--c-bg);
+    border: 1px solid var(--c-border-1);
+    color: var(--c-text-1);
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 14px;
+    transition: border-color 0.2s;
+}
+
+.asp-input-group input:focus {
+    outline: none;
+    border-color: var(--c-primary);
+}
+
+.asp-modal-error {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+    padding: 10px 12px;
+    border-radius: 6px;
+    font-size: 13px;
+    margin-bottom: 20px;
+    border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.asp-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+}
+
+.asp-btn-cancel,
+.asp-btn-danger {
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-weight: 500;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+    border: none;
+}
+
+.asp-btn-cancel {
+    background: transparent;
+    color: var(--c-text-2);
+}
+
+.asp-btn-cancel:hover:not(:disabled) {
+    background: var(--c-surface-2);
+    color: var(--c-text-1);
+}
+
+.asp-btn-danger {
+    background: #ef4444;
+    color: white;
+}
+
+.asp-btn-danger:hover:not(:disabled) {
+    background: #dc2626;
+}
+
+.asp-btn-danger:disabled,
+.asp-btn-cancel:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}

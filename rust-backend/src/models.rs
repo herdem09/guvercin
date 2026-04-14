@@ -314,3 +314,8 @@ pub struct UpdateBlockedSenderRequest {
     pub action_type: String,
     pub target_folder: Option<String>,
 }
+
+#[derive(Deserialize)]
+pub struct DeleteAccountBody {
+    pub password: Option<String>,
+}

@@ -4,6 +4,34 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App.jsx'
 import './index.css'
 import './i18n'
+
+// Prevent accidental text selection while dragging/resizing.
+// Skipped entirely for [draggable] elements so HTML5 drag & drop keeps working.
+;(function installNoSelectGuard() {
+  document.addEventListener('mousedown', (e) => {
+    if (e.target.closest('[draggable="true"]')) return
+
+    const startX = e.clientX
+    const startY = e.clientY
+
+    const onMove = (moveEvent) => {
+      if (Math.abs(moveEvent.clientX - startX) > 3 || Math.abs(moveEvent.clientY - startY) > 3) {
+        document.body.classList.add('no-select')
+        document.removeEventListener('mousemove', onMove, true)
+      }
+    }
+
+    const onUp = () => {
+      document.body.classList.remove('no-select')
+      document.removeEventListener('mousemove', onMove, true)
+      document.removeEventListener('mouseup', onUp, true)
+    }
+
+    document.addEventListener('mousemove', onMove, true)
+    document.addEventListener('mouseup', onUp, true)
+  }, { capture: true, passive: true })
+}())
+
 import { OfflineSyncProvider } from './context/OfflineSyncContext.jsx'
 import { ThemeProvider } from './context/ThemeContext.jsx'
 
