@@ -643,6 +643,111 @@
   line-height: 1.5;
 }
 
+.sp-toolbar-style-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+}
+
+.sp-toolbar-style-card {
+  border: 1.5px solid var(--c-border-1);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--c-surface-2);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.sp-toolbar-style-card input[type="radio"] {
+  accent-color: var(--c-primary);
+}
+
+.sp-toolbar-style-card.active {
+  border-color: var(--c-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--c-primary) 22%, transparent);
+}
+
+.sp-toolbar-style-card__label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c-text-1);
+}
+
+.sp-toolbar-preview {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--c-border-1);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--c-surface-1) 90%, transparent);
+}
+
+.sp-toolbar-preview__btn {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--c-text-1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.sp-toolbar-preview__icon {
+  line-height: 1;
+}
+
+.sp-toolbar-preview__label {
+  white-space: nowrap;
+}
+
+.sp-toolbar-preview__btn--icon_small,
+.sp-toolbar-preview__btn--text_small,
+.sp-toolbar-preview__btn--icon_text_small {
+  min-height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.sp-toolbar-preview__btn--icon_small .sp-toolbar-preview__icon,
+.sp-toolbar-preview__btn--icon_text_small .sp-toolbar-preview__icon {
+  font-size: 13px;
+}
+
+.sp-toolbar-preview__btn--text_small {
+  font-size: 11px;
+}
+
+.sp-toolbar-preview__btn--icon_large {
+  min-height: 34px;
+  min-width: 34px;
+  padding: 0 10px;
+}
+
+.sp-toolbar-preview__btn--icon_large .sp-toolbar-preview__icon {
+  font-size: 18px;
+}
+
+.sp-toolbar-preview__btn--icon_text_large_vertical {
+  min-height: 44px;
+  padding: 6px 10px 4px;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1;
+}
+
+.sp-toolbar-preview__btn--icon_text_large_vertical .sp-toolbar-preview__icon {
+  font-size: 18px;
+}
+
+.sp-toolbar-preview__btn--icon_text_large_vertical .sp-toolbar-preview__label {
+  font-size: 10px;
+}
+
 /* ─── Radio group ───────────────────────────────────────────────── */
 .sp-radio-group {
   display: flex;

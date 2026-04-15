@@ -739,6 +739,16 @@ body.resizing * {
   background: var(--overlay-hover-1);
 }
 
+.db-submenu--icon_large .db-submenu-more-btn {
+  height: 36px;
+  width: 36px;
+}
+
+.db-submenu--icon_text_large_vertical .db-submenu-more-btn {
+  height: 44px;
+  width: 36px;
+}
+
 .db-overflow-menu {
   position: absolute;
   top: 100%;
@@ -804,6 +814,73 @@ body.resizing * {
 
 .db-submenu li button.submenu-open {
   background: var(--c-border-1);
+}
+
+.db-submenu-main-btn {
+  white-space: nowrap;
+}
+
+.db-submenu-main-btn__icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.db-submenu-main-btn__text {
+  line-height: 1;
+}
+
+.db-submenu--icon_small .db-submenu-main-btn,
+.db-submenu--text_small .db-submenu-main-btn,
+.db-submenu--icon_text_small .db-submenu-main-btn {
+  height: 30px;
+  font-size: 12px;
+  padding: 0 14px;
+}
+
+.db-submenu--icon_small .db-submenu-main-btn .svg-icon-inline,
+.db-submenu--icon_text_small .db-submenu-main-btn .svg-icon-inline {
+  width: 1em;
+  height: 1em;
+}
+
+.db-submenu--icon_large {
+  height: 52px;
+}
+
+.db-submenu--icon_large .db-submenu-main-btn {
+  min-width: 36px;
+  height: 36px;
+  padding: 0 10px;
+}
+
+.db-submenu--icon_large .db-submenu-main-btn .svg-icon-inline {
+  width: 1.2em;
+  height: 1.2em;
+}
+
+.db-submenu--icon_text_large_vertical {
+  height: 58px;
+}
+
+.db-submenu--icon_text_large_vertical .db-submenu-main-btn {
+  min-height: 44px;
+  padding: 5px 12px 4px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.db-submenu--icon_text_large_vertical .db-submenu-main-btn .svg-icon-inline {
+  width: 1.15em;
+  height: 1.15em;
+}
+
+.db-submenu--icon_text_large_vertical .db-submenu-main-btn__text {
+  font-size: 10px;
 }
 
 .db-submenu-menu-wrap {
@@ -1083,6 +1160,12 @@ body.resizing * {
 
 .db-view-toggle.active:hover {
   background: #fde68a;
+}
+
+.db-submenu .db-submenu-main-btn.db-view-toggle {
+  min-height: unset;
+  border-radius: 10px;
+  border: none;
 }
 
 .db-view-toggle__switch {

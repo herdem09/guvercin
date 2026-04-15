@@ -104,6 +104,7 @@ const CATEGORIES = [
             { id: 'theme', label: 'Theme', parentId: 'appearance' },
             { id: 'font', label: 'Font', parentId: 'appearance' },
             { id: 'layout', label: 'Layout', parentId: 'appearance' },
+            { id: 'toolbar', label: 'Toolbar', parentId: 'appearance' },
             { id: 'mailbox_label_list', label: 'Mailbox & Label List', parentId: 'appearance' },
         ],
     },
@@ -131,6 +132,7 @@ const PANEL_SEARCH_INDEX = {
     theme: 'theme light dark system import appearance manual choose',
     font: 'font typeface typography family inter sans serif system appearance text readability',
     layout: 'layout drag drop sidebar toolbar tabs top bottom left right',
+    toolbar: 'toolbar ribbon submenu icon text button style compact large vertical appearance',
     mailbox_label_list: 'sidebar mail counts unread total both none mailbox label list order reorder arrows folders',
     offline: 'offline sync download folders labels cache attachments policy days count enable email caching',
     imap: 'imap incoming mail server port password ssl starttls encryption connection',
@@ -613,6 +615,148 @@ function LayoutSettings({
                 style={{ marginTop: 20 }}
                 onClick={() => saveLayoutDraft().catch(() => {})}
                 disabled={saving || !layoutDirty}
+            >
+                {saving ? 'Saving…' : 'Save'}
+            </button>
+        </div>
+    )
+}
+
+const TOOLBAR_STYLE_OPTIONS = [
+    { value: 'icon_small', label: 'Icon only (Small)', icon: true, text: false },
+    { value: 'icon_large', label: 'Icon only (Large)', icon: true, text: false },
+    { value: 'text_small', label: 'Text only (Small)', icon: false, text: true },
+    { value: 'icon_text_small', label: 'Icon + Text (Small)', icon: true, text: true },
+    { value: 'icon_text_large_vertical', label: 'Icon + Text (Large Vertical)', icon: true, text: true },
+]
+
+function normalizeToolbarStyle(value) {
+    const normalized = (value || '').toString().trim().toLowerCase()
+    if (TOOLBAR_STYLE_OPTIONS.some((option) => option.value === normalized)) {
+        return normalized
+    }
+    return 'icon_text_small'
+}
+
+function ToolbarPreviewButton({ styleValue, icon, label }) {
+    const showIcon = styleValue !== 'text_small'
+    const showLabel = styleValue !== 'icon_small' && styleValue !== 'icon_large'
+    return (
+        <button type="button" className={`sp-toolbar-preview__btn sp-toolbar-preview__btn--${styleValue}`} tabIndex={-1}>
+            {showIcon && <span className="sp-toolbar-preview__icon">{icon}</span>}
+            {showLabel && <span className="sp-toolbar-preview__label">{label}</span>}
+        </button>
+    )
+}
+
+function ToolbarSettings({
+    accountId,
+    searchQuery = '',
+    toolbarStyleDraft,
+    setToolbarStyleDraft,
+    toolbarStyleBaselineRef,
+    toolbarStyleReady,
+}) {
+    const [saving, setSaving] = useState(false)
+    const [persistError, setPersistError] = useState(null)
+    const normalizedDraft = normalizeToolbarStyle(toolbarStyleDraft)
+    const toolbarStyleDirty = normalizedDraft !== normalizeToolbarStyle(toolbarStyleBaselineRef.current)
+
+    const persistToolbarStyle = useCallback(async () => {
+        const safeStyle = normalizeToolbarStyle(toolbarStyleDraft)
+        if (!accountId) {
+            localStorage.setItem('toolbar_style', safeStyle)
+            toolbarStyleBaselineRef.current = safeStyle
+            window.dispatchEvent(new Event('guvercin-toolbar-style-changed'))
+            return
+        }
+        setPersistError(null)
+        const res = await fetch(apiUrl(`/api/account/${accountId}/toolbar-style`), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ style: safeStyle }),
+        })
+        if (!res.ok) throw new Error('save_failed')
+        localStorage.setItem('toolbar_style', safeStyle)
+        toolbarStyleBaselineRef.current = safeStyle
+        window.dispatchEvent(new Event('guvercin-toolbar-style-changed'))
+    }, [accountId, toolbarStyleBaselineRef, toolbarStyleDraft])
+
+    const saveToolbarDraft = useCallback(async () => {
+        setSaving(true)
+        setPersistError(null)
+        try {
+            await persistToolbarStyle()
+        } catch (e) {
+            console.error(e)
+            setPersistError('Could not save toolbar style. Try again.')
+            throw new Error('save_failed')
+        } finally {
+            setSaving(false)
+        }
+    }, [persistToolbarStyle])
+
+    useSettingsDraft('toolbar-appearance', 'Toolbar', {
+        isDirty: toolbarStyleDirty,
+        save: saveToolbarDraft,
+        revert: () => {
+            const base = normalizeToolbarStyle(toolbarStyleBaselineRef.current)
+            setToolbarStyleDraft(base)
+            setPersistError(null)
+        },
+    })
+
+    if (!toolbarStyleReady) {
+        return (
+            <div className="sp-section">
+                <h2 className="sp-section__title"><HighlightMatch text="Toolbar" query={searchQuery} /></h2>
+                <div className="sp-loading-row">
+                    <div className="sp-spinner" />
+                    <span>Loading…</span>
+                </div>
+            </div>
+        )
+    }
+
+    return (
+        <div className="sp-section">
+            <h2 className="sp-section__title"><HighlightMatch text="Toolbar" query={searchQuery} /></h2>
+            <p className="sp-section__desc">
+                <HighlightMatch text="Choose how ribbon toolbar buttons look in Dashboard." query={searchQuery} />
+            </p>
+
+            <div className="sp-toolbar-style-grid">
+                {TOOLBAR_STYLE_OPTIONS.map((option) => (
+                    <label key={option.value} className={`sp-toolbar-style-card ${normalizedDraft === option.value ? 'active' : ''}`}>
+                        <input
+                            type="radio"
+                            name="toolbar-style"
+                            value={option.value}
+                            checked={normalizedDraft === option.value}
+                            onChange={(e) => setToolbarStyleDraft(e.target.value)}
+                        />
+                        <div className="sp-toolbar-style-card__label">{option.label}</div>
+                        <div className="sp-toolbar-preview">
+                            <ToolbarPreviewButton styleValue={option.value} icon="✉" label="New" />
+                            <ToolbarPreviewButton styleValue={option.value} icon="🗂" label="Move" />
+                            <ToolbarPreviewButton styleValue={option.value} icon="🏷" label="Label" />
+                        </div>
+                    </label>
+                ))}
+            </div>
+
+            {persistError && (
+                <div className="sp-form-message sp-form-message--error" style={{ marginTop: 12 }}>
+                    {persistError}
+                </div>
+            )}
+
+            <button
+                type="button"
+                className="sp-save-btn"
+                style={{ marginTop: 20 }}
+                onClick={() => saveToolbarDraft().catch(() => {})}
+                disabled={saving || !toolbarStyleDirty}
             >
                 {saving ? 'Saving…' : 'Save'}
             </button>
@@ -2454,6 +2598,10 @@ function renderSinglePanel(id, accountId, onClose, onRefreshAccount, searchQuery
         setFontDraft,
         fontBaselineRef,
         fontReady,
+        toolbarStyleDraft,
+        setToolbarStyleDraft,
+        toolbarStyleBaselineRef,
+        toolbarStyleReady,
     } = appearance
     switch (id) {
         case 'theme': return (
@@ -2483,6 +2631,16 @@ function renderSinglePanel(id, accountId, onClose, onRefreshAccount, searchQuery
                 setLayoutDraft={appearance.setLayoutDraft}
                 layoutBaselineRef={appearance.layoutBaselineRef}
                 layoutReady={appearance.layoutReady}
+            />
+        )
+        case 'toolbar': return (
+            <ToolbarSettings
+                accountId={accountId}
+                searchQuery={q}
+                toolbarStyleDraft={toolbarStyleDraft}
+                setToolbarStyleDraft={setToolbarStyleDraft}
+                toolbarStyleBaselineRef={toolbarStyleBaselineRef}
+                toolbarStyleReady={toolbarStyleReady}
             />
         )
         case 'mailbox_label_list': return (
@@ -2570,6 +2728,9 @@ function SettingsPage(props) {
     const layoutBaselineRef = useRef(null)
     const [layoutDraft, setLayoutDraft] = useState(null)
     const [layoutReady, setLayoutReady] = useState(false)
+    const toolbarStyleBaselineRef = useRef('icon_text_small')
+    const [toolbarStyleDraft, setToolbarStyleDraft] = useState('icon_text_small')
+    const [toolbarStyleReady, setToolbarStyleReady] = useState(false)
 
     const finalizeClose = useCallback(() => {
         setQuitOpen(false)
@@ -2670,10 +2831,16 @@ function SettingsPage(props) {
             layoutBaselineRef.current = nextL
             setLayoutDraft(nextL)
             setLayoutReady(true)
+
+            const localToolbar = normalizeToolbarStyle(localStorage.getItem('toolbar_style') || 'icon_text_small')
+            toolbarStyleBaselineRef.current = localToolbar
+            setToolbarStyleDraft(localToolbar)
+            setToolbarStyleReady(true)
             return
         }
         let active = true
         setFontReady(false)
+        setToolbarStyleReady(false)
         fetch(apiUrl(`/api/account/${accountId}/settings`), { cache: 'no-store' })
             .then((r) => (r.ok ? r.json() : Promise.reject(r)))
             .then((data) => {
@@ -2691,6 +2858,12 @@ function SettingsPage(props) {
                 layoutBaselineRef.current = nextLayout
                 setLayoutDraft(nextLayout)
                 setLayoutReady(true)
+
+                const nextToolbarStyle = normalizeToolbarStyle(data.toolbar_style || data.toolbarStyle || localStorage.getItem('toolbar_style'))
+                toolbarStyleBaselineRef.current = nextToolbarStyle
+                setToolbarStyleDraft(nextToolbarStyle)
+                setToolbarStyleReady(true)
+                localStorage.setItem('toolbar_style', nextToolbarStyle)
             })
             .catch(() => {
                 if (!active) return
@@ -2706,6 +2879,11 @@ function SettingsPage(props) {
                 layoutBaselineRef.current = nextL
                 setLayoutDraft(nextL)
                 setLayoutReady(true)
+
+                const localToolbar = normalizeToolbarStyle(localStorage.getItem('toolbar_style') || 'icon_text_small')
+                toolbarStyleBaselineRef.current = localToolbar
+                setToolbarStyleDraft(localToolbar)
+                setToolbarStyleReady(true)
             })
         return () => {
             active = false
@@ -2725,8 +2903,12 @@ function SettingsPage(props) {
             setLayoutDraft,
             layoutBaselineRef,
             layoutReady,
+            toolbarStyleDraft,
+            setToolbarStyleDraft,
+            toolbarStyleBaselineRef,
+            toolbarStyleReady,
         }),
-        [themeDraft, fontDraft, fontReady, layoutDraft, layoutReady],
+        [themeDraft, fontDraft, fontReady, layoutDraft, layoutReady, toolbarStyleDraft, toolbarStyleReady],
     )
 
     useEffect(() => {
