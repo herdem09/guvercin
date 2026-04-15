@@ -32,6 +32,103 @@ import './i18n'
   }, { capture: true, passive: true })
 }())
 
+// Disable the browser-like context menu (Back/Forward/Reload) on empty areas.
+// Keep native context menus for editable fields (copy/paste, etc.).
+;(function installContextMenuGuard() {
+  // Only apply inside the Tauri runtime.
+  try {
+    if (!(window.__TAURI_INTERNALS__ || window.__TAURI__)) return
+  } catch {
+    return
+  }
+
+  const GUARD_FLAG = '__GUV_CONTEXT_MENU_GUARD_INSTALLED__'
+
+  const installOnWindow = (win) => {
+    try {
+      if (!win || win[GUARD_FLAG]) return
+      win[GUARD_FLAG] = true
+
+      const shouldAllowNativeContextMenu = (eventTarget) => {
+        const el = eventTarget && typeof eventTarget.closest === 'function' ? eventTarget : null
+        if (!el) return false
+
+        // Keep native context menus for editable fields (copy/paste, etc.).
+        if (el.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return true
+        // Opt-out hook for future cases.
+        if (el.closest('[data-allow-native-context-menu="true"]')) return true
+
+        return false
+      }
+
+      const stop = (e) => {
+        e.preventDefault()
+        e.stopImmediatePropagation()
+      }
+
+      const onContextMenu = (e) => {
+        if (!shouldAllowNativeContextMenu(e.target)) stop(e)
+      }
+
+      const onMouseDown = (e) => {
+        if (e.button !== 2) return
+        if (!shouldAllowNativeContextMenu(e.target)) stop(e)
+      }
+
+      win.addEventListener('contextmenu', onContextMenu, { capture: true })
+      win.addEventListener('mousedown', onMouseDown, { capture: true })
+      win.document?.addEventListener('contextmenu', onContextMenu, { capture: true })
+      win.document?.addEventListener('mousedown', onMouseDown, { capture: true })
+    } catch {
+      // ignore (cross-origin / sandbox)
+    }
+  }
+
+  const tryInstallInIframe = (iframe) => {
+    try {
+      const win = iframe?.contentWindow
+      if (win) installOnWindow(win)
+    } catch {
+      // ignore (cross-origin / sandbox)
+    }
+  }
+
+  const hookIframe = (iframe) => {
+    if (!(iframe instanceof HTMLIFrameElement)) return
+    tryInstallInIframe(iframe)
+    iframe.addEventListener('load', () => tryInstallInIframe(iframe), { capture: true })
+  }
+
+  installOnWindow(window)
+
+  // Existing iframes (mail body is rendered in sandboxed iframes).
+  try {
+    document.querySelectorAll('iframe').forEach(hookIframe)
+  } catch {
+    
+  }
+
+  // New iframes inserted later.
+  try {
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (node instanceof HTMLIFrameElement) {
+            hookIframe(node)
+            continue
+          }
+          if (node && typeof node.querySelectorAll === 'function') {
+            node.querySelectorAll('iframe').forEach(hookIframe)
+          }
+        }
+      }
+    })
+    observer.observe(document.documentElement, { childList: true, subtree: true })
+  } catch {
+    
+  }
+}())
+
 import { OfflineSyncProvider } from './context/OfflineSyncContext.jsx'
 import { ThemeProvider } from './context/ThemeContext.jsx'
 

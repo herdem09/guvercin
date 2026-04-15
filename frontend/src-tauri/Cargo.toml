@@ -27,3 +27,6 @@ tokio = { version = "1.37", features = ["full", "rt-multi-thread"] }
 rust-backend = { path = "../../rust-backend" }
 tauri-plugin-dialog = "2.6.0"
 libsqlite3-sys = { version = "0.27", features = ["bundled-sqlcipher"] }
+
+[target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))'.dependencies]
+webkit2gtk = "2.0.2"

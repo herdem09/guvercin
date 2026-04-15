@@ -3,8 +3,33 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
 use serde_json::Value;
+use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
+
+#[cfg(any(
+  target_os = "linux",
+  target_os = "dragonfly",
+  target_os = "freebsd",
+  target_os = "netbsd",
+  target_os = "openbsd"
+))]
+fn disable_native_webview_context_menus(window: &tauri::WebviewWindow) {
+  use webkit2gtk::{ContextMenuExt, HitTestResultExt, WebViewExt};
+
+  let _ = window.with_webview(|webview| {
+    let wv = webview.inner();
+    wv.connect_context_menu(|_, menu, _, hit_test| {
+      // Allow native menu for editable fields (copy/paste), disable everywhere else.
+      if hit_test.context_is_editable() {
+        return false;
+      }
+
+      // Extra safety: clear any items that might have been appended by default handlers.
+      menu.remove_all();
+      true
+    });
+  });
+}
 
 /// Shared state that maps window labels → mail data JSON.
 /// The new window calls `get_mail_window_data` to consume its entry.
@@ -56,7 +81,17 @@ async fn open_mail_window(
   .initialization_script(init_script)
   .visible(true)
   .build()
-  .map_err(|e| e.to_string())?;
+  .map_err(|e| e.to_string())
+  .map(|window| {
+    #[cfg(any(
+      target_os = "linux",
+      target_os = "dragonfly",
+      target_os = "freebsd",
+      target_os = "netbsd",
+      target_os = "openbsd"
+    ))]
+    disable_native_webview_context_menus(&window);
+  })?;
 
   Ok(())
 }
@@ -124,7 +159,17 @@ async fn open_compose_window(
   .visible(true)
   .inner_size(800.0, 650.0)
   .build()
-  .map_err(|e| e.to_string())?;
+  .map_err(|e| e.to_string())
+  .map(|window| {
+    #[cfg(any(
+      target_os = "linux",
+      target_os = "dragonfly",
+      target_os = "freebsd",
+      target_os = "netbsd",
+      target_os = "openbsd"
+    ))]
+    disable_native_webview_context_menus(&window);
+  })?;
 
   Ok(())
 }
@@ -326,6 +371,19 @@ pub fn run() {
           }
         });
       });
+
+      #[cfg(any(
+        target_os = "linux",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd"
+      ))]
+      {
+        for (_, window) in app.webview_windows() {
+          disable_native_webview_context_menus(&window);
+        }
+      }
 
       Ok(())
     })
