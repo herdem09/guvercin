@@ -4,6 +4,9 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App.jsx'
 import './index.css'
 import './i18n'
+import { installTauriTerminalLogging } from './utils/tauriTerminalLogging.js'
+
+void installTauriTerminalLogging()
 
 // Prevent accidental text selection while dragging/resizing.
 // Skipped entirely for [draggable] elements so HTML5 drag & drop keeps working.

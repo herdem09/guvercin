@@ -36,14 +36,22 @@ export function OfflineSyncProvider({ children }) {
         throw new Error('Status endpoint failed')
       }
       const data = await response.json()
-      setBackendReachable(!!data.backend_reachable)
-      setImapReachable(!!data.imap_reachable)
-      setSmtpReachable(!!data.smtp_reachable)
-      setSyncState(data.sync_state || 'idle')
-      setQueueDepth(Number(data.queue_depth || 0))
-      setLastSyncAt(data.last_sync_at || null)
-      setLastError(data.last_error || null)
-      setTransfer(data.transfer || null)
+      
+      setBackendReachable(prev => prev === !!data.backend_reachable ? prev : !!data.backend_reachable)
+      setImapReachable(prev => prev === !!data.imap_reachable ? prev : !!data.imap_reachable)
+      setSmtpReachable(prev => prev === !!data.smtp_reachable ? prev : !!data.smtp_reachable)
+      setSyncState(prev => prev === (data.sync_state || 'idle') ? prev : (data.sync_state || 'idle'))
+      setQueueDepth(prev => prev === Number(data.queue_depth || 0) ? prev : Number(data.queue_depth || 0))
+      setLastSyncAt(prev => prev === (data.last_sync_at || null) ? prev : (data.last_sync_at || null))
+      setLastError(prev => prev === (data.last_error || null) ? prev : (data.last_error || null))
+      
+      setTransfer(prev => {
+         const next = data.transfer || null
+         if (!prev && !next) return null
+         if (JSON.stringify(prev) === JSON.stringify(next)) return prev
+         return next
+      })
+
       return data
     } catch (err) {
       setBackendReachable(false)
@@ -82,9 +90,9 @@ export function OfflineSyncProvider({ children }) {
   useEffect(() => {
     const accountId = localStorage.getItem('current_account_id')
     if (!accountId) return
-    const STATUS_POLL_INTERVAL_MS = 10_000
-    const SYNC_COOLDOWN_MS = 60_000
-    const STALE_FLUSH_MS = 5 * 60_000
+    const STATUS_POLL_INTERVAL_MS = 1_000
+    const SYNC_COOLDOWN_MS = 15_000
+    const STALE_FLUSH_MS = 2 * 60_000
 
     const pollOnce = async () => {
       if (pollInFlightRef.current) return

@@ -5,6 +5,7 @@ use std::sync::Mutex;
 
 use serde_json::Value;
 use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_log::{Target, TargetKind};
 
 #[cfg(any(
   target_os = "linux",
@@ -319,7 +320,16 @@ fn write_user_theme(handle: tauri::AppHandle, name: String, json: String) -> Res
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   tauri::Builder::default()
-    .plugin(tauri_plugin_log::Builder::default().build())
+    .plugin(
+      tauri_plugin_log::Builder::new()
+        .level(log::LevelFilter::Info)
+        .targets([
+          Target::new(TargetKind::Stdout),
+          Target::new(TargetKind::LogDir { file_name: None }),
+          Target::new(TargetKind::Webview),
+        ])
+        .build(),
+    )
     .plugin(tauri_plugin_dialog::init())
     .setup(|app| {
       let _app_handle = app.handle().clone();
@@ -341,6 +351,7 @@ pub fn run() {
             match rust_backend::run(db_dir.clone()).await {
               Ok(_) => break,
               Err(rust_backend::error::AppError::KeyringDenied(_)) => {
+                log::warn!("Keyring access denied; prompting user to retry or quit");
                 let confirmed = _app_handle.dialog()
                   .message("Access to the secure storage was denied. Guvercin needs this access to protect your account data.")
                   .title("Keyring Access Required")
@@ -358,7 +369,7 @@ pub fn run() {
                 }
               }
               Err(e) => {
-                eprintln!("Backend error: {}", e);
+                log::error!("Backend error: {}", e);
                 _app_handle.dialog()
                   .message(format!("The backend failed to start: {}", e))
                   .title("Initialization Error")

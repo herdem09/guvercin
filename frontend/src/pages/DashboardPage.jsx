@@ -125,7 +125,7 @@ const SubmenuBar = ({ children, submenuScrollRef, submenuMoreRef, submenuVisible
 
             // If everything fits without the "More" button, display all
             if (totalWidth <= containerWidth) {
-                setSubmenuVisibleCount(items.length)
+                setSubmenuVisibleCount((prev) => (prev === items.length ? prev : items.length))
                 return
             }
 
@@ -141,7 +141,7 @@ const SubmenuBar = ({ children, submenuScrollRef, submenuMoreRef, submenuVisible
                     break
                 }
             }
-            setSubmenuVisibleCount(count)
+            setSubmenuVisibleCount((prev) => (prev === count ? prev : count))
         }
         const ro = new ResizeObserver(check)
         if (submenuScrollRef.current && submenuScrollRef.current.parentElement) {
@@ -1247,6 +1247,7 @@ const DashboardPage = () => {
     const iframeRef = useRef(null)
     const syncAbortRef = useRef(null)
     const isSyncingRef = useRef(false)
+    const autoRefreshInFlightRef = useRef(false)
     const nextMailWindowId = useRef(0)
     const nextTabId = useRef(0)
     const nextNoticeIdRef = useRef(0)
@@ -1449,34 +1450,36 @@ const DashboardPage = () => {
         }
     }, [accountId, backendReachable, connected, connecting, networkOnline, refreshStatus])
 
+    const foldersLoadedRef = useRef(null)
+
     const loadFolders = useCallback(async () => {
         if (!accountId || !backendReachable) return
         try {
-
-            let res = await fetch(apiUrl(`/api/offline/${accountId}/local-mailboxes`), { cache: 'no-store' })
-            if (res.ok) {
-                const data = await res.json()
+            // First load from local cache
+            let localRes = await fetch(apiUrl(`/api/offline/${accountId}/local-mailboxes`), { cache: 'no-store' })
+            if (localRes.ok) {
+                const data = await localRes.json()
                 const normalized = normalizeMailboxResponse(data)
-                setFolders(normalized.allMailboxes)
-                setLabels(normalized.labels)
+                setFolders(prev => (JSON.stringify(prev) === JSON.stringify(normalized.allMailboxes) ? prev : normalized.allMailboxes))
+                setLabels(prev => (JSON.stringify(prev) === JSON.stringify(normalized.labels) ? prev : normalized.labels))
             }
 
+            // Then try remote if online
             if (networkOnline) {
                 const ok = canUseRemoteMail || (await ensureImapConnected())
-                if (!ok) return
-                res = await fetch(apiUrl(`/api/mail/${accountId}/mailboxes`), { cache: 'no-store' })
-                if (res.ok) {
-                    const data = await res.json()
-                    const normalized = normalizeMailboxResponse(data)
-                    setFolders(normalized.allMailboxes)
-                    setLabels(normalized.labels)
+                if (ok) {
+                    const remoteRes = await fetch(apiUrl(`/api/mail/${accountId}/mailboxes`), { cache: 'no-store' })
+                    if (remoteRes.ok) {
+                        const data = await remoteRes.json()
+                        const normalized = normalizeMailboxResponse(data)
+                        setFolders(prev => (JSON.stringify(prev) === JSON.stringify(normalized.allMailboxes) ? prev : normalized.allMailboxes))
+                        setLabels(prev => (JSON.stringify(prev) === JSON.stringify(normalized.labels) ? prev : normalized.labels))
+                    }
                 }
             }
-        } catch {
-            setFolders([])
-            setLabels([])
-        } finally {
             void fetchMailboxCounts()
+        } catch (err) {
+            console.error('Error loading folders:', err)
         }
     }, [accountId, backendReachable, canUseRemoteMail, ensureImapConnected, networkOnline, fetchMailboxCounts])
 
@@ -1489,7 +1492,7 @@ const DashboardPage = () => {
         }
     }, [accountId, backendReachable, connecting, ensureImapConnected, loadFolders, networkOnline, refreshStatus])
 
-    const loadMailsFromCache = useCallback(async (folder, _page, _limit) => {
+    const loadMailsFromCache = useCallback(async (folder) => {
         if (listMode === 'search') return false
         if (!accountId || !backendReachable) return
         try {
@@ -1507,114 +1510,75 @@ const DashboardPage = () => {
 
                 const data = await res.json()
                 const chunk = Array.isArray(data.mails) ? data.mails : []
-                const chunkWithMailbox = chunk.map((mail) => ({ ...mail, mailbox: folder }))
-                if (typeof data.total_count === 'number') {
-                    totalCount = data.total_count
-                }
+                const chunkWithMailbox = chunk.map(m => ({ ...m, mailbox: folder }))
                 allMails.push(...chunkWithMailbox)
-
-                if (chunkWithMailbox.length === 0) break
-                if (typeof totalCount === 'number' && allMails.length >= totalCount) break
-                if (chunkWithMailbox.length < pageSize) break
-                nextPage += 1
+                
+                if (typeof data.total_count === 'number') totalCount = data.total_count
+                if (chunk.length < pageSize) break
+                nextPage++
             }
-
+            
             setMails(allMails)
+            if (totalCount !== null) setMailsCount(totalCount)
             return true
-        } catch {
-            setMails([])
+        } catch (err) {
+            console.error('Error loading mails from cache:', err)
+            return false
         }
-        return false
     }, [accountId, backendReachable, listMode])
 
-    const syncMailsFromRemote = useCallback(async (folder, _page, _limit) => {
-        if (listMode === 'search') return
-        if (!accountId || !canUseRemoteMail) return
-        if (isSyncingRef.current) return
-        isSyncingRef.current = true
-        setIsSyncing(true)
+    const syncMailsFromRemote = useCallback(async (targetFolder) => {
+        const folder = targetFolder || selectedFolder
+        if (!accountId || !canUseRemoteMail || !folder || listMode === 'search') return false
         try {
-            const abort = new AbortController()
-            syncAbortRef.current = abort
-            const pageSize = 250
-            const allMails = []
-            let totalCount = null
-            let nextPage = 1
-
-            while (!abort.signal.aborted) {
-                const res = await fetch(
-                    apiUrl(`/api/mail/${accountId}/list?mailbox=${encodeURIComponent(folder)}&page=${nextPage}&per_page=${pageSize}`),
-                    { cache: 'no-store', signal: abort.signal },
-                )
-                if (!res.ok) break
-
-                const data = await res.json()
-                const chunk = Array.isArray(data.mails) ? data.mails : []
-                const chunkWithMailbox = chunk.map((mail) => ({ ...mail, mailbox: folder }))
-                if (typeof data.total_count === 'number') {
-                    totalCount = data.total_count
-                }
-                allMails.push(...chunkWithMailbox)
-
-                if (chunkWithMailbox.length === 0) break
-                if (typeof totalCount === 'number' && allMails.length >= totalCount) break
-                if (chunkWithMailbox.length < pageSize) break
-                nextPage += 1
-            }
-
-            if (abort.signal.aborted === false) {
-                setMails(allMails)
-            }
+            const res = await fetch(apiUrl(`/api/offline/${accountId}/sync-mailbox?mailbox=${encodeURIComponent(folder)}`), { method: 'POST' })
+            return res.ok
         } catch (err) {
-            if (err.name !== 'AbortError') {
-                console.error('Sync error:', err)
-            }
-        } finally {
-            isSyncingRef.current = false
-            setIsSyncing(false)
-            syncAbortRef.current = null
+            console.error('Error syncing mails from remote:', err)
+            return false
         }
-    }, [accountId, canUseRemoteMail, listMode])
+    }, [accountId, canUseRemoteMail, listMode, selectedFolder])
 
-    const loadMails = useCallback(
-        async (folder, page, limit, forceRemote = false) => {
-            if (listMode === 'search') return
-            if (!accountId || !backendReachable) return
-            setLoadingMails(true)
-            try {
+    const loadMails = useCallback(async (options = {}) => {
+        const { forceRemote = false, allowCache = true } = options
+        if (!accountId || !backendReachable) return
+        
+        if (allowCache) {
+            await loadMailsFromCache(selectedFolder)
+        }
 
-                if (syncAbortRef.current) {
-                    syncAbortRef.current.abort()
-                }
-
-                if (forceRemote || canUseRemoteMail) {
-
-                    const res = await fetch(
-                        apiUrl(`/api/mail/${accountId}/list?mailbox=${encodeURIComponent(folder)}&page=${page}&per_page=${limit}`),
-                        { cache: 'no-store' },
-                    )
-                    if (res.ok) {
-                        const data = await res.json()
-                        const mailList = Array.isArray(data?.mails) ? data.mails : []
-                        setMails(mailList.map((mail) => ({ ...mail, mailbox: folder })))
-                    } else {
-                        const loaded = await loadMailsFromCache(folder, page, limit)
-                        if (!loaded) setMails([])
-                    }
-                } else {
-
-                    await loadMailsFromCache(folder, page, limit)
-                }
-            } catch {
-                const loaded = await loadMailsFromCache(folder, page, limit)
-                if (!loaded) setMails([])
-            } finally {
-                setLoadingMails(false)
+        if (forceRemote || canUseRemoteMail) {
+            const ok = await syncMailsFromRemote(selectedFolder)
+            if (ok) {
+                await loadMailsFromCache(selectedFolder)
                 void fetchMailboxCounts()
             }
-        },
-        [accountId, backendReachable, canUseRemoteMail, listMode, loadMailsFromCache, fetchMailboxCounts],
-    )
+        }
+    }, [accountId, backendReachable, canUseRemoteMail, selectedFolder, loadMailsFromCache, syncMailsFromRemote, fetchMailboxCounts])
+
+    useEffect(() => {
+        if (!accountId || !backendReachable) return
+        loadMails({ allowCache: true, forceRemote: false })
+    }, [accountId, backendReachable, selectedFolder, loadMails])
+
+    const prevCanUseRemoteMailRef = useRef(false)
+    useEffect(() => {
+        const prev = prevCanUseRemoteMailRef.current
+        prevCanUseRemoteMailRef.current = canUseRemoteMail
+        if (!prev && canUseRemoteMail && activeSection === 'mail' && backendReachable) {
+            loadFolders()
+        }
+    }, [activeSection, backendReachable, canUseRemoteMail, loadFolders])
+
+    useEffect(() => {
+        const currentRefKey = `${accountId}-${backendReachable}-${activeSection}`
+        if (accountId && activeSection === 'mail' && backendReachable) {
+            if (foldersLoadedRef.current === currentRefKey) return
+            foldersLoadedRef.current = currentRefKey
+            loadFolders()
+        }
+    }, [accountId, activeSection, backendReachable, loadFolders])
+
 
     const exitSearchMode = useCallback(() => {
         setListMode('mailbox')
@@ -1768,6 +1732,47 @@ const DashboardPage = () => {
             cancelled = true
         }
     }, [activeSection, backendReachable, canUseRemoteMail, listMode, selectedFolder, loadMailsFromCache, syncMailsFromRemote])
+
+    useEffect(() => {
+        if (!accountId || activeSection !== 'mail' || !backendReachable || listMode === 'search') return
+        if (!selectedFolder) return
+
+        const MAIL_AUTO_REFRESH_INTERVAL_MS = 15_000
+        let cancelled = false
+
+        const tick = async () => {
+            if (cancelled) return
+            if (autoRefreshInFlightRef.current) return
+            autoRefreshInFlightRef.current = true
+            try {
+                await loadMailsFromCache(selectedFolder, 1, 250)
+                if (cancelled) return
+                void fetchMailboxCounts()
+                if (canUseRemoteMail) {
+                    await syncMailsFromRemote(selectedFolder, 1, 250)
+                }
+            } finally {
+                autoRefreshInFlightRef.current = false
+            }
+        }
+
+        tick()
+        const timer = window.setInterval(tick, MAIL_AUTO_REFRESH_INTERVAL_MS)
+        return () => {
+            cancelled = true
+            window.clearInterval(timer)
+        }
+    }, [
+        accountId,
+        activeSection,
+        backendReachable,
+        canUseRemoteMail,
+        fetchMailboxCounts,
+        listMode,
+        loadMailsFromCache,
+        selectedFolder,
+        syncMailsFromRemote,
+    ])
 
     const prefetchInlineAssets = useCallback(
         async (uid, mailbox) => {
