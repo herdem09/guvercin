@@ -26,7 +26,7 @@ use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
 };
-use tracing_subscriber::{EnvFilter, FmtSubscriber};
+use tracing_subscriber::EnvFilter;
 
 use crate::db::AppState;
 use crate::imap_session::ImapState;
@@ -34,14 +34,28 @@ use crate::mail_routes::MailAppState;
 
 use std::path::PathBuf;
 
+fn init_tracing() {
+    let default_filter =
+        "info,axum=info,tower_http=info,rust_backend=debug,sqlx=warn,hyper=warn";
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_filter));
+
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(env_filter)
+        .with_timer(tracing_subscriber::fmt::time::ChronoLocal::rfc_3339())
+        .with_target(true)
+        .with_thread_ids(true)
+        .with_file(true)
+        .with_line_number(true)
+        .compact()
+        .try_init();
+}
+
 pub async fn run(db_dir: Option<PathBuf>) -> Result<(), crate::error::AppError> {
-    println!("Guvercin Backend v1.1 Starting...");
     dotenvy::dotenv().ok();
 
-    let subscriber = FmtSubscriber::builder()
-        .with_env_filter(EnvFilter::from_default_env())
-        .finish();
-    tracing::subscriber::set_global_default(subscriber).ok();
+    init_tracing();
+    tracing::info!("Guvercin backend starting");
 
     let db_state = Arc::new(AppState::initialize(db_dir).await?);
     let imap_state = Arc::new(ImapState::new());
@@ -217,18 +231,20 @@ pub async fn run(db_dir: Option<PathBuf>) -> Result<(), crate::error::AppError> 
 }
 
 pub async fn init_keyring() -> anyhow::Result<()> {
+    init_tracing();
     crypto::CryptoManager::create_and_store(crypto::KEYRING_PROMPT)
         .await
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-    println!("Keyring initialized.");
+    tracing::info!("Keyring initialized");
     Ok(())
 }
 
 pub async fn check_keyring() -> anyhow::Result<()> {
+    init_tracing();
     let raw = crate::keystore::load_master_key(crypto::KEYRING_PROMPT)
         .await
         .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     let _ = crypto::CryptoManager::from_raw(raw)?;
-    println!("Keyring access OK.");
+    tracing::info!("Keyring access OK");
     Ok(())
 }
