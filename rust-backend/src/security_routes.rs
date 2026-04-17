@@ -140,6 +140,19 @@ pub async fn verify_password(
     }
 }
 
+pub async fn unlock(
+    State(state): State<Arc<AppState>>,
+) -> impl IntoResponse {
+    match state.ensure_ready(false).await {
+        Ok(_) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+        Err(e) => (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "ok": false, "error": e.to_string() })),
+        )
+            .into_response(),
+    }
+}
+
 /* ─── AppError compat ────────────────────────────────────────────── */
 impl From<AppError> for (StatusCode, Json<serde_json::Value>) {
     fn from(e: AppError) -> Self {

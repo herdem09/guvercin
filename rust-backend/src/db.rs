@@ -90,33 +90,11 @@ impl AppState {
             Some(Arc::new(AppStateInner { general_pool: pool, crypto: None }))
         } else {
             // ── Encrypted mode (default) ──────────────────────────────────
-            match keystore::load_master_key(crate::crypto::KEYRING_PROMPT).await {
-                Ok(raw) => {
-                    let crypto = Arc::new(
-                        CryptoManager::from_raw(raw)
-                            .map_err(|e| AppError::KeyringUnavailable(format!("master key invalid: {e}")))?,
-                    );
-                    let general_pool = connect_sqlite(&general_db_path, &crypto)
-                        .await
-                        .map_err(|e| AppError::db(e, &general_db_path_str))?;
-                    init_general_db(&general_pool)
-                        .await
-                        .map_err(|e| AppError::db(e, &general_db_path_str))?;
-                    Some(Arc::new(AppStateInner {
-                        general_pool,
-                        crypto: Some(crypto),
-                    }))
-                }
-                Err(KeyStoreError::NotFound) => None,
-                Err(KeyStoreError::Denied) => {
-                    return Err(AppError::KeyringDenied(
-                        "Keyring access denied. Unlock keyring to continue.".to_string()
-                    ))
-                }
-                Err(KeyStoreError::Other(e)) => {
-                    return Err(AppError::KeyringUnavailable(format!("keyring error: {e}")))
-                }
-            }
+            // DEFERRED: We do NOT call load_master_key here.
+            // This ensures that the OS password prompt (Keyring/Keychain) only appears
+            // when the user explicitly interacts with an account, satisfying the request:
+            // "ask when entering account, not on app launch".
+            None
         };
 
         Ok(Self {
@@ -142,15 +120,15 @@ impl AppState {
             return self.init_plain().await;
         }
 
-        if !create_if_missing {
-            return Err(AppError::KeyringUnavailable(
-                "Encryption key not initialized. Complete setup to create the key.".to_string(),
-            ));
-        }
-
+        // Try to load the key (this might prompt the user via OS dialog)
         let raw = match keystore::load_master_key(crate::crypto::KEYRING_PROMPT).await {
             Ok(raw) => raw,
             Err(KeyStoreError::NotFound) => {
+                if !create_if_missing {
+                     return Err(AppError::KeyringUnavailable(
+                        "Encryption key not initialized. Complete setup to create the key.".to_string(),
+                    ));
+                }
                 let crypto = match CryptoManager::create_and_store(crate::crypto::KEYRING_PROMPT)
                     .await
                 {
@@ -171,7 +149,7 @@ impl AppState {
             }
             Err(KeyStoreError::Denied) => {
                 return Err(AppError::KeyringDenied(
-                    "Keyring access denied".to_string(),
+                    "Keyring access denied. Unlock your system keyring to continue.".to_string(),
                 ))
             }
             Err(KeyStoreError::Other(e)) => {
@@ -184,6 +162,20 @@ impl AppState {
                 .map_err(|e| AppError::KeyringUnavailable(e.to_string()))?,
         );
         self.init_with_crypto(crypto).await
+    }
+
+    pub async fn load_account_cache(&self) -> Vec<crate::models::AccountSummary> {
+        let path = self.databases_dir.join("accounts_cache.json");
+        match tokio::fs::read_to_string(&path).await {
+            Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
+            Err(_) => vec![],
+        }
+    }
+
+    pub async fn save_account_cache(&self, accounts: &[crate::models::AccountSummary]) {
+        let path = self.databases_dir.join("accounts_cache.json");
+        let json = serde_json::to_string_pretty(accounts).unwrap_or_default();
+        let _ = tokio::fs::write(&path, json).await;
     }
 
     async fn init_with_crypto(&self, crypto: Arc<CryptoManager>) -> Result<Arc<AppStateInner>, AppError> {

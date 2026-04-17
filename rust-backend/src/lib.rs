@@ -102,6 +102,7 @@ pub async fn run(db_dir: Option<PathBuf>) -> Result<(), crate::error::AppError> 
             get(security_routes::get_security_settings)
                 .put(security_routes::put_security_settings))
         .route("/api/security/verify-password", post(security_routes::verify_password))
+        .route("/api/security/unlock", post(security_routes::unlock))
         .with_state(db_state);
 
     let mail_router = Router::new()

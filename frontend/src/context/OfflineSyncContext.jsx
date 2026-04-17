@@ -1,9 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { apiUrl } from '../utils/api'
+import { getActiveAccountSessionId } from '../utils/accountStorage.js'
 
 const OfflineSyncContext = createContext(null)
 
 export function OfflineSyncProvider({ children }) {
+  const [activeAccountId, setActiveAccountId] = useState(() => getActiveAccountSessionId())
   const [networkOnline, setNetworkOnline] = useState(() => navigator.onLine)
   const [backendReachable, setBackendReachable] = useState(true)
   const [imapReachable, setImapReachable] = useState(false)
@@ -26,6 +28,15 @@ export function OfflineSyncProvider({ children }) {
       window.removeEventListener('online', onOnline)
       window.removeEventListener('offline', onOffline)
     }
+  }, [])
+
+  useEffect(() => {
+    const onSessionChanged = (event) => {
+      const next = event?.detail?.accountId
+      setActiveAccountId(next ? next.toString() : null)
+    }
+    window.addEventListener('guvercin-account-session-changed', onSessionChanged)
+    return () => window.removeEventListener('guvercin-account-session-changed', onSessionChanged)
   }, [])
 
   const refreshStatus = useCallback(async (accountId) => {
@@ -88,7 +99,7 @@ export function OfflineSyncProvider({ children }) {
   }, [refreshStatus, runSyncNow])
 
   useEffect(() => {
-    const accountId = localStorage.getItem('current_account_id')
+    const accountId = activeAccountId
     if (!accountId) return
     const STATUS_POLL_INTERVAL_MS = 1_000
     const SYNC_COOLDOWN_MS = 15_000
@@ -118,7 +129,7 @@ export function OfflineSyncProvider({ children }) {
     pollOnce()
     const timer = setInterval(pollOnce, STATUS_POLL_INTERVAL_MS)
     return () => clearInterval(timer)
-  }, [networkOnline, refreshStatus, runSyncNow])
+  }, [activeAccountId, networkOnline, refreshStatus, runSyncNow])
 
   const remoteMailAvailable = backendReachable && imapReachable
 

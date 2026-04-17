@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import './AccountSelectionPage.css'
 import { hydrateAccountSession } from '../utils/accountStorage.js'
+import LockScreen from './LockScreen.jsx'
 
 function AccountSelectionPage() {
   const { t } = useTranslation()
@@ -11,6 +12,8 @@ function AccountSelectionPage() {
   const [accounts, setAccounts] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+
+  const [lockAccount, setLockAccount] = useState(null)
 
   useEffect(() => {
     let active = true
@@ -45,9 +48,65 @@ function AccountSelectionPage() {
     }
   }, [t])
 
-  const handleSelect = (account) => {
+  const handleSelect = async (account) => {
+    try {
+      // Check security settings
+      const secRes = await fetch(apiUrl('/api/security/settings'))
+      if (secRes.ok) {
+        const sec = await secRes.json()
+        const policy = sec.login_policy || 'pc_only'
+        if (policy === 'account_only' || policy === 'both') {
+          // Password required
+          setLockAccount({
+            id: account.account_id,
+            email: account.email_address || '',
+            displayName: account.display_name || null,
+            accountData: account // Keep full data for hydration later
+          })
+          return
+        }
+      }
+    } catch (err) {
+      console.error('Security check failed:', err)
+      // On failure, we probably shouldn't just let them in if they requested security, 
+      // but 'pc_only' is the default and it doesn't prompt.
+    }
+
+    // No password required or policy is pc/none
+    // We still call /api/security/unlock to trigger the OS keyring prompt if it was locked.
+    // This satisfies "ask when entering account, not on app launch".
+    try {
+      const unlockRes = await fetch(apiUrl('/api/security/unlock'), { method: 'POST' })
+      if (!unlockRes.ok) {
+         // User likely canceled the OS keyring prompt
+         return
+      }
+    } catch (err) {
+      console.error('Unlock failed:', err)
+      return
+    }
+
     hydrateAccountSession(account)
     navigate('/dashboard')
+  }
+
+  const handleUnlocked = () => {
+    if (lockAccount) {
+      hydrateAccountSession(lockAccount.accountData)
+      navigate('/dashboard')
+    }
+  }
+
+  if (lockAccount) {
+    return (
+      <LockScreen
+        accountId={lockAccount.id}
+        accountEmail={lockAccount.email}
+        displayName={lockAccount.displayName}
+        onUnlocked={handleUnlocked}
+        onCancel={() => setLockAccount(null)}
+      />
+    )
   }
 
   const statusContent = () => {

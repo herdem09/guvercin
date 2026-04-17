@@ -30,8 +30,11 @@ pub async fn get_accounts(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<AccountsResponse>, AppError> {
     let Some(inner) = state.ready_or_none().await else {
-        return Ok(Json(AccountsResponse { accounts: vec![] }));
+        // Backend is locked. Try to serve from cache.
+        let cached = state.load_account_cache().await;
+        return Ok(Json(AccountsResponse { accounts: cached }));
     };
+
     let rows = sqlx::query_as::<_, AccountSummary>(
         r#"
         SELECT account_id, email_address, display_name, provider_type,
@@ -43,6 +46,9 @@ pub async fn get_accounts(
     )
     .fetch_all(&inner.general_pool)
     .await?;
+
+    // Update cache
+    state.save_account_cache(&rows).await;
 
     Ok(Json(AccountsResponse { accounts: rows }))
 }

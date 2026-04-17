@@ -10,7 +10,6 @@ import DashboardPage from './pages/DashboardPage.jsx'
 import AccountSelectionPage from './pages/AccountSelectionPage.jsx'
 import DetachedMailWindow from './pages/DetachedMailWindow.jsx'
 import DetachedComposeWindow from './pages/DetachedComposeWindow.jsx'
-import LockScreen from './pages/LockScreen.jsx'
 import i18n from './i18n'
 import { useTranslation } from 'react-i18next'
 import { hydrateAccountSession } from './utils/accountStorage.js'
@@ -141,15 +140,6 @@ function StartupRouter() {
   const navigate = useNavigate()
   const [error, setError] = useState(null)
   const [retryCount, setRetryCount] = useState(0)
-  // Lock-screen state
-  const [lockAccount, setLockAccount] = useState(null) // { id, email, displayName }
-  const [lockUnlocked, setLockUnlocked] = useState(false)
-
-  useEffect(() => {
-    if (lockUnlocked && lockAccount) {
-      navigate('/dashboard', { replace: true })
-    }
-  }, [lockUnlocked, lockAccount, navigate])
 
   useEffect(() => {
     let active = true
@@ -172,36 +162,9 @@ function StartupRouter() {
         if (accounts.length === 0) {
           navigate('/login', { replace: true })
         } else {
-          // Pick the account to open
-          const account = accounts.length === 1 ? accounts[0] : null
-          if (account) {
-            hydrateAccountSession(account)
-
-            // Check security settings
-            try {
-              const secRes = await fetch(apiUrl('/api/security/settings'))
-              if (secRes.ok) {
-                const sec = await secRes.json()
-                const policy = sec.login_policy || 'pc_only'
-                if (policy === 'account_only' || policy === 'both') {
-                  if (active) {
-                    setLockAccount({
-                      id: account.account_id,
-                      email: account.email_address || '',
-                      displayName: account.display_name || null,
-                    })
-                    return
-                  }
-                }
-              }
-            } catch {
-              // If security check fails, just proceed
-            }
-
-            navigate('/dashboard', { replace: true })
-          } else {
-            navigate('/account-select', { replace: true })
-          }
+          // Always go to account selection first.
+          // This satisfies the user's request: "don't ask password on app start, ask when entering account".
+          navigate('/account-select', { replace: true })
         }
       } catch {
         if (!active) {
@@ -225,17 +188,6 @@ function StartupRouter() {
     }
   }, [navigate, t, retryCount])
 
-  // Show lock screen when required
-  if (lockAccount && !lockUnlocked) {
-    return (
-      <LockScreen
-        accountId={lockAccount.id}
-        accountEmail={lockAccount.email}
-        displayName={lockAccount.displayName}
-        onUnlocked={() => setLockUnlocked(true)}
-      />
-    )
-  }
 
   if (error) {
     return (

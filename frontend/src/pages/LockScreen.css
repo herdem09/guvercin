@@ -247,3 +247,27 @@
 @keyframes ls-spin {
   to { transform: rotate(360deg); }
 }
+
+/* ─── Cancel button ─────────────────────────────────────────────── */
+.ls-cancel-btn {
+  background: transparent;
+  border: none;
+  border-radius: 12px;
+  color: rgba(255, 255, 255, 0.42);
+  padding: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-top: 4px;
+}
+
+.ls-cancel-btn:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.ls-cancel-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}

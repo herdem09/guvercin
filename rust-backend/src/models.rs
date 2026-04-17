@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-#[derive(Serialize, FromRow)]
+#[derive(Serialize, Deserialize, FromRow)]
 pub struct AccountSummary {
     pub account_id: i64,
     pub email_address: Option<String>,
@@ -25,7 +25,7 @@ pub struct AccountSummary {
     pub thread_order: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct AccountsResponse {
     pub accounts: Vec<AccountSummary>,
 }

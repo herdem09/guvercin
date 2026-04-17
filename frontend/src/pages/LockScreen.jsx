@@ -9,8 +9,9 @@ import './LockScreen.css'
  *   accountEmail – string
  *   displayName  – string | null
  *   onUnlocked   – () => void
+ *   onCancel     – () => void (optional)
  */
-function LockScreen({ accountId, accountEmail, displayName, onUnlocked }) {
+function LockScreen({ accountId, accountEmail, displayName, onUnlocked, onCancel }) {
     const [password, setPassword] = useState('')
     const [error, setError] = useState('')
     const [loading, setLoading] = useState(false)
@@ -121,6 +122,17 @@ function LockScreen({ accountId, accountEmail, displayName, onUnlocked }) {
                             </>
                         )}
                     </button>
+
+                    {onCancel && (
+                        <button
+                            type="button"
+                            className="ls-cancel-btn"
+                            onClick={onCancel}
+                            disabled={loading}
+                        >
+                            Switch Account
+                        </button>
+                    )}
                 </form>
             </div>
         </div>

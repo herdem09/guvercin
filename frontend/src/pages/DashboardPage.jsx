@@ -34,6 +34,7 @@ import {
     setDomainLinkBehavior,
     setLinkClickBehavior,
 } from '../utils/externalLinks.js'
+import { clearAccountSession } from '../utils/accountStorage.js'
 import './DashboardPage.css'
 import SettingsPage from './SettingsPage.jsx'
 
@@ -1473,9 +1474,7 @@ const DashboardPage = () => {
     }
     const handleLogout = () => {
         closeAccountMenu()
-        localStorage.removeItem('current_account_id')
-        localStorage.removeItem('saved_account_form')
-        localStorage.removeItem('saved_email')
+        clearAccountSession()
         navigate('/login', { replace: true })
     }
 
