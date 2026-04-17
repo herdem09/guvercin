@@ -68,7 +68,8 @@
   "Sent": "Sent",
   "Labels": "Labels",
   "Active": "Active",
-  "Logout": "Logout",
+  "Logout": "Log out",
+  "Exit": "Exit",
   "Advanced search": "Advanced search",
   "Search": "Search",
   "Search in": "Search in",
@@ -107,5 +108,6 @@
   "Move to tab": "Move to tab",
   "Move to window": "Move to window",
   "Edit": "Edit",
-  "Close": "Close"
+  "Close": "Close",
+  "Settings": "Settings"
 }

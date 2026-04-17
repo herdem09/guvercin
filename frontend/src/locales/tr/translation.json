@@ -67,7 +67,8 @@
   "Inbox": "Gelen Kutusu",
   "Sent": "Gönderilenler",
   "Active": "Aktif",
-  "Logout": "Çıkış Yap",
+  "Logout": "Çıkış",
+  "Exit": "Uygulamadan Çık",
   "Mail": "Posta",
   "Calendar": "Takvim",
   "Contacts": "Kişiler",
@@ -129,5 +130,6 @@
   "Help": "Yardım",
   "Contact Us": "Bize Ulaşın",
   "Feedback": "Geri Bildirim",
-  "Report Bug": "Hata Bildir"
+  "Report Bug": "Hata Bildir",
+  "Settings": "Ayarlar"
 }

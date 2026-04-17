@@ -1468,14 +1468,19 @@ const DashboardPage = () => {
 
     const handleAccountButtonClick = () => setAccountMenuOpen(!accountMenuOpen)
     const closeAccountMenu = () => setAccountMenuOpen(false)
-    const handleAccountSettings = () => {
-        closeAccountMenu()
-        navigate('/account-settings')
-    }
     const handleLogout = () => {
         closeAccountMenu()
         clearAccountSession()
-        navigate('/login', { replace: true })
+        navigate('/account-select', { replace: true })
+    }
+    const handleExitApp = async () => {
+        try {
+            const { getCurrentWebviewWindow } = await import('@tauri-apps/api/webviewWindow')
+            await getCurrentWebviewWindow().close()
+        } catch (e) {
+            console.error('Failed to exit app:', e)
+            window.close()
+        }
     }
 
     const ensureImapConnected = useCallback(async (options = {}) => {
@@ -2399,32 +2404,33 @@ const DashboardPage = () => {
                                     ref={accountMenuRef}
                                     onWheel={(e) => e.stopPropagation()}
                                 >
-                                    <div className="account-popover__avatar-row">
-                                        <div className="account-popover__avatar">
-                                            <Avatar
-                                                email={accountEmailLabel}
-                                                name={accountLabel}
-                                                accountId={accountId}
-                                                size={64}
-                                            />
+                                    <div className="account-popover__header">
+                                        <div className="account-popover__avatar-row">
+                                            <div className="account-popover__avatar">
+                                                <Avatar
+                                                    email={accountEmailLabel}
+                                                    name={accountLabel}
+                                                    accountId={accountId}
+                                                    size={64}
+                                                />
+                                            </div>
                                         </div>
-                                        <button
-                                            type="button"
-                                            className="account-popover__settings-btn"
-                                            title="Settings"
-                                            onClick={() => {
-                                                closeAccountMenu()
-                                                setSettingsPageOpen(true)
-                                            }}
-                                        >
-                                            <img src="/img/icons/settings.svg" className="svg-icon-inline" alt="Settings" />
-                                        </button>
+                                        <div className="account-popover__name">{accountLabel}</div>
+                                        <div className="account-popover__email">{accountEmailLabel}</div>
                                     </div>
-                                    <div className="account-popover__name">{accountLabel}</div>
-                                    <div className="account-popover__email">{accountEmailLabel}</div>
                                     <div className="account-popover__actions">
-                                        <button type="button" className="account-popover__btn" onClick={handleAccountSettings}>{t('Account Settings')}</button>
-                                        <button type="button" className="account-popover__btn account-popover__btn--danger" onClick={handleLogout}>{t('Logout')}</button>
+                                        <button type="button" className="account-popover__action-item" onClick={() => { closeAccountMenu(); setSettingsPageOpen(true); }}>
+                                            <img src="/img/icons/settings.svg" className="svg-icon-inline account-popover__action-icon" alt="" />
+                                            <span>{t('Settings')}</span>
+                                        </button>
+                                        <button type="button" className="account-popover__action-item" onClick={handleLogout}>
+                                            <img src="/img/icons/logout.svg" className="svg-icon-inline account-popover__action-icon" alt="" />
+                                            <span>{t('Logout')}</span>
+                                        </button>
+                                        <button type="button" className="account-popover__action-item account-popover__action-item--danger" onClick={handleExitApp}>
+                                            <img src="/img/icons/close.svg" className="svg-icon-inline account-popover__action-icon" alt="" />
+                                            <span>{t('Exit')}</span>
+                                        </button>
                                     </div>
                                 </div>
                             )}
