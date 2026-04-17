@@ -23,6 +23,17 @@ import {
 } from '../utils/compose.js'
 import { queueComposeSend } from '../utils/composeSend.js'
 import { buildThreads } from '../utils/threading.js'
+import ExternalLinkPrompt from '../components/ExternalLinkPrompt.jsx'
+import {
+    copyTextToClipboard,
+    getLinkClickBehavior,
+    getUrlDomain,
+    installIframeLinkInterceptor,
+    openExternalUrl,
+    sanitizeMailHtml,
+    setDomainLinkBehavior,
+    setLinkClickBehavior,
+} from '../utils/externalLinks.js'
 import './DashboardPage.css'
 import SettingsPage from './SettingsPage.jsx'
 
@@ -65,12 +76,13 @@ function resizeIframeToContent(iframe) {
     }
 }
 
-function ResizableHtmlIframe({ html, title }) {
+function ResizableHtmlIframe({ html, title, onLinkClick }) {
     const ref = useRef(null)
 
     useEffect(() => {
         const iframe = ref.current
         if (!iframe) return
+        let disposeLinks = null
 
         const handleResize = () => resizeIframeToContent(iframe)
         const attachImageListeners = () => {
@@ -91,18 +103,21 @@ function ResizableHtmlIframe({ html, title }) {
         iframe.onload = () => {
             handleResize()
             attachImageListeners()
+            if (disposeLinks) disposeLinks()
+            disposeLinks = installIframeLinkInterceptor(iframe, onLinkClick)
             window.setTimeout(handleResize, 50)
             window.setTimeout(handleResize, 250)
         }
 
-        iframe.srcdoc = html || ''
+        iframe.srcdoc = sanitizeMailHtml(html) || ''
         window.setTimeout(handleResize, 50)
         return () => {
             if (iframe) iframe.onload = null
+            if (disposeLinks) disposeLinks()
         }
-    }, [html])
+    }, [html, onLinkClick])
 
-    return <iframe ref={ref} title={title} sandbox="allow-same-origin" />
+    return <iframe ref={ref} title={title} sandbox="allow-same-origin allow-scripts" />
 }
 
 const SubmenuBar = ({ children, submenuScrollRef, submenuMoreRef, submenuVisibleCount, setSubmenuVisibleCount }) => {
@@ -1245,6 +1260,46 @@ const DashboardPage = () => {
     const accountMenuRef = useRef(null)
     const accountWrapperRef = useRef(null)
     const iframeRef = useRef(null)
+    const mailIframeLinkCleanupRef = useRef(null)
+
+    const [externalLinkPromptUrl, setExternalLinkPromptUrl] = useState(null)
+
+    const handleExternalLink = useCallback(async (url) => {
+        const behavior = await getLinkClickBehavior(url)
+        if (behavior === 'open') {
+            await openExternalUrl(url)
+            return
+        }
+        if (behavior === 'copy') {
+            await copyTextToClipboard(url)
+            return
+        }
+        setExternalLinkPromptUrl(url)
+    }, [])
+
+    const closeExternalLinkPrompt = useCallback(() => setExternalLinkPromptUrl(null), [])
+
+    const onExternalLinkPromptSelect = useCallback(async (action, remember, rememberDomain) => {
+        const url = externalLinkPromptUrl
+        setExternalLinkPromptUrl(null)
+        if (!url) return
+        if (action === 'open') {
+            await openExternalUrl(url)
+        } else if (action === 'copy') {
+            await copyTextToClipboard(url)
+        }
+        
+        if (action === 'open' || action === 'copy') {
+            if (remember) {
+              await setLinkClickBehavior(action)
+            } else if (rememberDomain) {
+              const domain = getUrlDomain(url)
+              if (domain) {
+                await setDomainLinkBehavior(domain, action)
+              }
+            }
+        }
+    }, [externalLinkPromptUrl])
     const syncAbortRef = useRef(null)
     const isSyncingRef = useRef(false)
     const autoRefreshInFlightRef = useRef(false)
@@ -2159,11 +2214,15 @@ const DashboardPage = () => {
         try {
             const doc = iframe.contentDocument
             doc.open()
-            doc.write(mailContent.html_body)
+            doc.write(sanitizeMailHtml(mailContent.html_body))
             doc.close()
             resizeIframeToContent(iframe)
             window.setTimeout(() => resizeIframeToContent(iframe), 50)
             window.setTimeout(() => resizeIframeToContent(iframe), 250)
+            if (mailIframeLinkCleanupRef.current) mailIframeLinkCleanupRef.current()
+            mailIframeLinkCleanupRef.current = installIframeLinkInterceptor(iframe, (href) => {
+                handleExternalLink(href)
+            })
             const images = Array.from(doc?.images || [])
             images.forEach((img) => {
                 if (!img) return
@@ -2174,7 +2233,21 @@ const DashboardPage = () => {
         } catch {
             // ignore
         }
-    }, [iframeRef, mailContent])
+        return () => {
+            if (mailIframeLinkCleanupRef.current) {
+                mailIframeLinkCleanupRef.current()
+                mailIframeLinkCleanupRef.current = null
+            }
+        }
+    }, [iframeRef, mailContent, handleExternalLink])
+
+    useEffect(() => {
+        if (mailContent?.html_body) return
+        if (mailIframeLinkCleanupRef.current) {
+            mailIframeLinkCleanupRef.current()
+            mailIframeLinkCleanupRef.current = null
+        }
+    }, [mailContent])
 
     const nowForClock = new Date()
     const hour12Pref = systemHour12Preference()
@@ -2387,6 +2460,7 @@ const DashboardPage = () => {
                                 injectedMainBar={mainBarNode}
                                 injectedAppsBar={appsBarNode}
                                 appLayout={appLayout}
+                                onExternalLink={handleExternalLink}
                                 accountId={accountId}
                                 accountEmail={accountEmailLabel}
                                 backendReachable={backendReachable}
@@ -2472,6 +2546,12 @@ const DashboardPage = () => {
 
     return (
         <div className="dashboard-page">
+            <ExternalLinkPrompt
+                open={!!externalLinkPromptUrl}
+                url={externalLinkPromptUrl || ''}
+                onCancel={closeExternalLinkPrompt}
+                onSelect={onExternalLinkPromptSelect}
+            />
             {dashboardContent}
             {actionNotices.length > 0 && (
                 <div className="db-action-notices" aria-live="polite">
@@ -2748,6 +2828,7 @@ function MailSection({
     injectedMainBar,
     injectedAppsBar,
     appLayout,
+    onExternalLink,
     accountId,
     accountEmail,
     backendReachable,
@@ -4420,7 +4501,7 @@ function MailSection({
         if (ref && content?.html_body) {
             const doc = ref.contentDocument
             doc.open()
-            doc.write(content.html_body)
+            doc.write(sanitizeMailHtml(content.html_body))
             doc.close()
             resizeIframeToContent(ref)
             window.setTimeout(() => resizeIframeToContent(ref), 50)
@@ -5852,7 +5933,7 @@ function MailSection({
                                     <iframe
                                         ref={el => { tabIframeRefs.current[activeTabId] = el }}
                                         title={`tab-${activeTabId}`}
-                                        sandbox="allow-same-origin"
+                                        sandbox="allow-same-origin allow-scripts"
                                     />
                                 </div>
                             ) : (
@@ -6907,7 +6988,7 @@ function MailSection({
                                         <hr className="db-mail-divider" />
 	                                        {importPreview?.content?.html_body ? (
 	                                            <div className="db-mail-body-html">
-	                                                <ResizableHtmlIframe title="imported-mail-content" html={importPreview.content.html_body} />
+	                                                <ResizableHtmlIframe title="imported-mail-content" html={importPreview.content.html_body} onLinkClick={onExternalLink} />
 	                                            </div>
 	                                        ) : (
 	                                            <div className="db-mail-body">{importPreview?.content?.plain_body || '(No content)'}</div>
@@ -6992,7 +7073,7 @@ function MailSection({
                                                                         <div className="db-thread-reader-loading">Loading...</div>
                                                                     ) : content?.html_body ? (
                                                                         <div className="db-mail-body-html">
-                                                                            <ResizableHtmlIframe title={`mail-content-${id}`} html={content.html_body} />
+                                                                            <ResizableHtmlIframe title={`mail-content-${id}`} html={content.html_body} onLinkClick={onExternalLink} />
                                                                         </div>
                                                                     ) : (
                                                                         <div className="db-mail-body">{content?.plain_body || '(No content)'}</div>
@@ -7011,7 +7092,7 @@ function MailSection({
                                                 <div className="db-mail-meta"><strong>Date:</strong> {formatMailDateLong(mailContent?.date || selectedMail.date)}</div>
                                                 <hr className="db-mail-divider" />
                                                 {mailContent?.html_body ? (
-                                                    <div className="db-mail-body-html"><iframe ref={iframeRef} title="mail-content" sandbox="allow-same-origin" /></div>
+                                                    <div className="db-mail-body-html"><iframe ref={iframeRef} title="mail-content" sandbox="allow-same-origin allow-scripts" /></div>
                                                 ) : (
                                                     <div className="db-mail-body">{mailContent?.plain_body || '(No content)'}</div>
                                                 )}

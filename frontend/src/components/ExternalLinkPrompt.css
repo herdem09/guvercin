@@ -1,0 +1,86 @@
+.elp-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+}
+
+.elp-modal {
+  width: 100%;
+  max-width: 460px;
+  background: var(--c-surface-1, #1b1f24);
+  border: 1px solid var(--c-border-1, rgba(255, 255, 255, 0.12));
+  border-radius: 12px;
+  padding: 18px 18px 14px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.45);
+}
+
+.elp-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--c-text-1, #fff);
+  margin-bottom: 10px;
+}
+
+.elp-url {
+  font-size: 13px;
+  color: var(--c-text-2, rgba(255, 255, 255, 0.8));
+  background: var(--c-surface-2, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--c-border-1, rgba(255, 255, 255, 0.12));
+  border-radius: 8px;
+  padding: 10px 10px;
+  word-break: break-all;
+  margin-bottom: 12px;
+}
+
+.elp-remember {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--c-text-2, rgba(255, 255, 255, 0.82));
+  user-select: none;
+  margin-bottom: 14px;
+}
+
+.elp-remember input {
+  width: 16px;
+  height: 16px;
+}
+
+.elp-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.elp-btn {
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--c-border-1, rgba(255, 255, 255, 0.16));
+  background: transparent;
+  color: var(--c-text-1, #fff);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.elp-btn:hover {
+  background: var(--c-surface-2, rgba(255, 255, 255, 0.06));
+}
+
+.elp-btn-primary {
+  background: var(--c-primary, #3b82f6);
+  border-color: var(--c-primary, #3b82f6);
+  color: #fff;
+}
+
+.elp-btn-primary:hover {
+  filter: brightness(1.06);
+}
+

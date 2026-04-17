@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { apiUrl } from '../utils/api'
 import { normalizeMailboxResponse } from '../utils/mailboxes'
+import ExternalLinkPrompt from '../components/ExternalLinkPrompt.jsx'
+import {
+  copyTextToClipboard,
+  getLinkClickBehavior,
+  getUrlDomain,
+  installIframeLinkInterceptor,
+  openExternalUrl,
+  sanitizeMailHtml,
+  setDomainLinkBehavior,
+  setLinkClickBehavior,
+} from '../utils/externalLinks.js'
 import './DashboardPage.css'
 
 function formatBytes(bytes) {
@@ -69,6 +80,63 @@ export default function DetachedMailWindow({ initialLabel = '' } = {}) {
   const [movePopoverStyle, setMovePopoverStyle] = useState(null)
   const submenuScrollRef = useRef(null)
   const moveMenuRef = useRef(null)
+  const iframeRef = useRef(null)
+  const linkCleanupRef = useRef(null)
+
+  const [externalLinkPromptUrl, setExternalLinkPromptUrl] = useState(null)
+
+  const handleExternalLink = useCallback(async (url) => {
+    const behavior = await getLinkClickBehavior(url)
+    if (behavior === 'open') {
+      await openExternalUrl(url)
+      return
+    }
+    if (behavior === 'copy') {
+      await copyTextToClipboard(url)
+      return
+    }
+    setExternalLinkPromptUrl(url)
+  }, [])
+
+  const closeExternalLinkPrompt = useCallback(() => setExternalLinkPromptUrl(null), [])
+
+  const onExternalLinkPromptSelect = useCallback(async (action, remember, rememberDomain) => {
+    const url = externalLinkPromptUrl
+    setExternalLinkPromptUrl(null)
+    if (!url) return
+    if (action === 'open') {
+      await openExternalUrl(url)
+    } else if (action === 'copy') {
+      await copyTextToClipboard(url)
+    }
+    
+    if (action === 'open' || action === 'copy') {
+      if (remember) {
+        await setLinkClickBehavior(action)
+      } else if (rememberDomain) {
+        const domain = getUrlDomain(url)
+        if (domain) {
+          await setDomainLinkBehavior(domain, action)
+        }
+      }
+    }
+  }, [externalLinkPromptUrl])
+
+  const attachIframeLinkInterceptor = useCallback(() => {
+    if (linkCleanupRef.current) linkCleanupRef.current()
+    linkCleanupRef.current = installIframeLinkInterceptor(iframeRef.current, (href) => {
+      handleExternalLink(href)
+    })
+  }, [handleExternalLink])
+
+  useEffect(() => {
+    return () => {
+      if (linkCleanupRef.current) {
+        linkCleanupRef.current()
+        linkCleanupRef.current = null
+      }
+    }
+  }, [])
 
   const accountId = data?.accountId
   const mail = data?.mail
@@ -444,6 +512,12 @@ export default function DetachedMailWindow({ initialLabel = '' } = {}) {
 
   return (
     <div className="dashboard-page" style={{ height: '100vh' }}>
+      <ExternalLinkPrompt
+        open={!!externalLinkPromptUrl}
+        url={externalLinkPromptUrl || ''}
+        onCancel={closeExternalLinkPrompt}
+        onSelect={onExternalLinkPromptSelect}
+      />
       <div className="db-navbar">
         <div className="db-logo-icon"><img src="../icon/guvercin-textless-unplanned.svg" alt="Guvercin" style={{width: '24px', height: '24px'}} /></div>
         <span className="db-logo-text">Guvercin</span>
@@ -514,9 +588,11 @@ export default function DetachedMailWindow({ initialLabel = '' } = {}) {
                 <div className="db-mail-body-html">
                   <iframe
                     key={mail?.id}
+                    ref={iframeRef}
                     title="mail-content"
-                    sandbox="allow-same-origin"
-                    srcDoc={mailContent.html_body}
+                    sandbox="allow-same-origin allow-scripts"
+                    srcDoc={sanitizeMailHtml(mailContent.html_body)}
+                    onLoad={attachIframeLinkInterceptor}
                   />
                 </div>
               ) : (

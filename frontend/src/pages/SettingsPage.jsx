@@ -22,6 +22,13 @@ import {
     getStoredThemePreference,
     setStoredThemePreference,
 } from '../theme/themeManager.js'
+import { 
+    getLinkClickBehavior, 
+    setLinkClickBehavior,
+    getAllDomainLinkBehaviors,
+    setDomainLinkBehavior,
+    removeDomainLinkBehavior
+} from '../utils/externalLinks.js'
 
 /** GET /api/account/:id/settings uses camelCase (AccountSettingsResponse). */
 function parseSavedOrderFromSettings(setData, camelKey, snakeKey) {
@@ -115,6 +122,7 @@ const CATEGORIES = [
             { id: 'offline', label: 'Offline', parentId: 'email' },
             { id: 'imap', label: 'IMAP', parentId: 'email' },
             { id: 'smtp', label: 'SMTP', parentId: 'email' },
+            { id: 'links', label: 'Links', parentId: 'email' },
             { id: 'blocked', label: 'Blocked Senders', parentId: 'email' },
         ],
     },
@@ -137,6 +145,7 @@ const PANEL_SEARCH_INDEX = {
     offline: 'offline sync download folders labels cache attachments policy days count enable email caching',
     imap: 'imap incoming mail server port password ssl starttls encryption connection',
     smtp: 'smtp outgoing mail server port password ssl starttls',
+    links: 'links link click open browser copy clipboard external url mailto tel',
     blocked: 'blocked senders block delete spam archive email addresses automatically moved',
     encryption: 'encryption encrypt stored data password login policy keyring account decrypt sqlite',
 }
@@ -1626,6 +1635,298 @@ function OfflineSettings({ accountId, searchQuery = '' }) {
     )
 }
 
+/* ─── Links settings panel ──────────────────────────────────────── */
+function LinksSettings({ searchQuery = '' }) {
+    const [behavior, setBehavior] = useState('ask')
+    const [domainBehaviors, setDomainBehaviors] = useState({})
+    const [loading, setLoading] = useState(true)
+    const [saving, setSaving] = useState(false)
+    const [persistError, setPersistError] = useState(null)
+    const [newDomain, setNewDomain] = useState('')
+    const [newDomainBehavior, setNewDomainBehavior] = useState('open')
+    
+    const behaviorBaselineRef = useRef('ask')
+    const domainsBaselineRef = useRef({})
+
+    const refresh = useCallback(async () => {
+        try {
+            const [globalValue, domainValues] = await Promise.all([
+                getLinkClickBehavior(),
+                getAllDomainLinkBehaviors()
+            ])
+            const b = globalValue === 'open' || globalValue === 'copy' || globalValue === 'ask' ? globalValue : 'ask'
+            const d = domainValues || {}
+            
+            behaviorBaselineRef.current = b
+            domainsBaselineRef.current = d
+            
+            setBehavior(b)
+            setDomainBehaviors(JSON.parse(JSON.stringify(d)))
+        } catch (e) {
+            console.error(e)
+            setBehavior('ask')
+        } finally {
+            setLoading(false)
+        }
+    }, [])
+
+    useEffect(() => {
+        refresh()
+    }, [refresh])
+
+    const handleSave = useCallback(async () => {
+        setSaving(true)
+        setPersistError(null)
+        try {
+            // Save global default
+            await setLinkClickBehavior(behavior)
+            
+            // Save all domain rules
+            // First clear old ones that were removed, or just overwrite all?
+            // The backend command set_domain_link_behavior sets one at a time.
+            // Ideally we need a bulk save command, but we can iterate for now.
+            // Wait, we need to handle removals too.
+            
+            const oldDomains = Object.keys(domainsBaselineRef.current)
+            const newDomains = Object.keys(domainBehaviors)
+            
+            // Remove domains that are no longer in the list
+            for (const d of oldDomains) {
+                if (!domainBehaviors[d]) {
+                    await removeDomainLinkBehavior(d)
+                }
+            }
+            
+            // Set all current domains
+            for (const [d, val] of Object.entries(domainBehaviors)) {
+                await setDomainLinkBehavior(d, val)
+            }
+            
+            behaviorBaselineRef.current = behavior
+            domainsBaselineRef.current = JSON.parse(JSON.stringify(domainBehaviors))
+        } catch (e) {
+            console.error(e)
+            setPersistError('Could not save link settings.')
+            throw e
+        } finally {
+            setSaving(false)
+        }
+    }, [behavior, domainBehaviors])
+
+    const isDirty = behavior !== behaviorBaselineRef.current || 
+                    JSON.stringify(domainBehaviors) !== JSON.stringify(domainsBaselineRef.current)
+
+    useSettingsDraft('links-manager', 'Links', {
+        isDirty,
+        save: handleSave,
+        revert: () => {
+            setBehavior(behaviorBaselineRef.current)
+            setDomainBehaviors(JSON.parse(JSON.stringify(domainsBaselineRef.current)))
+            setPersistError(null)
+        }
+    })
+
+    const handleAddDomainRule = useCallback(() => {
+        const d = newDomain.trim().toLowerCase()
+        if (!d) return
+        setDomainBehaviors(prev => ({
+            ...prev,
+            [d]: newDomainBehavior
+        }))
+        setNewDomain('')
+    }, [newDomain, newDomainBehavior])
+
+    const handleUpdateDomainRule = useCallback((domain, val) => {
+        setDomainBehaviors(prev => ({
+            ...prev,
+            [domain]: val
+        }))
+    }, [])
+
+    const handleRemoveDomainRule = useCallback((domain) => {
+        setDomainBehaviors(prev => {
+            const next = { ...prev }
+            delete next[domain]
+            return next
+        })
+    }, [])
+
+    if (loading) {
+        return (
+            <div className="sp-section">
+                <h2 className="sp-section__title"><HighlightMatch text="Links" query={searchQuery} /></h2>
+                <div className="sp-loading-row">
+                    <div className="sp-spinner" />
+                    <span>Loading…</span>
+                </div>
+            </div>
+        )
+    }
+
+    const domainEntries = Object.entries(domainBehaviors).sort((a, b) => a[0].localeCompare(b[0]))
+
+    return (
+        <div className="sp-section">
+            <h2 className="sp-section__title"><HighlightMatch text="Links" query={searchQuery} /></h2>
+            <p className="sp-section__desc">
+                <HighlightMatch text="Manage how external links are handled when clicked inside an email body." query={searchQuery} />
+            </p>
+
+            <div className="sp-form-field">
+                <label htmlFor="sp-link-behavior"><HighlightMatch text="Global Default" query={searchQuery} /></label>
+                <select
+                    id="sp-link-behavior"
+                    value={behavior}
+                    onChange={(e) => setBehavior(e.target.value)}
+                    disabled={saving}
+                >
+                    <option value="ask">Ask every time</option>
+                    <option value="open">Open in default browser</option>
+                    <option value="copy">Copy link to clipboard</option>
+                </select>
+            </div>
+
+            {persistError && (
+                <div className="sp-form-message sp-form-message--error" style={{ marginTop: 12 }}>
+                    {persistError}
+                </div>
+            )}
+
+            <div className="sp-domain-add-form" style={{ 
+                marginTop: 32, 
+                padding: '24px', 
+                background: 'rgba(0,0,0,0.02)', 
+                borderRadius: 12,
+                border: '1px solid rgba(0,0,0,0.08)'
+            }}>
+                <h3 className="sp-section__subtitle" style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: 16 }}>Add Website Exception</h3>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                    <div className="sp-form-field" style={{ margin: 0, flex: 1, minWidth: 200 }}>
+                        <label style={{ fontSize: '0.75rem', textTransform: 'uppercase', opacity: 0.6, marginBottom: 6, fontWeight: 600 }}>Domain</label>
+                        <input 
+                            type="text" 
+                            className="sp-input" 
+                            placeholder="e.g. example.com"
+                            value={newDomain}
+                            onChange={(e) => setNewDomain(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleAddDomainRule()}
+                        />
+                    </div>
+                    <div className="sp-form-field" style={{ margin: 0 }}>
+                        <label style={{ fontSize: '0.75rem', textTransform: 'uppercase', opacity: 0.6, marginBottom: 6, fontWeight: 600 }}>Action</label>
+                        <select 
+                            value={newDomainBehavior}
+                            onChange={(e) => setNewDomainBehavior(e.target.value)}
+                            style={{ 
+                                height: 40, 
+                                minWidth: 160,
+                                padding: '0 12px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                fontSize: '0.85rem'
+                            }}
+                        >
+                            <option value="open">Always Open</option>
+                            <option value="copy">Always Copy</option>
+                        </select>
+                    </div>
+                    <button 
+                        type="button" 
+                        className="sp-btn sp-btn-primary" 
+                        onClick={handleAddDomainRule}
+                        disabled={saving || !newDomain.trim()}
+                        style={{ 
+                            height: 40, 
+                            padding: '0 24px', 
+                            fontWeight: 600,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                        }}
+                    >
+                        Add
+                    </button>
+                </div>
+            </div>
+
+            {domainEntries.length > 0 && (
+                <div className="sp-domain-behaviors-section" style={{ marginTop: 32 }}>
+                    <h3 className="sp-section__subtitle" style={{ fontSize: '0.9rem', fontWeight: 600, marginBottom: 16 }}>Customized Website Behaviors</h3>
+                    <div className="sp-domain-list" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {domainEntries.map(([domain, db]) => (
+                            <div key={domain} className="sp-domain-item" style={{ 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                justifyContent: 'space-between',
+                                padding: '12px 16px',
+                                background: 'rgba(0,0,0,0.03)',
+                                borderRadius: 10,
+                                border: '1px solid rgba(0,0,0,0.05)'
+                            }}>
+                                <div className="sp-domain-info" style={{ flex: 1 }}>
+                                    <div className="sp-domain-name" style={{ fontWeight: 500, fontSize: '0.9rem' }}>{domain}</div>
+                                </div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                                    <select 
+                                        value={db} 
+                                        onChange={(e) => handleUpdateDomainRule(domain, e.target.value)}
+                                        disabled={saving}
+                                        style={{ 
+                                            fontSize: '0.8rem', 
+                                            padding: '6px 12px', 
+                                            borderRadius: 6,
+                                            background: 'var(--sp-bg-secondary, white)',
+                                            color: 'inherit',
+                                            border: '1px solid rgba(0,0,0,0.15)',
+                                            cursor: 'pointer'
+                                        }}
+                                    >
+                                        <option value="open">Open in browser</option>
+                                        <option value="copy">Copy to clipboard</option>
+                                        <option value="ask">Ask every time</option>
+                                    </select>
+                                    <button
+                                        type="button"
+                                        className="sp-btn-icon"
+                                        onClick={() => handleRemoveDomainRule(domain)}
+                                        title="Remove exception"
+                                        style={{ 
+                                            padding: 8,
+                                            background: 'transparent',
+                                            border: 'none',
+                                            cursor: 'pointer',
+                                            opacity: 0.4,
+                                            fontSize: '1.1rem',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            transition: 'opacity 0.2s'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.opacity = '0.8'}
+                                        onMouseLeave={(e) => e.currentTarget.style.opacity = '0.4'}
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            <button
+                type="button"
+                className="sp-save-btn"
+                style={{ marginTop: 32 }}
+                disabled={saving || !isDirty}
+                onClick={handleSave}
+            >
+                {saving ? 'Saving…' : 'Save Link Settings'}
+            </button>
+        </div>
+    )
+}
+
 /* ─── Encryption settings panel ─────────────────────────────────── */
 function EncryptionSettings({ searchQuery = '' }) {
     const [dataEncrypted, setDataEncrypted] = useState(true)
@@ -2655,6 +2956,7 @@ function renderSinglePanel(id, accountId, onClose, onRefreshAccount, searchQuery
         case 'imap': return <ServerSettings accountId={accountId} type="imap" key={`imap-${accountId}`} searchQuery={q} />
         case 'smtp': return <ServerSettings accountId={accountId} type="smtp" key={`smtp-${accountId}`} searchQuery={q} />
         case 'offline': return <OfflineSettings accountId={accountId} key={`offline-${accountId}`} searchQuery={q} />
+        case 'links': return <LinksSettings key="links" searchQuery={q} />
         case 'blocked': return <BlockedSendersSettings accountId={accountId} key={`blocked-${accountId}`} searchQuery={q} />
         case 'encryption': return <EncryptionSettings searchQuery={q} />
         default: return null

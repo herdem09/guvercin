@@ -3,6 +3,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_log::{Target, TargetKind};
@@ -40,6 +41,120 @@ struct MailWindowStore(Mutex<HashMap<String, String>>);
 /// Shared state that maps window labels → compose data JSON.
 #[derive(Default)]
 struct ComposeWindowStore(Mutex<HashMap<String, String>>);
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum LinkClickBehavior {
+  Ask,
+  Open,
+  Copy,
+}
+
+impl Default for LinkClickBehavior {
+  fn default() -> Self {
+    Self::Ask
+  }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Preferences {
+  #[serde(default)]
+  link_click_behavior: LinkClickBehavior,
+  #[serde(default)]
+  domain_behaviors: HashMap<String, LinkClickBehavior>,
+}
+
+impl Default for Preferences {
+  fn default() -> Self {
+    Self {
+      link_click_behavior: LinkClickBehavior::Ask,
+      domain_behaviors: HashMap::new(),
+    }
+  }
+}
+
+struct PreferencesStore {
+  path: PathBuf,
+  prefs: Mutex<Preferences>,
+}
+
+impl PreferencesStore {
+  fn load(path: PathBuf) -> Self {
+    let prefs = match fs::read_to_string(&path) {
+      Ok(raw) => serde_json::from_str::<Preferences>(&raw).unwrap_or_default(),
+      Err(_) => Preferences::default(),
+    };
+    Self {
+      path,
+      prefs: Mutex::new(prefs),
+    }
+  }
+
+  fn set_behavior(&self, behavior: LinkClickBehavior) -> Result<(), String> {
+    {
+      let mut guard = self.prefs.lock().unwrap();
+      guard.link_click_behavior = behavior;
+    }
+    self.persist()
+  }
+
+  fn get_behavior(&self) -> LinkClickBehavior {
+    self.prefs.lock().unwrap().link_click_behavior
+  }
+
+  fn set_domain_behavior(&self, domain: String, behavior: LinkClickBehavior) -> Result<(), String> {
+    {
+      let mut guard = self.prefs.lock().unwrap();
+      guard.domain_behaviors.insert(domain, behavior);
+    }
+    self.persist()
+  }
+
+  fn get_domain_behavior(&self, domain: &str) -> Option<LinkClickBehavior> {
+    self.prefs.lock().unwrap().domain_behaviors.get(domain).copied()
+  }
+
+  fn remove_domain_behavior(&self, domain: &str) -> Result<(), String> {
+    {
+      let mut guard = self.prefs.lock().unwrap();
+      guard.domain_behaviors.remove(domain);
+    }
+    self.persist()
+  }
+
+  fn get_all_domain_behaviors(&self) -> HashMap<String, LinkClickBehavior> {
+    self.prefs.lock().unwrap().domain_behaviors.clone()
+  }
+
+  fn persist(&self) -> Result<(), String> {
+    if let Some(parent) = self.path.parent() {
+      fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let raw = {
+      let guard = self.prefs.lock().unwrap();
+      serde_json::to_string_pretty(&*guard).map_err(|e| e.to_string())?
+    };
+    fs::write(&self.path, raw).map_err(|e| e.to_string())?;
+    Ok(())
+  }
+}
+
+fn parse_behavior(input: &str) -> Option<LinkClickBehavior> {
+  match input.trim().to_lowercase().as_str() {
+    "ask" => Some(LinkClickBehavior::Ask),
+    "open" => Some(LinkClickBehavior::Open),
+    "copy" => Some(LinkClickBehavior::Copy),
+    _ => None,
+  }
+}
+
+fn is_allowed_external_url(url: &str) -> bool {
+  let u = url.trim();
+  u.starts_with("http://")
+    || u.starts_with("https://")
+    || u.starts_with("mailto:")
+    || u.starts_with("tel:")
+}
 
 #[tauri::command]
 async fn open_mail_window(
@@ -208,6 +323,85 @@ fn save_export_file_to_path(path: String, bytes: Vec<u8>) -> Result<(), String> 
   Ok(())
 }
 
+#[tauri::command]
+fn get_link_click_behavior(store: State<'_, PreferencesStore>) -> String {
+  match store.get_behavior() {
+    LinkClickBehavior::Ask => "ask".to_string(),
+    LinkClickBehavior::Open => "open".to_string(),
+    LinkClickBehavior::Copy => "copy".to_string(),
+  }
+}
+
+#[tauri::command]
+fn set_link_click_behavior(
+  behavior: String,
+  store: State<'_, PreferencesStore>,
+) -> Result<(), String> {
+  let parsed = parse_behavior(&behavior).ok_or_else(|| "Invalid behavior".to_string())?;
+  store.set_behavior(parsed)
+}
+
+#[tauri::command]
+fn get_domain_link_behavior(domain: String, store: State<'_, PreferencesStore>) -> Option<String> {
+  store.get_domain_behavior(&domain).map(|b| match b {
+    LinkClickBehavior::Ask => "ask".to_string(),
+    LinkClickBehavior::Open => "open".to_string(),
+    LinkClickBehavior::Copy => "copy".to_string(),
+  })
+}
+
+#[tauri::command]
+fn set_domain_link_behavior(
+  domain: String,
+  behavior: String,
+  store: State<'_, PreferencesStore>,
+) -> Result<(), String> {
+  let parsed = parse_behavior(&behavior).ok_or_else(|| "Invalid behavior".to_string())?;
+  store.set_domain_behavior(domain, parsed)
+}
+
+#[tauri::command]
+fn remove_domain_link_behavior(
+  domain: String,
+  store: State<'_, PreferencesStore>,
+) -> Result<(), String> {
+  store.remove_domain_behavior(&domain)
+}
+
+#[tauri::command]
+fn get_all_domain_link_behaviors(
+  store: State<'_, PreferencesStore>,
+) -> HashMap<String, String> {
+  store
+    .get_all_domain_behaviors()
+    .into_iter()
+    .map(|(k, v)| {
+      let v_str = match v {
+        LinkClickBehavior::Ask => "ask".to_string(),
+        LinkClickBehavior::Open => "open".to_string(),
+        LinkClickBehavior::Copy => "copy".to_string(),
+      };
+      (k, v_str)
+    })
+    .collect()
+}
+
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+  if !is_allowed_external_url(&url) {
+    return Err("URL scheme not allowed".to_string());
+  }
+  open::that(url).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
+#[tauri::command]
+fn copy_to_clipboard(text: String) -> Result<(), String> {
+  let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+  clipboard.set_text(text).map_err(|e| e.to_string())?;
+  Ok(())
+}
+
 fn sanitize_theme_name(input: &str) -> String {
   let mut out = String::new();
   for ch in input.trim().to_lowercase().chars() {
@@ -333,6 +527,14 @@ pub fn run() {
     .plugin(tauri_plugin_dialog::init())
     .setup(|app| {
       let _app_handle = app.handle().clone();
+
+      let prefs_path = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .map(|dir| dir.join("preferences.json"))
+        .unwrap_or_else(|| PathBuf::from("preferences.json"));
+      app.manage(PreferencesStore::load(prefs_path));
       
       // Get app data directory for database
       let db_dir = app.path().app_data_dir().ok().map(|path| {
@@ -406,6 +608,14 @@ pub fn run() {
       get_compose_window_data,
       close_compose_window,
       save_export_file_to_path,
+      get_link_click_behavior,
+      set_link_click_behavior,
+      get_domain_link_behavior,
+      set_domain_link_behavior,
+      remove_domain_link_behavior,
+      get_all_domain_link_behaviors,
+      open_external_url,
+      copy_to_clipboard,
       list_user_themes,
       read_user_theme,
       write_user_theme

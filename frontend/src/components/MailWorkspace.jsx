@@ -1,5 +1,16 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import Avatar from './Avatar.jsx'
+import ExternalLinkPrompt from './ExternalLinkPrompt.jsx'
+import {
+  copyTextToClipboard,
+  getLinkClickBehavior,
+  getUrlDomain,
+  installIframeLinkInterceptor,
+  openExternalUrl,
+  sanitizeMailHtml,
+  setDomainLinkBehavior,
+  setLinkClickBehavior,
+} from '../utils/externalLinks.js'
 
 const FOLDER_MAP = {
   INBOX: { icon: <img src="/img/icons/inbox.svg" className="svg-icon-inline" />, href: '#inbox' },
@@ -35,6 +46,46 @@ export default function MailWorkspace({ accountId, email }) {
   const [loadingMails, setLoadingMails] = useState(false)
   const [loadingContent, setLoadingContent] = useState(false)
   const iframeRef = useRef(null)
+  const mailIframeLinkCleanupRef = useRef(null)
+
+  const [externalLinkPromptUrl, setExternalLinkPromptUrl] = useState(null)
+
+  const handleExternalLink = useCallback(async (url) => {
+    const behavior = await getLinkClickBehavior(url)
+    if (behavior === 'open') {
+      await openExternalUrl(url)
+      return
+    }
+    if (behavior === 'copy') {
+      await copyTextToClipboard(url)
+      return
+    }
+    setExternalLinkPromptUrl(url)
+  }, [])
+
+  const closeExternalLinkPrompt = useCallback(() => setExternalLinkPromptUrl(null), [])
+
+  const onExternalLinkPromptSelect = useCallback(async (action, remember, rememberDomain) => {
+    const url = externalLinkPromptUrl
+    setExternalLinkPromptUrl(null)
+    if (!url) return
+    if (action === 'open') {
+      await openExternalUrl(url)
+    } else if (action === 'copy') {
+      await copyTextToClipboard(url)
+    }
+    
+    if (action === 'open' || action === 'copy') {
+      if (remember) {
+        await setLinkClickBehavior(action)
+      } else if (rememberDomain) {
+        const domain = getUrlDomain(url)
+        if (domain) {
+          await setDomainLinkBehavior(domain, action)
+        }
+      }
+    }
+  }, [externalLinkPromptUrl])
 
   useEffect(() => {
     if (accountId) {
@@ -108,13 +159,29 @@ export default function MailWorkspace({ accountId, email }) {
     if (iframeRef.current && mailContent?.html_body) {
       const doc = iframeRef.current.contentDocument
       doc.open()
-      doc.write(mailContent.html_body)
+      doc.write(sanitizeMailHtml(mailContent.html_body))
       doc.close()
+      if (mailIframeLinkCleanupRef.current) mailIframeLinkCleanupRef.current()
+      mailIframeLinkCleanupRef.current = installIframeLinkInterceptor(iframeRef.current, (href) => {
+        handleExternalLink(href)
+      })
+      return () => {
+        if (mailIframeLinkCleanupRef.current) {
+          mailIframeLinkCleanupRef.current()
+          mailIframeLinkCleanupRef.current = null
+        }
+      }
     }
-  }, [mailContent])
+  }, [mailContent, handleExternalLink])
 
   return (
     <div className="db-mail-area">
+      <ExternalLinkPrompt
+        open={!!externalLinkPromptUrl}
+        url={externalLinkPromptUrl || ''}
+        onCancel={closeExternalLinkPrompt}
+        onSelect={onExternalLinkPromptSelect}
+      />
       <div className="db-folder-panel">
         {connected ? (
           <>
@@ -246,7 +313,7 @@ export default function MailWorkspace({ accountId, email }) {
             <hr className="db-mail-divider" />
             {mailContent?.html_body ? (
               <div className="db-mail-body-html">
-                <iframe ref={iframeRef} title="mail-content" sandbox="allow-same-origin" />
+                <iframe ref={iframeRef} title="mail-content" sandbox="allow-same-origin allow-scripts" />
               </div>
             ) : (
               <div className="db-mail-body">{mailContent?.plain_body || '(No content)'}</div>
